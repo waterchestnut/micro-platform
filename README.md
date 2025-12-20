@@ -1,2 +1,2 @@
 # micro-platform
-基于腾讯无界、antd和nodejs的微平台。
+基于腾讯无界、antd pro、python和nodejs的微平台。

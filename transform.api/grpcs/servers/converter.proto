@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package rag;
+
+service Converter {
+  rpc convertImage (ImageConverterRequest) returns (ImageConverterResponse) {}
+}
+
+message ImageConverterRequest {
+  bytes content = 1;
+  string targetFormat = 2;
+}
+
+message ImageConverterResponse {
+  bytes content = 1;
+}

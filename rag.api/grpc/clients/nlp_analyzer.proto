@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package rag;
+
+service NlpAnalyzer {
+  rpc text2Sents (TextRequest) returns (SentsResponse) {}
+}
+
+message TextRequest {
+  string text = 1;
+  string language = 2;
+}
+
+message SentsResponse {
+  repeated string sents = 1;
+  string errorMsg = 2;
+}

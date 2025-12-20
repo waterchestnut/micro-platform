@@ -1,0 +1,31 @@
+// 使用proto3语法，默认proto2
+syntax = "proto3";
+
+// 是否需要生成的类拆分为多个
+option java_multiple_files = true;
+// 生成的类所属的层级
+option java_package = "ucenter.grpc.token";
+option java_outer_classname = "TokenProto";
+option objc_class_prefix = "UCENTER";
+
+// 定义包名，避免命名冲突
+package ucenter;
+
+// 定义服务
+service Token {
+  rpc addAccessToken (AddAccessTokenRequest) returns (AccessTokenSchema) {}
+}
+
+// 结构化数据：使用message定义。
+// 字段类型 字段名 = 字段编号;
+message AddAccessTokenRequest {
+  string userCode = 1;
+  int32 expiresTime = 2;
+  string extInfo = 3;
+}
+
+message AccessTokenSchema {
+  string userCode = 1;
+  int32 expiresTime = 2;
+  string accessToken = 3;
+}

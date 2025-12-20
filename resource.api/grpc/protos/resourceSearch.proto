@@ -1,0 +1,72 @@
+// 使用proto3语法
+syntax = "proto3";
+
+// 定义包名，避免命名冲突
+package resource;
+
+// 定义服务
+service ResourceSearchService {
+  rpc SearchAll (SearchResourceRequest) returns (SearchResourceResponse) {}
+}
+
+// 查询参数消息定义
+message QueryParam {
+  string q = 1;        // 查询内容
+  string key = 2;      // 查询字段键
+  string method = 3;   // 查询方法 (match, term, range等)
+}
+
+message ParamList {
+  repeated QueryParam query = 1;
+}
+
+message SearchResourceRequest {
+  repeated ParamList paramList = 1;  // 搜索参数列表
+  int32 pageIndex = 2;               // 页码，从1开始
+  int32 pageSize = 3;                // 每页大小
+  SearchOptions options = 4;         // 搜索选项
+}
+
+message SearchOptions {
+  bool hiddeHighlight = 1;           // 是否隐藏高亮
+}
+
+// 响应消息定义
+message Source {
+  string sourceKey = 1;
+  string href = 2;
+  string title = 3;
+  string description = 4;
+}
+
+message ResourceItem {
+  string resCode = 1;
+  string abstract = 2;
+  string url = 3;
+  string category = 4;
+  int32 status = 5;
+  string title = 6;
+  string resType = 7;
+  string publishDateStr = 8;
+  string keywords = 9;
+  string language = 10;
+  repeated string source_keys = 11;
+  string journalTitle = 12;
+  string publishDate = 13;
+  string issues = 14;
+  repeated Source sources = 15;
+  string publisher = 16;
+  string coverUrl = 17;
+  string author = 18;
+}
+
+message SearchData {
+  int32 total = 1;
+  repeated ResourceItem rows = 2;
+}
+
+message SearchResourceResponse {
+  SearchData data = 1;
+  int32 statusCode = 2;
+  int32 code = 3;
+}
