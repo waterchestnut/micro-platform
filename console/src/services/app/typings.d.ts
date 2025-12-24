@@ -27,6 +27,6 @@ declare namespace APPAPI {
     /** 是否需要分配权限才显示 */
     needAuth2Show?: boolean;
     /** 平台类型 */
-    platformType?: 'xxzx' | 'union';
+    platformType?: 'micro' | 'union';
   };
 }

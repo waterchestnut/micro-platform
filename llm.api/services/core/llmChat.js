@@ -21,7 +21,7 @@ const logger = llm.logger
 const config = llm.config
 const defaultLlmConfigKey = 'deepseek31'
 const defaultLlmVLConfigKey = 'qwenVLPlus'
-const defaultChannel = 'xxzx_common'
+const defaultChannel = 'micro_common'
 const defaultChannelGroup = 'none'
 
 /**

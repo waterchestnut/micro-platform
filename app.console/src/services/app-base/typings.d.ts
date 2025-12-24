@@ -29,7 +29,7 @@ declare namespace APPAPI {
     /** 是否需要分配权限才显示 */
     needAuth2Show?: boolean;
     /** 平台类型 */
-    platformType?: 'xxzx' | 'union';
+    platformType?: 'micro' | 'union';
     /** 获得本应用授权的其他应用 */
     toClients?: string[];
   };
@@ -61,7 +61,7 @@ declare namespace APPAPI {
     /** EndpointTypeEnum */
     EndpointTypeEnum?: { pc?: string; miniNative?: string; miniH5?: string };
     /** PlatformTypeEnum */
-    PlatformTypeEnum?: { xxzx?: string; union?: string };
+    PlatformTypeEnum?: { micro?: string; union?: string };
     /** StatusEnum */
     StatusEnum?: { deleted?: number; normal?: number; disabled?: number };
   };
@@ -85,7 +85,7 @@ declare namespace APPAPI {
       upstreams?: { host?: string; weight?: number }[];
       order?: number;
       needAuth2Show?: boolean;
-      platformType?: 'xxzx' | 'union';
+      platformType?: 'micro' | 'union';
       toClients?: string[];
     };
     /** HomeClient */
@@ -112,7 +112,7 @@ declare namespace APPAPI {
       upstreams?: { host?: string; weight?: number; _id?: string }[];
       order?: number;
       needAuth2Show?: boolean;
-      platformType?: 'xxzx' | 'union';
+      platformType?: 'micro' | 'union';
       toClients?: string[];
       insertTime?: string;
       updateTime?: string;

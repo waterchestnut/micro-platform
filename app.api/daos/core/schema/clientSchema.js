@@ -57,7 +57,7 @@ const clientSchema = new Schema({
     upstreams: {type: [Upstream], description: '上游节点'},
     order: {type: Number, default: 0, description: '排序'},
     needAuth2Show: {type: Boolean, default: true, description: '是否需要分配权限才显示'},
-    platformType: {type: String, default: 'xxzx', description: '平台类型', enum: PlatformTypeEnum.toValues()},
+    platformType: {type: String, default: 'micro', description: '平台类型', enum: PlatformTypeEnum.toValues()},
     toClients: {type: [String], description: '获得本应用授权的其他应用'},
     logoUrl: {type: String, description: '应用图标'},
     insertTime: {
