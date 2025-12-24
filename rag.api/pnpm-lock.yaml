@@ -39,8 +39,8 @@ importers:
         specifier: ^1.25.116
         version: 1.25.116
       '@zilliz/milvus2-sdk-node':
-        specifier: 2.5.12
-        version: 2.5.12
+        specifier: 2.6.7
+        version: 2.6.7
       adm-zip:
         specifier: ^0.5.16
         version: 0.5.16
@@ -496,8 +496,8 @@ packages:
   '@unhead/schema@1.11.18':
     resolution: {integrity: sha512-a3TA/OJCRdfbFhcA3Hq24k1ZU1o9szicESrw8DZcGyQFacHnh84mVgnyqSkMnwgCmfN4kvjSiTBlLEHS6+wATw==}
 
-  '@zilliz/milvus2-sdk-node@2.5.12':
-    resolution: {integrity: sha512-pr1EK7zdcp902xxvV2tLSDBSQrGxpb6pAvRhn/T+RRR/xEBo+cYKNpz4GLRauAxXC2y9wUUdQhVYfM4wg5VHwg==}
+  '@zilliz/milvus2-sdk-node@2.6.7':
+    resolution: {integrity: sha512-Qd54QeSiMvZknHgcMubEvaEWYHp3/5yaljCB5g3et0/1MO9+UyojA9J0vebxbwCzIDxrVAiC17gVsbnkLYj3Ng==}
 
   abbrev@1.1.1:
     resolution: {integrity: sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q==}
@@ -2107,7 +2107,7 @@ snapshots:
       hookable: 5.5.3
       zhead: 2.2.4
 
-  '@zilliz/milvus2-sdk-node@2.5.12':
+  '@zilliz/milvus2-sdk-node@2.6.7':
     dependencies:
       '@grpc/grpc-js': 1.7.3
       '@grpc/proto-loader': 0.7.13

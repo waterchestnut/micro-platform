@@ -27,7 +27,7 @@
     "@grpc/proto-loader": "^0.7.13",
     "@platformatic/kafka": "^1.11.0",
     "@scalar/fastify-api-reference": "^1.25.116",
-    "@zilliz/milvus2-sdk-node": "2.5.12",
+    "@zilliz/milvus2-sdk-node": "2.6.7",
     "adm-zip": "^0.5.16",
     "ajv-i18n": "^4.2.0",
     "bson": "^6.10.2",
