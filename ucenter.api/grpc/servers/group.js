@@ -1,7 +1,7 @@
 /**
  * @fileOverview 角色授权相关的rpc服务
  * @author xianyang
- * @group
+ * @module
  */
 import {
     getGroups,

@@ -1,7 +1,7 @@
 /**
  * @fileOverview 路由授权相关的rpc服务
  * @author xianyang
- * @client
+ * @module
  */
 import {
     allocPrivsToOtherClient,

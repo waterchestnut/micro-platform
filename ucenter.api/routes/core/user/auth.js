@@ -2,6 +2,7 @@ import * as loginService from '../../../services/core/login.js'
 import {getDefaultResponseSchema} from '../../../plugins/format-reply.js'
 import {getResSwaggerSchema} from '../../../daos/swaggerSchema/responseHandler.js'
 import fs from 'node:fs'
+import * as smsService from '../../../services/sms/smsCode.js'
 
 const tools = ucenter.tools
 const logger = ucenter.logger
@@ -155,5 +156,31 @@ export default async function (fastify, opts) {
         }
     }, async function (request, reply) {
         return await loginService.execRefreshToken(request.reqParams.refreshToken)
+    })
+
+    // 通用获取手机验证码
+    fastify.post('/sms-code', {
+        schema: {
+            description: '通用获取手机验证码',
+            summary: '通用获取手机验证码',
+            body: {
+                type: 'object',
+                properties: {
+                    phone: {type: 'string'},
+                    captchaKey: {type: 'string'},
+                    captcha: {type: 'string'}
+                },
+                required: ['phone', 'captchaKey', 'captcha']
+            },
+            tags: ['user-auth'],
+            response: {
+                default: {...getResSwaggerSchema()}
+            }
+        }
+    }, async function (request, reply) {
+        return await smsService.sendCode(request.reqParams.phone, true, {
+            captchaKey: request.reqParams.captchaKey,
+            captcha: request.reqParams.captcha
+        })
     })
 }

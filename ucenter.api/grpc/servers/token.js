@@ -1,7 +1,7 @@
 /**
  * @fileOverview token相关的rpc服务
  * @author xianyang
- * @moduleToken
+ * @module
  */
 import * as accessTokenService from '../../services/core/accessToken.js'
 import {loadProto} from '../utils.js'

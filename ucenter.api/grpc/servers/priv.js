@@ -1,7 +1,7 @@
 /**
  * @fileOverview 功能权限相关的rpc服务
  * @author xianyang
- * @modulePriv
+ * @module
  */
 import {getModulePrivs, addModulePriv, deleteModulePriv} from '../../services/core/modulePriv.js'
 import {loadProto} from '../utils.js'

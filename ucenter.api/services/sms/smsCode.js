@@ -74,7 +74,7 @@ export async function sendCode(mobile, needCaptcha = true, params = {}) {
 export async function checkCode(mobile, smsCode) {
     let existsInfo = await getCode(mobile)
     if (!existsInfo || !existsInfo.smsCode) {
-        throw new Error('验证码已失效111')
+        return false
     }
     return existsInfo.smsCode === smsCode
 }
