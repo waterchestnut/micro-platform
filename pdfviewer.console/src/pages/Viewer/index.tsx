@@ -187,7 +187,7 @@ const Viewer: React.FC = () => {
   }
 
   const onCaptureTransAction = async (captureData: CaptureData, documentName: string) => {
-    console.log(captureData, documentName)
+    /*console.log(captureData, documentName)*/
     let fileInfo = await saveCaptureFile(captureData, documentName)
     if (!fileInfo) {
       return

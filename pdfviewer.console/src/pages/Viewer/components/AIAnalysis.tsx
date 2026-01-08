@@ -637,7 +637,7 @@ const AIAnalysisComponent: ForwardRefRenderFunction<AIAnalysisComponentAction, A
                       style={{color: msgInfo?.extraInfo?.answerFeedback === 1 ? token.colorWarning : ''}}
                       disabled={!msgInfo}
                       onClick={() => {
-                        console.log(messages)
+                        // console.log(messages)
                         let messageCode = msgInfo?.message?.messageCode || msgInfo?.extraInfo?.messageCode
                         if (!msgInfo || !messageCode) {
                           return

@@ -1,16 +1,17 @@
 import React, {useMemo, useState, useEffect, useRef, useCallback} from 'react'
 
-import EmbedPDF from 'embedpdf-snippet-i18n'
-import {getAIIconHtml} from '@/icons/ai'
-import {getTransIconHtml} from '@/icons/trans'
-import {getSaveIconHtml} from '@/icons/save'
+import EmbedPDF, {
+  type EmbedPdfContainer,
+  type PDFViewerConfig,
+  type PluginRegistry,
+} from 'embedpdf-snippet-i18n'
+import {getAIIconPaths} from '@/icons/ai'
+import { getTransIconPaths} from '@/icons/trans'
 import {uuidV4} from '@/utils/util'
 import {useModel} from '@@/exports'
-import {getArrowLeftIconHtml} from '@/icons/arrowLeft'
+import {getArrowLeftIconPaths} from '@/icons/arrowLeft'
 import {history} from '@umijs/max'
 import {CaptureData} from 'embedpdf-snippet-i18n/dist/components/capture'
-// @ts-ignore
-import {CapturePlugin} from '@embedpdf/plugin-capture'
 
 interface PDFViewerProps {
   pdfUrl: string
@@ -43,135 +44,227 @@ export default function PDFViewer(props: PDFViewerProps) {
     onCaptureAIAnalysisAction,
     onCaptureTransAction
   } = props
-  const viewerRef = useRef<HTMLDivElement>(null)
+
+  const containerRef = useRef<HTMLDivElement>(null)
+  const viewerRef = useRef<EmbedPdfContainer | null>(null)
+
   const {initialState} = useModel('@@initialState')
   const {currentUser} = initialState || {}
 
-  const styles = `:host {
-  --color-blue-50: oklch(0.9689 0.0152 22.39);
-  --color-blue-100: oklch(0.8884 0.0586 24.81);
-  --color-blue-200: oklch(0.8061 0.1102 23.18);
-  --color-blue-300: oklch(0.7309 0.1655 23.3);
-  --color-blue-400: oklch(0.6732 0.2143 24.47);
-  --color-blue-500: oklch(0.621 0.2381 26.07);
-  --color-blue-600: oklch(0.5434 0.2132 25.86);
-  --color-blue-700: oklch(0.4632 0.1845 25.23);
-  --color-blue-800: oklch(0.3825 0.1547 23.89);
-  --color-blue-900: oklch(0.3002 0.1207 20.69);
-  --color-blue-950: oklch(0.3002 0.1207 20.69);
-}`
-
-  let pluginRegistry: any = null
-
   useEffect(() => {
-    if (!viewerRef.current) return
+    if (!containerRef.current) return
+
+    let isActive = true
+    const containerElement = containerRef.current
 
     const loadEmbedPDF = async () => {
+      let fileName = pdfName || `${uuidV4()}.pdf`
       try {
-
-        EmbedPDF.init({
+        const viewer = EmbedPDF.init({
           type: 'container',
-          target: viewerRef.current!,
-          src: pdfUrl || `${viewerBaseUrl}/demo/368653411.pdf`,
-          name: pdfName || `${uuidV4()}.pdf`,
-          id,
+          target: containerRef.current!,
           worker: true,
-          plugins: {
-            annotation: {annotationAuthor: currentUser?.realName || '匿名用户'},
-            loader: {}
-          },
           wasmUrl: `${viewerBaseUrl}/pdfium.wasm`,
-          textSelectionMenuExtActions: [
-            {
-              id: 'action-ai',
-              imgNode: getAIIconHtml({className: 'h-5 w-5'}),
-              onClick: async (text, selection) => {
-                console.log(text, selection)
-                let results = await text?.toPromise()
-                const textStr = results?.length ? results.join('\r\n') : ''
-                onAIAnalysisAction && onAIAnalysisAction(textStr)
-              },
-              label: 'AI解读'
-            },
-            {
-              id: 'action-translation',
-              imgNode: getTransIconHtml({className: 'h-5 w-5'}),
-              onClick: async (text, selection) => {
-                console.log(text, selection)
-                let results = await text?.toPromise()
-                const textStr = results?.length ? results.join('\r\n') : ''
-                onTransAction && onTransAction(textStr)
-              },
-              label: '翻译'
-            }
-          ],
-          styles,
-          locale: 'zh-CN',
-          onInitialized: (registry) => {
-            pluginRegistry = registry
-            // @ts-ignore
-            registry?.getPlugin('loader')?.provides()?.onDocumentLoaded((document: any) => {
-              /*console.log(document)*/
-            })
-            // @ts-ignore
-            registry?.getPlugin('loader')?.provides()?.onFileOpened((file: File) => {
-              /*console.log(file)*/
-              onFileOpened && onFileOpened(file)
-            })
+          annotations: {annotationAuthor: currentUser?.realName || '匿名用户'},
+          documentManager: {
+            maxDocuments: 5,
+            initialDocuments: [{
+              url: pdfUrl || `${viewerBaseUrl}/demo/368653411.pdf`, documentId: id, name: fileName
+            }]
           },
-          headerEndExtActions: [
-            {
-              imgNode: '截图AI解析',
-              onClick: async () => {
-                // @ts-ignore
-                const capture = pluginRegistry.getPlugin<CapturePlugin>('capture')?.provides()
-                if (!capture) return
-
-                if (capture.isMarqueeCaptureActive()) {
-                  capture.disableMarqueeCapture()
-                } else {
-                  capture.enableMarqueeCapture()
-                }
-              },
-              label: '截取图表等非文本区域，AI帮您分析'
+          tabBar: 'never',
+          theme: {
+            preference: 'light',
+            light: {
+              accent: {
+                primary: '#F5222D',        // Main brand color
+                primaryHover: '#cf1322',   // Hover state
+                primaryActive: '#a8071a',  // Click state
+                primaryLight: '#f3e8ff',   // Subtle backgrounds (e.g., selection)
+                primaryForeground: '#fff'  // Text on top of primary color
+              }
             },
-            {
-              imgNode: getSaveIconHtml({className: 'h-5 w-5'}),
-              onClick: async () => {
-                const data = await pluginRegistry?.getPlugin('export')?.saveAsCopyAndGetBufferAndName().toPromise()
-                /*console.log(data)*/
-                onSaveAnnotation && onSaveAnnotation(data.buffer, data.name)
-              },
-              label: '保存批注'
-            }
-          ],
-          headerStartExtActions: [{
-            imgNode: getArrowLeftIconHtml({className: 'h-5 w-5'}),
-            onClick: () => {
-              history.back()
-            },
-            label: '返回'
-          }],
+          },
+          i18n: {
+            defaultLocale: 'zh-CN'
+          },
+          icons: {
+            custom_ai: getAIIconPaths(),
+            custom_trans: getTransIconPaths(),
+            custom_arrow_left: getArrowLeftIconPaths(),
+          },
           captureExtActions: [
             {
-              id: 'capture-action-ai',
-              imgNode: 'AI解析',
-              onClick: async (data) => {
-                const fileData = await pluginRegistry?.getPlugin('export')?.saveAsCopyAndGetBufferAndName().toPromise()
-                onCaptureAIAnalysisAction && onCaptureAIAnalysisAction(data, fileData.name)
-              },
-              label: 'AI帮您分析截图中的内容'
+              id: 'custom.capture.ai',
+              label: 'AI解读',
+              onClick: (captureData: CaptureData) => {
+                onCaptureAIAnalysisAction && onCaptureAIAnalysisAction(captureData, fileName)
+              }
             },
             {
-              id: 'capture-action-translation',
-              imgNode: getTransIconHtml({className: 'h-5 w-5'}),
-              onClick: async (data) => {
-                const fileData = await pluginRegistry?.getPlugin('export')?.saveAsCopyAndGetBufferAndName().toPromise()
-                onCaptureTransAction && onCaptureTransAction(data, fileData.name)
-              },
-              label: '翻译'
-            }
+              id: 'custom.capture.trans',
+              label: '翻译',
+              onClick: (captureData: CaptureData) => {
+                onCaptureTransAction && onCaptureTransAction(captureData, fileName)
+              }
+            },
           ],
+        })
+
+        if (!viewer) {
+          return
+        }
+        viewerRef.current = viewer
+        if (!isActive) {
+          return
+        }
+        const registry = await viewer.registry
+
+        const commands = registry.getPlugin('commands')?.provides?.()
+        const ui = registry.getPlugin('ui')?.provides?.()
+        const schema = ui.getSchema()
+
+        // custom selection
+        commands.registerCommand({
+          id: 'custom.selection.ai',
+          label: 'AI解读',
+          icon: 'custom_ai',
+          action: async ({registry, documentId}: { registry: PluginRegistry; state: any; documentId: string }) => {
+            const plugin = registry.getPlugin('selection')
+            const scope = plugin?.provides?.().forDocument(documentId)
+            const results = (await scope?.getSelectedText().toPromise()) || []
+            /*console.log('AI解读', text)*/
+            const textStr = results?.length ? results.join('\r\n') : ''
+            onAIAnalysisAction && onAIAnalysisAction(textStr)
+            scope?.clear()
+          },
+          categories: ['selection'],
+        })
+        commands.registerCommand({
+          id: 'custom.selection.trans',
+          label: '翻译',
+          icon: 'custom_trans',
+          action: async ({registry, documentId}: { registry: PluginRegistry; state: any; documentId: string }) => {
+            const plugin = registry.getPlugin('selection')
+            const scope = plugin?.provides?.().forDocument(documentId)
+            const results = (await scope?.getSelectedText().toPromise()) || []
+            /*console.log('翻译', text)*/
+            const textStr = results?.length ? results.join('\r\n') : ''
+            onTransAction && onTransAction(textStr)
+            scope?.clear()
+          },
+          categories: ['selection'],
+        })
+        const selectionItems = schema.selectionMenus['selection'].items
+        ui.mergeSchema({
+          selectionMenus: {
+            ...schema.selectionMenus,
+            selection: {
+              ...schema.selectionMenus['selection'],
+              items: [
+                {
+                  type: 'command-button',
+                  id: 'custom-selection-ai',
+                  commandId: 'custom.selection.ai',
+                  variant: 'icon',
+                  categories: ['selection'],
+                },
+                {
+                  type: 'command-button',
+                  id: 'custom-selection-trans',
+                  commandId: 'custom.selection.trans',
+                  variant: 'icon',
+                  categories: ['selection'],
+                },
+                ...selectionItems
+              ]
+            }
+          }
+        })
+
+        // custom toolbar
+        const toolbar = schema.toolbars['main-toolbar']
+        commands.registerCommand({
+          id: 'custom.toolbar.back',
+          label: '返回',
+          icon: 'custom_arrow_left',
+          action: async ({registry, documentId}: { registry: PluginRegistry; state: any; documentId: string }) => {
+            /*console.log('返回')*/
+            history.back()
+          },
+          categories: ['toolbar'],
+        })
+        commands.registerCommand({
+          id: 'custom.toolbar.save',
+          label: '保存批注',
+          icon: 'save',
+          action: async ({registry, documentId}: { registry: PluginRegistry; state: any; documentId: string }) => {
+            // @ts-ignore
+            const data = await registry.getPlugin('export')?.saveAsCopyAndGetBufferAndName(documentId).toPromise()
+            /*console.log(data)*/
+            onSaveAnnotation && onSaveAnnotation(data.buffer, data.name)
+          },
+          categories: ['toolbar'],
+        })
+        commands.registerCommand({
+          id: 'custom.toolbar.capture.ai',
+          label: '截图AI解析',
+          action: async ({registry, documentId}: { registry: PluginRegistry; state: any; documentId: string }) => {
+            const capture = registry.getPlugin('capture')?.provides?.()
+            if (!capture) return
+
+            const scope = capture.forDocument(documentId)
+            if (scope.isMarqueeCaptureActive()) {
+              scope.disableMarqueeCapture()
+            } else {
+              scope.enableMarqueeCapture()
+            }
+          },
+          categories: ['toolbar'],
+        })
+        const toolbarItems = JSON.parse(JSON.stringify(toolbar.items))
+        const rightGroup = toolbarItems.find((item: any) => item.id === 'right-group')
+        const leftGroup = toolbarItems.find((item: any) => item.id === 'left-group')
+        /*console.log(toolbarItems, rightGroup, leftGroup)*/
+        if (rightGroup) {
+          rightGroup.items = rightGroup.items || []
+          rightGroup.items.unshift({
+            type: 'command-button',
+            id: 'custom-toolbar-save',
+            commandId: 'custom.toolbar.save',
+            variant: 'icon',
+            categories: ['toolbar'],
+          },)
+          rightGroup.items.unshift({
+            type: 'command-button',
+            id: 'custom-toolbar-capture-ai',
+            commandId: 'custom.toolbar.capture.ai',
+            variant: 'text',
+            categories: ['toolbar'],
+          },)
+        }
+        if (leftGroup) {
+          leftGroup.items = leftGroup.items || []
+          leftGroup.items.unshift({
+            type: 'command-button',
+            id: 'custom-toolbar-back',
+            commandId: 'custom.toolbar.back',
+            variant: 'icon',
+            categories: ['toolbar'],
+          },)
+        }
+        ui.mergeSchema({
+          toolbars: {'main-toolbar': {...toolbar, items: toolbarItems}}
+        })
+
+        const docManager = registry.getPlugin('document-manager')?.provides?.()
+        docManager.onDocumentOpened(async (doc: any) => {
+          /*console.log(doc)
+          const data = await registry?.getPlugin('export')?.saveAsCopyAndGetBufferAndName(doc.id).toPromise()
+          console.log(data)*/
+        })
+        docManager.onFileSelected((file: File) => {
+          onFileOpened && onFileOpened(file)
         })
       } catch (error) {
         console.error('Failed to load EmbedPDF:', error)
@@ -179,6 +272,11 @@ export default function PDFViewer(props: PDFViewerProps) {
     }
 
     loadEmbedPDF()
+    return () => {
+      isActive = false
+      containerElement.innerHTML = ''
+      viewerRef.current = null
+    }
   }, [])
 
   return (
@@ -189,7 +287,7 @@ export default function PDFViewer(props: PDFViewerProps) {
         height: '100%',
         ...style,
       }}
-      ref={viewerRef}
+      ref={containerRef}
     />
   )
 }
