@@ -4,9 +4,10 @@ import EmbedPDF, {
   type EmbedPdfContainer,
   type PDFViewerConfig,
   type PluginRegistry,
+  buildCdnFontConfig,
 } from 'embedpdf-snippet-i18n'
 import {getAIIconPaths} from '@/icons/ai'
-import { getTransIconPaths} from '@/icons/trans'
+import {getTransIconPaths} from '@/icons/trans'
 import {uuidV4} from '@/utils/util'
 import {useModel} from '@@/exports'
 import {getArrowLeftIconPaths} from '@/icons/arrowLeft'
@@ -59,6 +60,10 @@ export default function PDFViewer(props: PDFViewerProps) {
 
     const loadEmbedPDF = async () => {
       let fileName = pdfName || `${uuidV4()}.pdf`
+      let fontUrls: any = {};
+      ['arabic', 'hebrew', 'jp', 'kr', 'latin', 'sc', 'tc'].forEach(key => {
+        fontUrls[key] = `${viewerBaseUrl}/fonts/${key}`
+      })
       try {
         const viewer = EmbedPDF.init({
           type: 'container',
@@ -92,6 +97,11 @@ export default function PDFViewer(props: PDFViewerProps) {
             custom_ai: getAIIconPaths(),
             custom_trans: getTransIconPaths(),
             custom_arrow_left: getArrowLeftIconPaths(),
+          },
+          fontFallback: {
+            fonts: {
+              ...buildCdnFontConfig(fontUrls).fonts
+            }
           },
           captureExtActions: [
             {
