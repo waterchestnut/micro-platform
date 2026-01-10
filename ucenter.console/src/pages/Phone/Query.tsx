@@ -1,33 +1,54 @@
-import { PageContainer,
-  ProFormText, } from '@ant-design/pro-components';
-import { useModel } from '@umijs/max';
-import { Card, theme } from 'antd';
-import { Button, Form, Input, Select } from 'antd';
-import {queryPhoneRegion} from "@/services/ucenter/phone";
-import React from 'react';
-import {useState} from 'react';
+import { PageContainer, ProFormText } from '@ant-design/pro-components';
+import { Card, theme, Button, Form, Space, Spin, Alert, Descriptions } from 'antd';
+import { PhoneOutlined } from '@ant-design/icons';
+import { queryPhoneRegion } from '@/services/ucenter/phone';
+import React, { useState } from 'react';
 
 const PhoneQuery: React.FC = () => {
   const { token } = theme.useToken();
-  const { initialState } = useModel('@@initialState');
-  const [provName, setProvName] = useState('')
-  const [cityName, setCityName] = useState('')
+  const [form] = Form.useForm();
+  const [provName, setProvName] = useState('');
+  const [cityName, setCityName] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [queried, setQueried] = useState(false)
 
-  
   const onFinish = async (values: any) => {
-    let data = await queryPhoneRegion(values.phonenumber);
-    console.log(data)
-    setProvName(data.provName)
-    setCityName(data.cityName)
+    setLoading(true);
+    setError('');
+    setQueried(false);
+    try {
+      const data = await queryPhoneRegion(values.phonenumber);
+      setProvName(data.provName || '未知');
+      setCityName(data.cityName || '未知');
+      setQueried(true);
+    } catch (err: any) {
+      setError(err.message || '查询失败,请稍后重试');
+      setProvName('');
+      setCityName('');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const checkPhoneNumber = (_: any, value: string) => {
-    let regex = /\d{11}/
-    if(regex.test(value)){
+    if (!value) {
+      return Promise.reject(new Error('请输入手机号'));
+    }
+    const regex = /^1[3-9]\d{9}$/;
+    if (regex.test(value)) {
       return Promise.resolve();
     }
-    return Promise.reject(new Error('请输入正确的手机号'));
+    return Promise.reject(new Error('请输入正确的11位手机号'));
   };
+  const handleReset = () => {
+    form.resetFields();
+    setProvName('');
+    setCityName('');
+    setError('');
+    setQueried(false);
+  };
+
   return (
     <PageContainer>
       <Card
@@ -35,37 +56,81 @@ const PhoneQuery: React.FC = () => {
           borderRadius: 8,
         }}
       >
-        <div
-        >
+        <Space direction="vertical" size="large" style={{ width: '100%' }}>
           <div
             style={{
               fontSize: '20px',
               color: token.colorTextHeading,
+              fontWeight: 500,
             }}
           >
+            <PhoneOutlined style={{ marginRight: 8 }} />
             手机号归属地查询
           </div>
+
           <Form
-            name="customized_form_controls"
+            form={form}
+            name="phone_query_form"
             layout="inline"
             onFinish={onFinish}
           >
             <ProFormText
-                width="md"
-                name="phonenumber"
-                label="手机号"
-                placeholder="请输入手机号"
-                rules={[{ validator: checkPhoneNumber }]}
-              />
+              width="md"
+              name="phonenumber"
+              label="手机号"
+              placeholder="请输入11位手机号"
+              rules={[{ validator: checkPhoneNumber }]}
+              disabled={loading}
+            />
             <Form.Item>
-              <Button type="primary" htmlType="submit">
-                Submit
-              </Button>
+              <Space>
+                <Button type="primary" htmlType="submit" loading={loading}>
+                  查询
+                </Button>
+                <Button onClick={handleReset} disabled={loading}>
+                  重置
+                </Button>
+              </Space>
             </Form.Item>
           </Form>
-        </div>
-        <div>所属省份 : {provName}</div>
-        <div>所属城市 : {cityName}</div>
+
+          {loading && (
+            <div style={{ textAlign: 'center', padding: '20px 0' }}>
+              <Spin tip="查询中..." />
+            </div>
+          )}
+
+          {error && (
+            <Alert
+              message="查询失败"
+              description={error}
+              type="error"
+              showIcon
+              closable
+              onClose={() => setError('')}
+            />
+          )}
+
+          {queried && !loading && !error && (
+            <Card
+              title="查询结果"
+              type="inner"
+            >
+              <Descriptions column={1} bordered>
+                <Descriptions.Item label="所属省份">
+                  <span style={{ fontSize: '16px', fontWeight: 500 }}>
+                    {provName}
+                  </span>
+                </Descriptions.Item>
+                <Descriptions.Item label="所属城市">
+                  <span style={{ fontSize: '16px', fontWeight: 500 }}>
+                    {cityName}
+                  </span>
+                </Descriptions.Item>
+              </Descriptions>
+            </Card>
+          )}
+        </Space>
       </Card>
     </PageContainer>
   );

@@ -129,7 +129,7 @@ export default [
       {
         path: '/phonenumber',
         name: 'phonenumber',
-        icon: 'home',
+        icon: 'phone',
         component: './Phone/Query',
       },
       {
