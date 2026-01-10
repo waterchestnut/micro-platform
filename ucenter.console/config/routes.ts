@@ -18,6 +18,12 @@ export default [
     layout: false,
   },
   {
+    name: 'register',
+    path: '/user/register',
+    component: './User/Register',
+    layout: false,
+  },
+  {
     path: '/',
     access: 'normalRouteFilter',
     authority: false,

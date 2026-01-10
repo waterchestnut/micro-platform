@@ -80,5 +80,19 @@ export const checkPasswordComplexity = (password: string) => {
     }
   }
   res.level = level >= userPwdRuleConfig.minRequireLevel;
-  return res;
+  
+  // 返回结果，包含 success 和 message
+  const success = res.lengthRegex && !res.invalidRegex && res.level && res.requiredIsValid;
+  let message = '';
+  if (!res.lengthRegex) {
+    message = `密码长度必须在${userPwdRuleConfig.minLength}-${userPwdRuleConfig.maxLength}之间`;
+  } else if (res.invalidRegex) {
+    message = '密码不能包含中文和空格';
+  } else if (!res.level) {
+    message = `密码必须包含至少${userPwdRuleConfig.minRequireLevel}种字符类型（数字、小写字母、大写字母、特殊符号）`;
+  } else if (!res.requiredIsValid) {
+    message = '密码不符合规则要求';
+  }
+  
+  return { ...res, success, message };
 };

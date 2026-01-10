@@ -67,6 +67,52 @@ export async function getCoreClientIpmiDetail(
   });
 }
 
+/** 禁用应用 禁用应用 返回值: Default Response POST /core/client/ipmi/disable */
+export async function postCoreClientIpmiDisable(
+  body: {
+    clientCode: string;
+  },
+  options?: { [key: string]: any },
+) {
+  return request<{
+    statusCode: number;
+    code: number;
+    msg?: string;
+    errorLevel?: string;
+    data?: Record<string, any>;
+  }>('/core/client/ipmi/disable', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  });
+}
+
+/** 启用应用 启用应用 返回值: Default Response POST /core/client/ipmi/enable */
+export async function postCoreClientIpmiEnable(
+  body: {
+    clientCode: string;
+  },
+  options?: { [key: string]: any },
+) {
+  return request<{
+    statusCode: number;
+    code: number;
+    msg?: string;
+    errorLevel?: string;
+    data?: Record<string, any>;
+  }>('/core/client/ipmi/enable', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  });
+}
+
 /** 客户端列表 获取客户端列表 返回值: Default Response POST /core/client/ipmi/list */
 export async function postCoreClientIpmiList(
   body: {

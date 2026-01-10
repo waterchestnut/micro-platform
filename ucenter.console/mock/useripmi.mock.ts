@@ -17,4 +17,7 @@ export default {
   'POST /core/user/ipmi/delete': (req: Request, res: Response) => {
     res.status(200).send({});
   },
+  'POST /core/user/list': (req: Request, res: Response) => {
+    res.status(200).send({});
+  },
 };

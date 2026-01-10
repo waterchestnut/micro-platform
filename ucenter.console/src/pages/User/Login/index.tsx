@@ -627,6 +627,13 @@ const Login: React.FC = () => {
               <FormattedMessage id="pages.login.rememberMe" defaultMessage="自动登录" />
             </ProFormCheckbox>*/}
               <a
+                onClick={() => {
+                  history.push('/user/register')
+                }}
+              >
+                <FormattedMessage id='pages.login.registerAccount' defaultMessage='注册账号'/>
+              </a>
+              <a
                 style={{
                   display: 'flex',
                   justifyContent: 'right',

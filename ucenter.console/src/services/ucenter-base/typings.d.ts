@@ -41,9 +41,9 @@ declare namespace UCENTERAPI {
     /** 应用标识 */
     clientCode: string;
     /** 应用名称 */
-    clientName: string;
+    clientName?: string;
     /** 应用秘钥 */
-    clientSecret: string;
+    clientSecret?: string;
     /** 授权后的回调地址 */
     retUrls?: string[];
     /** 授权模式 */
@@ -104,6 +104,8 @@ declare namespace UCENTERAPI {
       districtName?: string;
       content?: string;
     };
+    /** AdminClass */
+    AdminClass?: { classCode?: string; className?: string };
     /** Contact */
     Contact?: {
       realName?: string;
@@ -164,6 +166,18 @@ declare namespace UCENTERAPI {
       update?: string;
       delete?: string;
     };
+    /** RequestMethodEnum */
+    RequestMethodEnum?: {
+      GET?: string;
+      POST?: string;
+      PUT?: string;
+      DELETE?: string;
+      PATCH?: string;
+      HEAD?: string;
+      OPTIONS?: string;
+      CONNECT?: string;
+      TRACE?: string;
+    };
     /** SchemaEnum */
     SchemaEnum?: { default?: string; store?: string };
     /** StatusEnum */
@@ -196,8 +210,8 @@ declare namespace UCENTERAPI {
     /** Client */
     Client?: {
       clientCode: string;
-      clientName: string;
-      clientSecret: string;
+      clientName?: string;
+      clientSecret?: string;
       retUrls?: string[];
       grantTypes?: ('code' | 'token' | 'password' | 'clientCredentials')[];
       scopes?: ('myRead' | 'myWrite' | 'admin')[];
@@ -316,7 +330,17 @@ declare namespace UCENTERAPI {
       clientCode?: string;
       name?: string;
       path: string;
-      method: string[];
+      method: (
+        | 'GET'
+        | 'POST'
+        | 'PUT'
+        | 'DELETE'
+        | 'PATCH'
+        | 'HEAD'
+        | 'OPTIONS'
+        | 'CONNECT'
+        | 'TRACE'
+      )[];
       auth?: boolean;
       clientAuth?: boolean;
       privs?: string[];
@@ -389,6 +413,9 @@ declare namespace UCENTERAPI {
         jobStatus?: string;
       }[];
       mainJobCode?: string;
+      adminClass?: { classCode?: string; className?: string };
+      idNum?: string;
+      grade?: string;
     };
     /** UserInfoWithToken */
     UserInfoWithToken?: {
@@ -423,6 +450,9 @@ declare namespace UCENTERAPI {
         jobStatus?: string;
       }[];
       mainJobCode?: string;
+      adminClass?: { classCode?: string; className?: string };
+      idNum?: string;
+      grade?: string;
       accessToken?: string;
       expiresTime?: number;
       refreshToken?: string;
@@ -455,7 +485,17 @@ declare namespace UCENTERAPI {
       clientCode?: string;
       name?: string;
       path: string;
-      method: string[];
+      method: (
+        | 'GET'
+        | 'POST'
+        | 'PUT'
+        | 'DELETE'
+        | 'PATCH'
+        | 'HEAD'
+        | 'OPTIONS'
+        | 'CONNECT'
+        | 'TRACE'
+      )[];
       auth?: boolean;
       clientAuth?: boolean;
       privs?: string[];
@@ -499,8 +539,8 @@ declare namespace UCENTERAPI {
     /** Client */
     Client?: {
       clientCode: string;
-      clientName: string;
-      clientSecret: string;
+      clientName?: string;
+      clientSecret?: string;
       retUrls?: string[];
       grantTypes?: ('code' | 'token' | 'password' | 'clientCredentials')[];
       scopes?: ('myRead' | 'myWrite' | 'admin')[];
@@ -645,7 +685,17 @@ declare namespace UCENTERAPI {
       clientCode?: string;
       name?: string;
       path: string;
-      method: string[];
+      method: (
+        | 'GET'
+        | 'POST'
+        | 'PUT'
+        | 'DELETE'
+        | 'PATCH'
+        | 'HEAD'
+        | 'OPTIONS'
+        | 'CONNECT'
+        | 'TRACE'
+      )[];
       auth?: boolean;
       clientAuth?: boolean;
       privs?: string[];
@@ -729,6 +779,9 @@ declare namespace UCENTERAPI {
         _id?: string;
       }[];
       mainJobCode?: string;
+      adminClass?: { classCode?: string; className?: string; _id?: string };
+      idNum?: string;
+      grade?: string;
       insertTime?: string;
       updateTime?: string;
       _id?: string;
@@ -971,7 +1024,17 @@ declare namespace UCENTERAPI {
     /** 请求路径 */
     path: string;
     /** 请求方法 */
-    method: string[];
+    method: (
+      | 'GET'
+      | 'POST'
+      | 'PUT'
+      | 'DELETE'
+      | 'PATCH'
+      | 'HEAD'
+      | 'OPTIONS'
+      | 'CONNECT'
+      | 'TRACE'
+    )[];
     /** 是否用户登录才能访问 */
     auth?: boolean;
     /** 是否第三方客户端登录才能访问 */
@@ -998,7 +1061,17 @@ declare namespace UCENTERAPI {
     /** 请求路径 */
     path: string;
     /** 请求方法 */
-    method: string[];
+    method: (
+      | 'GET'
+      | 'POST'
+      | 'PUT'
+      | 'DELETE'
+      | 'PATCH'
+      | 'HEAD'
+      | 'OPTIONS'
+      | 'CONNECT'
+      | 'TRACE'
+    )[];
     /** 是否用户登录才能访问 */
     auth?: boolean;
     /** 是否第三方客户端登录才能访问 */
@@ -1130,6 +1203,12 @@ declare namespace UCENTERAPI {
     }[];
     /** 主职位标识 */
     mainJobCode?: string;
+    /** 所属班级 */
+    adminClass?: { classCode?: string; className?: string };
+    /** 学号/工号 */
+    idNum?: string;
+    /** 年级 */
+    grade?: string;
   };
 
   type UserInfoWithToken = {
@@ -1190,6 +1269,12 @@ declare namespace UCENTERAPI {
     }[];
     /** 主职位标识 */
     mainJobCode?: string;
+    /** 所属班级 */
+    adminClass?: { classCode?: string; className?: string };
+    /** 学号/工号 */
+    idNum?: string;
+    /** 年级 */
+    grade?: string;
     accessToken?: string;
     expiresTime?: number;
     refreshToken?: string;

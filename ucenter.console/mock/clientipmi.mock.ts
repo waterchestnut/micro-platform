@@ -17,4 +17,10 @@ export default {
   'POST /core/client/ipmi/delete': (req: Request, res: Response) => {
     res.status(200).send({});
   },
+  'POST /core/client/ipmi/enable': (req: Request, res: Response) => {
+    res.status(200).send({});
+  },
+  'POST /core/client/ipmi/disable': (req: Request, res: Response) => {
+    res.status(200).send({});
+  },
 };

@@ -51,3 +51,41 @@ export async function emailLoginVerify(email: string, captchaKey: string, captch
     data: {email, captchaKey, captcha}
   })
 }
+
+/** 手机号注册 */
+export async function phoneRegister(mobile: string, smsCode: string, pwd: string, realName?: string) {
+  const publicKey = (await getPublicKey()).data
+  const publicK = forge.pki.publicKeyFromPem(publicKey)
+  const encrypted = btoa(publicK.encrypt(encodeURIComponent(pwd), 'RSA-OAEP'))
+  return ucenterRequest('/core/user/auth/register/phone', {
+    method: 'POST',
+    data: {mobile, smsCode, pwd: encrypted, encrypt: true, realName}
+  })
+}
+
+/** 获得手机注册验证码 */
+export async function phoneRegisterVerify(phone: string, captchaKey: string, captcha: string) {
+  return ucenterRequest('/core/user/auth/register/phone/verify', {
+    method: 'POST',
+    data: {phone, captchaKey, captcha}
+  })
+}
+
+/** 邮箱注册 */
+export async function emailRegister(email: string, emailCode: string, pwd: string, realName?: string) {
+  const publicKey = (await getPublicKey()).data
+  const publicK = forge.pki.publicKeyFromPem(publicKey)
+  const encrypted = btoa(publicK.encrypt(encodeURIComponent(pwd), 'RSA-OAEP'))
+  return ucenterRequest('/core/user/auth/register/email', {
+    method: 'POST',
+    data: {email, emailCode, pwd: encrypted, encrypt: true, realName}
+  })
+}
+
+/** 获得邮箱注册验证码 */
+export async function emailRegisterVerify(email: string, captchaKey: string, captcha: string) {
+  return ucenterRequest('/core/user/auth/register/email/verify', {
+    method: 'POST',
+    data: {email, captchaKey, captcha}
+  })
+}

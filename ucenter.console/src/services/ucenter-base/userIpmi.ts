@@ -113,3 +113,29 @@ export async function postCoreUserIpmiUpdate(
     ...(options || {}),
   });
 }
+
+/** 用户列表 获取用户列表 返回值: Default Response POST /core/user/list */
+export async function postCoreUserList(
+  body: {
+    filter?: Record<string, any>;
+    pageIndex?: number;
+    pageSize?: number;
+    options?: { total?: number; sort?: Record<string, any> };
+  },
+  options?: { [key: string]: any },
+) {
+  return request<{
+    statusCode: number;
+    code: number;
+    msg?: string;
+    errorLevel?: string;
+    data?: { total?: number; rows?: UCENTERAPI.UserInfo[] };
+  }>('/core/user/list', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  });
+}

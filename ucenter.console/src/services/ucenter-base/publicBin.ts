@@ -22,3 +22,17 @@ export async function getPublicBinMobileRangeCheck(
     ...(options || {}),
   });
 }
+
+/** 获取角色列表 获取平台所有的角色列表 返回值: Default Response GET /public-bin/user-role/group/all */
+export async function getPublicBinUserRoleGroupAll(options?: { [key: string]: any }) {
+  return request<{
+    statusCode: number;
+    code: number;
+    msg?: string;
+    errorLevel?: string;
+    data?: { groupCode: string; groupName: string }[];
+  }>('/public-bin/user-role/group/all', {
+    method: 'GET',
+    ...(options || {}),
+  });
+}

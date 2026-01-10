@@ -5,4 +5,7 @@ export default {
   'GET /public-bin/mobile-range/check': (req: Request, res: Response) => {
     res.status(200).send({});
   },
+  'GET /public-bin/user-role/group/all': (req: Request, res: Response) => {
+    res.status(200).send({});
+  },
 };
