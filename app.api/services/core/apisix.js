@@ -112,11 +112,7 @@ export async function getClientRouteData(clientCode, clientName, upstreams, need
                 'allow_headers': '*',
                 'allow_methods': 'GET,POST,OPTIONS',
                 'allow_origins': '*',
-                'allow_origins_by_regex': [
-                    '.*.bogupeijin.com',
-                    '.*.paretop.net',
-                    '.*localhost:.*'
-                ],
+                'allow_origins_by_regex': apisixConfig.allowOriginsRegex,
                 'expose_headers': '*',
                 'max_age': 1728000
             },

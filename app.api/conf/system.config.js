@@ -86,5 +86,7 @@ export default {
         adminKey: process.env['APISIX_KEY'],
         /** 授权中心上游地址 */
         authUpstream: process.env['APISIX_UCENTER_UPSTREAM'],
+        /** CORS允许的源正则表达式列表 */
+        allowOriginsRegex: process.env['APISIX_CORS_REGEX'].split(','),
     },
 }
