@@ -38,7 +38,7 @@ const useStyles = createStyles(({token}) => {
     captcha: {
       width: '100px',
       cursor: 'pointer',
-      margin: '-15px',
+      margin: '-15px -15px -15px 0',
       '& svg': {
         width: '100px',
         height: '40px'
