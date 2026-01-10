@@ -191,7 +191,7 @@ const Register: React.FC = () => {
                 content={msg}
               />
             )}
-            
+
             {type === 'mobile' && (
               <>
                 <ProFormText
@@ -260,10 +260,11 @@ const Register: React.FC = () => {
                         if (!currentCaptchaKey) {
                           message.error('请先获取图形验证码')
                           refreshCaptcha()
+                          throw new Error('请先获取图形验证码')
                         } else {
                           message.error('请填写手机号和图形验证码')
+                          throw new Error('请填写手机号和图形验证码')
                         }
-                        return
                       }
 
                       const res = await phoneRegisterVerify(mobile, currentCaptchaKey, captcha)
@@ -272,10 +273,12 @@ const Register: React.FC = () => {
                       } else {
                         message.error(res.msg || '获取验证码失败')
                         refreshCaptcha()
+                        throw new Error(res.msg || '获取验证码失败')
                       }
                     } catch (errorInfo) {
                       console.log('校验失败:', errorInfo)
                       refreshCaptcha()
+                      throw errorInfo
                     }
                   }}
                 />
@@ -405,10 +408,11 @@ const Register: React.FC = () => {
                         if (!currentCaptchaKey) {
                           message.error('请先获取图形验证码')
                           refreshCaptcha()
+                          throw new Error('请先获取图形验证码')
                         } else {
                           message.error('请填写邮箱和图形验证码')
+                          throw new Error('请填写邮箱和图形验证码')
                         }
-                        return
                       }
 
                       const res = await emailRegisterVerify(email, currentCaptchaKey, captcha)
@@ -417,10 +421,12 @@ const Register: React.FC = () => {
                       } else {
                         message.error(res.msg || '获取验证码失败')
                         refreshCaptcha()
+                        throw new Error(res.msg || '获取验证码失败')
                       }
                     } catch (errorInfo) {
                       console.log('校验失败:', errorInfo)
                       refreshCaptcha()
+                      throw errorInfo
                     }
                   }}
                 />

@@ -483,10 +483,11 @@ const Login: React.FC = () => {
                         if (!currentCaptchaKey) {
                           message.error('请先获取图形验证码')
                           refreshCaptcha()
+                          throw new Error('请先获取图形验证码')
                         } else {
                           message.error('请填写手机号和图形验证码')
+                          throw new Error('请填写手机号和图形验证码')
                         }
-                        return
                       }
 
                       // 调用验证码接口
@@ -496,11 +497,13 @@ const Login: React.FC = () => {
                       } else {
                         message.error(res.msg || '获取验证码失败')
                         refreshCaptcha() // 失败时刷新图形验证码
+                        throw new Error(res.msg || '获取验证码失败')
                       }
                     } catch (errorInfo) {
                       // validateFields 校验失败会到这里
                       console.log('校验失败:', errorInfo) // 保留日志供调试
                       refreshCaptcha() // 校验失败也刷新图形码
+                      throw errorInfo
                     }
                   }}
                 />
@@ -593,10 +596,11 @@ const Login: React.FC = () => {
                         if (!currentCaptchaKey) {
                           message.error('请先获取图形验证码')
                           refreshCaptcha()
+                          throw new Error('请先获取图形验证码')
                         } else {
                           message.error('请填写邮箱号和图形验证码')
+                          throw new Error('请填写邮箱号和图形验证码')
                         }
-                        return
                       }
 
                       // 调用验证码接口
@@ -606,11 +610,13 @@ const Login: React.FC = () => {
                       } else {
                         message.error(res.msg || '获取验证码失败')
                         refreshCaptcha() // 失败时刷新图形验证码
+                        throw new Error(res.msg || '获取验证码失败')
                       }
                     } catch (errorInfo) {
                       // validateFields 校验失败会到这里
                       console.log('校验失败:', errorInfo) // 保留日志供调试
                       refreshCaptcha() // 校验失败也刷新图形码
+                      throw errorInfo
                     }
                   }}
                 />
