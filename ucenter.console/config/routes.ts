@@ -26,7 +26,7 @@ export default [
   {
     path: '/',
     access: 'normalRouteFilter',
-    authority: false,
+    authority: ['ucenter-browse'],
     component: './Layout',
     flatMenu: true,
     routes: [
@@ -34,6 +34,7 @@ export default [
         path: '/home',
         name: 'home',
         icon: 'home',
+        authority: ['ucenter-browse'],
         component: './Home',
       },
       {
@@ -41,7 +42,7 @@ export default [
         icon: 'user',
         path: '/user/list',
         access: 'normalRouteFilter',
-        authority: ['all'],
+        authority: ['ucenter-ipmi-user-browse'],
         component: './User/List',
       },
       {
@@ -49,7 +50,7 @@ export default [
         icon: 'team',
         path: '/group/list',
         access: 'normalRouteFilter',
-        authority: ['all'],
+        authority: ['ucenter-ipmi-group-browse'],
         component: './Group/List',
       },
       {
@@ -57,7 +58,7 @@ export default [
         icon: 'appstore',
         path: '/client/list',
         access: 'normalRouteFilter',
-        authority: ['all'],
+        authority: ['ucenter-ipmi-client-browse'],
         component: './Client/List',
       },
       {
@@ -65,7 +66,7 @@ export default [
         name: 'auth',
         icon: 'safety',
         access: 'normalRouteFilter',
-        authority: ['all'],
+        authority: ['ucenter-ipmi-auth-browse'],
         routes: [
           {
             path: '/auth',
@@ -75,21 +76,21 @@ export default [
             path: '/auth/module',
             name: 'module',
             access: 'normalRouteFilter',
-            authority: ['all'],
+            authority: ['ucenter-ipmi-auth-browse'],
             component: './Auth/Module',
           },
           {
             path: '/auth/priv',
             name: 'priv',
             access: 'normalRouteFilter',
-            authority: ['all'],
+            authority: ['ucenter-ipmi-auth-browse'],
             component: './Auth/Priv',
           },
           {
             path: '/auth/page',
             name: 'page',
             access: 'normalRouteFilter',
-            authority: ['all'],
+            authority: ['ucenter-ipmi-auth-browse'],
             component: './Auth/Page',
           },
         ],
@@ -99,7 +100,7 @@ export default [
         icon: 'group',
         path: '/org/list',
         access: 'normalRouteFilter',
-        authority: ['all'],
+        authority: ['ucenter-ipmi-org-browse'],
         component: './Org/List',
       },
       {
@@ -107,7 +108,7 @@ export default [
         icon: 'partition',
         path: '/department/list',
         access: 'normalRouteFilter',
-        authority: ['all'],
+        authority: ['ucenter-ipmi-department-browse'],
         component: './Department/List',
       },
       {
@@ -115,7 +116,7 @@ export default [
         icon: 'userSwitch',
         path: '/job/list',
         access: 'normalRouteFilter',
-        authority: ['all'],
+        authority: ['ucenter-ipmi-job-browse'],
         component: './Job/List',
       },
       {
@@ -123,13 +124,15 @@ export default [
         icon: 'environment',
         path: '/region/list',
         access: 'normalRouteFilter',
-        authority: ['all'],
+        authority: ['ucenter-ipmi-region-browse'],
         component: './Region/List',
       },
       {
         path: '/phonenumber',
         name: 'phonenumber',
         icon: 'phone',
+        access: 'normalRouteFilter',
+        authority: false,
         component: './Phone/Query',
       },
       {
@@ -143,4 +146,4 @@ export default [
     layout: false,
     component: './404',
   },
-];
+]
