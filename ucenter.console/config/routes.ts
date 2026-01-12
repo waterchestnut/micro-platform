@@ -34,6 +34,7 @@ export default [
         path: '/home',
         name: 'home',
         icon: 'home',
+        access: 'normalRouteFilter',
         authority: ['ucenter-browse'],
         component: './Home',
       },
