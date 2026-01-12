@@ -277,7 +277,7 @@ const Viewer: React.FC = () => {
           <div className={styles.analysisContainer}>
             <Tabs
               style={{height: '100%', background: '#fff'}}
-              tabPosition='right'
+              tabPlacement='end'
               activeKey={tabActive}
               onChange={setTabActive}
               tabBarExtraContent={{
