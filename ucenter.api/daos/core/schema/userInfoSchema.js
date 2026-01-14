@@ -13,6 +13,7 @@ import SchemaEnum from "../enum/SchemaEnum.js"
 import Tag from "../definition/Tag.js"
 import UserDepartment from "../definition/UserDepartment.js"
 import AdminClass from "../definition/AdminClass.js";
+import Experience from '../definition/Experience.js'
 
 const Schema = mongoose.Schema
 const tools = ucenter.tools
@@ -50,6 +51,10 @@ const tools = ucenter.tools
  * @property {Schema.Types.Mixed} adminClass 所属班级，参见AdminClass
  * @property {String} idNum 学号/工号
  * @property {String} grade 年级
+ * @property {String} collegeCode 学院标识
+ * @property {String} collegeName 学院名称
+ * @property {String} specialtyCode 专业标识
+ * @property {String} specialtyName 专业名称
  * @property {Date} insertTime 创建时间
  * @property {Date} updateTime 最近更新时间
  */
@@ -91,6 +96,11 @@ const userInfoSchema = new Schema({
     adminClass: {type: AdminClass, description: '所属班级'},
     idNum: {type: String, description: '学号/工号'},
     grade: {type: String, description: '年级'},
+    collegeCode: {type: String, description: '学院标识'},
+    collegeName: {type: String, description: '学院名称'},
+    specialtyCode: {type: String, description: '专业标识'},
+    specialtyName: {type: String, description: '专业名称'},
+    experiences: {type: [Experience], description: '经历'},
     insertTime: {
         type: Date, default: function () {
             return new Date()
