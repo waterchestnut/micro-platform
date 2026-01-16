@@ -45,6 +45,7 @@ const tools = resource.tools
  * @property {String} llmExplain 大模型对资源内容的解读
  * @property {String} fullText 资源全文
  * @property {Number} year 年份
+ * @property {Number} version 版本号，用于信息的增量更新
  * @property {Date} insertTime 创建时间
  * @property {Date} updateTime 最近更新时间
  * @property {Date} latestReadTime 最近阅读时间
@@ -84,6 +85,7 @@ const resInfoSchema = new Schema({
     llmExplain: {type: String, description: '大模型对资源内容的解读'},
     fullText: {type: String, description: '资源全文'},
     year: {type: Number, description: '年份'},
+    version: {type: Number, default: 0, description: '版本号'},
     insertTime: {
         type: Date, default: function () {
             return new Date()
