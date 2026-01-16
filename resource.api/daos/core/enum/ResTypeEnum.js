@@ -19,5 +19,11 @@ export default class ResTypeEnum extends Enumify {
     static exercise = new ResTypeEnum('exercise', '试题')
     static meeting = new ResTypeEnum('meeting', '会议')
     static upload = new ResTypeEnum('upload', '自定义上传')
+    //文章下的二级分类
+    static camp = new ResTypeEnum('camp', '夏令营')
+    static enrollment = new ResTypeEnum('enrollment ', '招生')
+    static admission = new ResTypeEnum('admission', '录取')
+    static recruitment = new ResTypeEnum('recruitment', '招聘')
+    static csc = new ResTypeEnum('csc', '公费留学')
     static _ = this.closeEnum()
 }

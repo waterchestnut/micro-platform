@@ -46,6 +46,11 @@ export class ResInfoDac extends BaseDac {
         } else if (!tools.isUndefined(options.originalHashCode)) {
             params.$and.push({originalHashCode: {$eq: options.originalHashCode}})
         }
+        if (tools.isArray(options.fileExt)) {
+            params.$and.push({fileExts: {$in: options.fileExt}})
+        } else if (!tools.isUndefined(options.fileExt)) {
+            params.$and.push({fileExts: {$eq: options.fileExt}})
+        }
         if (tools.isExist(options.keyword)) {
             let keywordReg = {$regex: new RegExpExt(options.keyword, 'i', true)};
             params.$and.push({

@@ -24,7 +24,8 @@ const tools = resource.tools
  * @property {String} abstract 摘要与简介
  * @property {String} publisher 出版社
  * @property {String} publishDate 出版时间
- * @property {Schema.Types.Mixed} resType 类型
+ * @property {String} resType 类型：参见ResTypeEnum
+ * @property {String[]} resSubTypes 二级类型：参见ResTypeEnum
  * @property {Schema.Types.Mixed[]} sources 来源：参见Source
  * @property {String} url 链接
  * @property {Schema.Types.Mixed} operator 创建者
@@ -42,6 +43,8 @@ const tools = resource.tools
  * @property {Number} ragStatus 资源RAG的状态：参见RagStatusEnum
  * @property {String} llmChannelGroup 大模型会话频道内的分组
  * @property {String} llmExplain 大模型对资源内容的解读
+ * @property {String} fullText 资源全文
+ * @property {Number} year 年份
  * @property {Date} insertTime 创建时间
  * @property {Date} updateTime 最近更新时间
  * @property {Date} latestReadTime 最近阅读时间
@@ -61,6 +64,7 @@ const resInfoSchema = new Schema({
     publisher: {type: String, description: '出版社'},
     publishDate: {type: String, description: '出版时间'},
     resType: {type: String, description: '类型', enum: ResTypeEnum.toValues()},
+    resSubTypes: {type: [String], description: '二级类型', enum: ResTypeEnum.toValues()},
     sources: {type: [Source], description: '来源'},
     url: {type: String, description: '链接'},
     operator: {type: Operator, description: '创建者'},
@@ -78,6 +82,8 @@ const resInfoSchema = new Schema({
     ragStatus: {type: Number, default: 0, description: '资源RAG的状态', enum: RagStatusEnum.toValues()},
     llmChannelGroup: {type: String, description: '大模型会话频道内的分组'},
     llmExplain: {type: String, description: '大模型对资源内容的解读'},
+    fullText: {type: String, description: '资源全文'},
+    year: {type: Number, description: '年份'},
     insertTime: {
         type: Date, default: function () {
             return new Date()
