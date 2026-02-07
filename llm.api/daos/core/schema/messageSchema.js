@@ -23,7 +23,7 @@ const tools = llm.tools
  * @property {Object} llmParams 大模型自定义参数
  * @property {Object} ragParams 知识库自定义参数
  * @property {String} query 用户问题
- * @property {Object[]} inputs 文档、多媒体等格式的输入内容
+ * @property {Object[]} inputs 格式化的输入内容
  * @property {Object[]} messages 大模型的输入消息列表
  * @property {Number} messageTokens 输入Token数量
  * @property {Number} messagePriceUnit 输入Token单价
