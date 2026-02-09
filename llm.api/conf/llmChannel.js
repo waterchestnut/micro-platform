@@ -12,6 +12,15 @@ export default {
         /** 增强检索提示词 */
         ragPrompt: `## 用户资料： \n
     {{segs}}`,
+        /** 可以调用的MCP配置列表 */
+        mcpServers: {
+            searxng: {
+                transport: 'sse',
+                url: 'http://localhost:32769/sse'
+            }
+        },
+        /** 是否启用MCP调用 */
+        enableMcp: true,
     },
     /** 文献助手 */
     pdfviewer_literature: {
@@ -20,5 +29,7 @@ export default {
         /** 增强检索提示词 */
         ragPrompt: `## 文献材料： \n
     {{segs}}`,
+        /** 是否启用MCP调用 */
+        enableMcp: false,
     },
 }
