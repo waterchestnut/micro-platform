@@ -153,7 +153,7 @@ export class McpToolManager {
             logger.info(`执行工具调用: ${functionCall.name} (${mcpClientName})`)
 
             // 调用MCP工具
-            const result = await mcpManager.callTool(
+            const result = await mcpClientManager.callTool(
                 mcpClientName,
                 functionCall.name,
                 JSON.parse(functionCall.arguments || '{}')

@@ -34,7 +34,7 @@ class McpClientManager {
             await this.removeClient(name)
         }
 
-        const client = createMcpClient(serverConfig, {...this.defaultConfig, ...options})
+        const client = createMcpClient({...serverConfig, name}, {...this.defaultConfig, ...options})
 
         // 尝试连接
         const connected = await client.connect()
