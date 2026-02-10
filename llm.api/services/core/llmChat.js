@@ -184,7 +184,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                         while (toolCalls.length <= toolCallDelta.index) {
                             toolCalls.push({
                                 id: '',
-                                function: { name: '', arguments: '' },
+                                function: {name: '', arguments: ''},
                                 type: 'function'
                             })
                         }
@@ -263,7 +263,10 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         ...options,
         answerList,
         messageTokens,
-        answerTokens
+        answerTokens,
+        tools: createBody.tools,
+        toolChoice: createBody.tool_choice,
+        iterationCount: iterationCount
     })
 
     if (options.cache && options.channelCacheKey) {
@@ -308,7 +311,10 @@ async function saveMessage(query, messageCode, messages, conversationCode, chann
         answerFromCache: options.answerFromCache,
         answerCacheCode: options.answerCacheCode,
         extInfo: {
-            answerList: options.answerList
+            answerList: options.answerList,
+            tools: options.tools,
+            toolChoice: options.toolChoice,
+            iterationCount: options.iterationCount
         },
         messageTokens: options.messageTokens,
         answerTokens: options.answerTokens
