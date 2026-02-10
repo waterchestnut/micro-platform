@@ -87,21 +87,17 @@ class McpClientManager {
      */
     async createClients(serverConfigs, globalOptions = {}) {
         const results = {}
-        const promises = []
+        const tasks = Object.entries(serverConfigs).map(async ([name, serverConfig]) => {
+            try {
+                const client = await this.createClient(name, serverConfig, globalOptions)
+                results[name] = {success: true, client}
+            } catch (error) {
+                results[name] = {success: false, error: error.message}
+            }
+        })
 
-        for (const [name, serverConfig] of Object.entries(serverConfigs)) {
-            promises.push(
-                this.createClient(name, serverConfig, globalOptions)
-                    .then(client => {
-                        results[name] = {success: true, client}
-                    })
-                    .catch(error => {
-                        results[name] = {success: false, error: error.message}
-                    })
-            )
-        }
-
-        await Promise.all(promises)
+        // Run all creations in parallel and wait for all to settle
+        await Promise.allSettled(tasks)
         return results
     }
 

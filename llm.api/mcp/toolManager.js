@@ -63,36 +63,35 @@ export class McpToolManager {
         const tools = []
         const clientStatuses = mcpClientManager.getAllStatus()
 
-        for (const clientStatus of clientStatuses) {
-            if (!clientStatus.name.startsWith(`${channel}_`) || !clientStatus.isConnected) {
-                continue
-            }
-
-            try {
-                const clientTools = await mcpClientManager.listTools(clientStatus.name)
-                for (const tool of clientTools) {
-                    // 转换为OpenAI Function Calling格式
-                    const openaiTool = {
-                        type: 'function',
-                        function: {
-                            name: tool.name,
-                            description: tool.description || '',
-                            parameters: tool.inputSchema || {
-                                type: 'object',
-                                properties: {},
-                                required: []
-                            }
-                        },
-                        mcpClient: clientStatus.name, // 记录来源客户端
-                        originalTool: tool
+        // 并发获取各客户端工具，提升初始化速度
+        const tasks = clientStatuses
+            .filter(cs => cs.name.startsWith(`${channel}_`) && cs.isConnected)
+            .map(async clientStatus => {
+                try {
+                    const clientTools = await mcpClientManager.listTools(clientStatus.name)
+                    for (const tool of clientTools) {
+                        const openaiTool = {
+                            type: 'function',
+                            function: {
+                                name: tool.name,
+                                description: tool.description || '',
+                                parameters: tool.inputSchema || {
+                                    type: 'object',
+                                    properties: {},
+                                    required: []
+                                }
+                            },
+                            mcpClient: clientStatus.name,
+                            originalTool: tool
+                        }
+                        tools.push(openaiTool)
                     }
-                    tools.push(openaiTool)
+                } catch (error) {
+                    logger.warn(`获取客户端 ${clientStatus.name} 的工具失败: ${error.message}`)
                 }
-            } catch (error) {
-                logger.warn(`获取客户端 ${clientStatus.name} 的工具失败: ${error.message}`)
-            }
-        }
+            })
 
+        await Promise.all(tasks)
         this.toolsCache.set(channel, tools)
         logger.info(`频道 ${channel} 缓存了 ${tools.length} 个MCP工具`)
     }
