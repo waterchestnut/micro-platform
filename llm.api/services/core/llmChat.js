@@ -15,6 +15,7 @@ import {waitTime} from '../../tools/index.js'
 import {getAnswerCache, saveAnswerCache} from './answerCache.js'
 import {calcTextTokenCount} from '../openai/util.js'
 import {getMessages} from './message.js'
+import {mcpToolManager} from '../../mcp/index.js'
 
 const tools = llm.tools
 const logger = llm.logger
@@ -132,24 +133,128 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         apiKey: llmConfig.apiKey,
         baseURL: llmConfig.baseURL,
     })
+
+    // 检查当前频道是否启用了MCP工具
+    const hasMcpTools = await mcpToolManager.hasTools(channel)
     let createBody = {
         model: llmConfig.model,
         messages,
         max_tokens: llmConfig.maxTokens,
         temperature: llmConfig.temperature,
-        stream: true,
+        stream: true, // 启用流式输出
     }
-    let chatStream = await openai.chat.completions.create(createBody)
+
+    // 如果有MCP工具且当前频道启用了MCP，则添加工具
+    if (hasMcpTools) {
+        const mcpTools = await mcpToolManager.getTools(channel)
+        if (mcpTools.length > 0) {
+            createBody.tools = mcpTools
+            createBody.tool_choice = 'auto' // 让模型自动选择何时使用工具
+        }
+    }
+
     let answerContent = ''
     let answerReasoning = ''
     let answerList = []
-    for await (const chunk of chatStream) {
-        //answerList.push(chunk)
-        const content = chunk.choices[0]?.delta?.content || ''
-        const reasoningContent = chunk.choices[0]?.delta?.reasoning_content || ''
-        answerContent += content
-        answerReasoning += reasoningContent
-        options.streamCallback(JSON.stringify({...chunk.choices[0]?.delta, messageCode}))
+
+    // 最多迭代6次，用于处理工具调用
+    let iterationCount = 0
+    const maxIterations = 6
+
+    while (iterationCount < maxIterations) {
+        iterationCount++
+        //console.log(`Iteration ${iterationCount}`)
+        let chatStream = await openai.chat.completions.create(createBody)
+
+        let toolCalls = []      // 用于收集工具调用
+        let currentToolCall = null
+        let receivedToolCall = false
+
+        // 处理流式响应
+        for await (const chunk of chatStream) {
+            const choice = chunk.choices[0]
+            if (!choice) continue
+
+            // 检查是否有工具调用
+            if (choice.delta?.tool_calls) {
+                receivedToolCall = true
+                for (const toolCallDelta of choice.delta.tool_calls) {
+                    if (toolCallDelta.index !== undefined) {
+                        // 扩展或初始化工具调用数组
+                        while (toolCalls.length <= toolCallDelta.index) {
+                            toolCalls.push({
+                                id: '',
+                                function: { name: '', arguments: '' },
+                                type: 'function'
+                            })
+                        }
+
+                        currentToolCall = toolCalls[toolCallDelta.index]
+
+                        if (toolCallDelta.id) {
+                            currentToolCall.id = toolCallDelta.id
+                        }
+                        if (toolCallDelta.function?.name) {
+                            currentToolCall.function.name = currentToolCall.function.name + toolCallDelta.function.name
+                        }
+                        if (toolCallDelta.function?.arguments) {
+                            currentToolCall.function.arguments = currentToolCall.function.arguments + toolCallDelta.function.arguments
+                        }
+                    }
+                }
+            } else {
+                // 处理普通内容和推理内容
+                const content = choice.delta?.content || ''
+                const reasoningContent = choice.delta?.reasoning_content || ''
+                answerContent += content
+                answerReasoning += reasoningContent
+                options.streamCallback(JSON.stringify({...choice?.delta, messageCode}))
+            }
+
+            // 收集原始块用于后续处理
+            //answerList.push(chunk)
+        }
+
+        // 如果收到了工具调用，处理它们
+        if (receivedToolCall && toolCalls.length > 0) {
+            // 过滤掉空的工具调用
+            toolCalls = toolCalls.filter(tc => tc.id && tc.function.name)
+
+            if (toolCalls.length > 0) {
+                // 添加助手的消息到对话历史（包含工具调用请求）
+                const assistantMessage = {
+                    role: 'assistant',
+                    content: null, // 工具调用时内容可能为空
+                    tool_calls: toolCalls
+                }
+                messages.push(assistantMessage)
+
+                // 执行工具调用
+                const toolResults = await mcpToolManager.executeToolCalls(channel, toolCalls)
+
+                // 将工具调用结果添加到消息历史中
+                for (const toolResult of toolResults) {
+                    messages.push(toolResult)
+
+                    // 发送工具调用结果作为流式数据
+                    if (options.streamCallback) {
+                        options.streamCallback(JSON.stringify({
+                            role: 'tool',
+                            content: toolResult.content,
+                            tool_call_id: toolResult.tool_call_id,
+                            messageCode
+                        }))
+                    }
+                }
+
+                // 重置内容变量为下一次迭代做准备
+                answerContent = ''
+                continue
+            }
+        }
+
+        // 如果没有工具调用或者没有更多工具需要调用，退出循环
+        break
     }
 
     let messageTokens = calcTextTokenCount(messages.map(_ => _.content).join('\n'))
