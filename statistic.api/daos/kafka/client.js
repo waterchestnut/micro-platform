@@ -105,7 +105,7 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
             deserializers: stringDeserializers
         })
         const stream = await consumer.consume({
-            autocommit: false,
+            autocommit: true,
             topics,
             sessionTimeout: 10000,
             heartbeatInterval: 2000,
@@ -113,7 +113,7 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
         })
         for await (const message of stream) {
             //console.log(message)
-            if(message.commit){
+            if (message.commit) {
                 await message.commit()
             }
             await callback({topic: message.topic, partition: message.partition, msg: message.value})
