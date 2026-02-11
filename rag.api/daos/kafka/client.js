@@ -105,7 +105,7 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
             deserializers: stringDeserializers
         })
         const stream = await consumer.consume({
-            autocommit: false,
+            autocommit: true,
             topics,
             sessionTimeout: 10000,
             heartbeatInterval: 2000,
