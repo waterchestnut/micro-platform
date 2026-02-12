@@ -274,7 +274,15 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                 logger.info(`动态加载技能详情: ${selectedSkill.name}`)
 
                 // 重置内容并重新请求
+                answerContent && answerList.push(answerContent)
                 answerContent = ''
+                // 通知调用端回答内容需要重置
+                options.streamCallback && options.streamCallback(JSON.stringify({
+                    role: 'tool',
+                    content: '回答内容重置',
+                    tool_call_id: 'clear_answer_content',
+                    messageCode
+                }))
                 continue
             }
         }
@@ -314,9 +322,10 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                 }
 
                 // 重置内容变量为下一次迭代做准备
+                answerContent && answerList.push(answerContent)
                 answerContent = ''
                 // 通知调用端回答内容需要重置
-                options.streamCallback(JSON.stringify({
+                options.streamCallback && options.streamCallback(JSON.stringify({
                     role: 'tool',
                     content: '回答内容重置',
                     tool_call_id: 'clear_answer_content',
