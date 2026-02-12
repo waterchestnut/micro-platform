@@ -111,7 +111,8 @@ export default {
             model: process.env['LLM_DOUBAO16_MODEL'],
             maxTokens: 32768,
             temperature: 0.7,
-            stream: false
+            stream: false,
+            enableThinking: {thinking: {type: 'enabled'}}
         },
         /** deepseekV3.1 */
         deepseek31: {
@@ -122,7 +123,8 @@ export default {
             model: process.env['LLM_DEEPSEEK31_MODEL'],
             maxTokens: 32768,
             temperature: 0.7,
-            stream: false
+            stream: false,
+            enableThinking: {thinking: {type: 'enabled'}}
         },
         /** kimi-k2 */
         kimik2: {
@@ -133,7 +135,8 @@ export default {
             model: process.env['LLM_KIMIK2_MODEL'],
             maxTokens: 32768,
             temperature: 0.7,
-            stream: false
+            stream: false,
+            enableThinking: {thinking: {type: 'enabled'}}
         },
         /** 百炼平台的通义千问3 */
         qwenPlus: {
@@ -144,7 +147,8 @@ export default {
             model: process.env['LLM_QWENPLUS_MODEL'],
             maxTokens: 32768,
             temperature: 0.7,
-            stream: false
+            stream: false,
+            enableThinking: {enable_thinking: true}
         },
         /** 百炼平台的通义千问3视觉模型 */
         qwenVLPlus: {
@@ -155,7 +159,8 @@ export default {
             model: process.env['LLM_QWENVLPLUS_MODEL'],
             maxTokens: 32768,
             temperature: 0.7,
-            stream: false
+            stream: false,
+            enableThinking: {enable_thinking: true}
         },
         /** 腾讯云平台的混元大模型 */
         hunyuanLarge: {
@@ -177,6 +182,17 @@ export default {
         baseIntranetUrl: process.env['RESOURCE_URI_INTRANET'],
         /** rpc服务的地址 */
         grpcHost: process.env['RESOURCE_GRPC'],
+        /** 最大传送数据：256M */
+        maxMessageLength: 256 * 1024 * 1024,
+    },
+    /** 资源转换服务的配置 */
+    transformConfig: {
+        /** 基地址 */
+        baseUrl: process.env['TRANSFORM_URI'],
+        /** 内网基地址 */
+        baseIntranetUrl: process.env['TRANSFORM_URI_INTRANET'],
+        /** rpc服务的地址 */
+        grpcHost: process.env['TRANSFORM_GRPC'],
         /** 最大传送数据：256M */
         maxMessageLength: 256 * 1024 * 1024,
     },

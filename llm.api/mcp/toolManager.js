@@ -7,7 +7,7 @@
 import {mcpClientManager} from './clientManager.js'
 import llmChannelDataSet from '../conf/llmChannel.js'
 
-const logger = llm.logger
+const logger = (typeof llm !== 'undefined' && llm?.logger) ? llm.logger : console
 
 /**
  * @description MCP 工具管理器类 - 专门为大模型 Function Calling 设计

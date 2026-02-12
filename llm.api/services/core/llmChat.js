@@ -118,14 +118,14 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     let skillContext = null
     try {
         // 初始化 Skills 聊天上下文
-        const { prompt, context } = await initSkillChatContext(channel, query, {
+        const {prompt, context} = await initSkillChatContext(channel, query, {
             ...options,
             loadMode: options.skillLoadMode || 'candidates',
-            context: { channel, channelGroup, llmModel }
+            context: {channel, channelGroup, llmModel}
         })
-        
+
         skillContext = context
-        
+
         if (prompt) {
             messages.push({
                 'role': 'system',
@@ -168,11 +168,13 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         max_tokens: llmConfig.maxTokens,
         temperature: llmConfig.temperature,
         stream: true, // 启用流式输出
+        // 深度思考
+        ...options.enableThinking && llmConfig.enableThinking ? llmConfig.enableThinking : {},
     }
 
     // 合并所有可用工具（MCP工具 + Skill工具）
     const allTools = []
-    
+
     // 如果有MCP工具且当前频道启用了MCP，则添加工具
     if (hasMcpTools) {
         const mcpTools = await mcpToolManager.getTools(channel)
@@ -180,12 +182,12 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             allTools.push(...mcpTools)
         }
     }
-    
-        // 添加 Skill 执行工具
-        if (skillContext && skillContext.tools.length > 0) {
-            allTools.push(...skillContext.tools)
-        }
-    
+
+    // 添加 Skill 执行工具
+    if (skillContext && skillContext.tools.length > 0) {
+        allTools.push(...skillContext.tools)
+    }
+
     // 如果有工具，添加到请求体
     if (allTools.length > 0) {
         createBody.tools = allTools
@@ -247,7 +249,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                 const reasoningContent = choice.delta?.reasoning_content || ''
                 answerContent += content
                 answerReasoning += reasoningContent
-                options.streamCallback(JSON.stringify({...choice?.delta, messageCode}))
+                options.streamCallback(JSON.stringify({role: 'assistant', ...choice?.delta, messageCode}))
             }
 
             // 收集原始块用于后续处理
@@ -263,14 +265,14 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                     role: 'system',
                     content: selectedSkill.prompt
                 })
-                
+
                 // 如果有工具，也添加到请求中
                 if (selectedSkill.tools.length > 0) {
                     createBody.tools = [...(createBody.tools || []), ...selectedSkill.tools]
                 }
-                
+
                 logger.info(`动态加载技能详情: ${selectedSkill.name}`)
-                
+
                 // 重置内容并重新请求
                 answerContent = ''
                 continue
@@ -292,7 +294,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                 messages.push(assistantMessage)
 
                 // 执行工具调用（区分 MCP 工具和 Skill 工具）
-                const toolResults = skillContext 
+                const toolResults = skillContext
                     ? await executeSkillToolCalls(toolCalls, skillContext)
                     : await mcpToolManager.executeToolCalls(channel, toolCalls)
 
@@ -313,6 +315,13 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
 
                 // 重置内容变量为下一次迭代做准备
                 answerContent = ''
+                // 通知调用端回答内容需要重置
+                options.streamCallback(JSON.stringify({
+                    role: 'tool',
+                    content: '回答内容重置',
+                    tool_call_id: 'clear_answer_content',
+                    messageCode
+                }))
                 continue
             }
         }

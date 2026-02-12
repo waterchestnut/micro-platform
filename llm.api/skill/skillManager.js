@@ -887,6 +887,7 @@ export class SkillManager {
         sections.push('1. 首先分析用户需求，判断需要使用哪个技能')
         sections.push('2. 如果需要使用某个技能，请回复："我将使用技能：[技能名称]"')
         sections.push('3. 系统会自动加载该技能的详细说明和可用指令')
+        sections.push('4. 请注意，不能直接把技能作为函数调用返回，只有技能的指令才可执行函数调用')
         sections.push('')
         sections.push('---')
         sections.push('')

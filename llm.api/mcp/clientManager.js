@@ -6,7 +6,7 @@
 
 import {createMcpClient} from './sseClient.js'
 
-const logger = llm.logger
+const logger = (typeof llm !== 'undefined' && llm?.logger) ? llm.logger : console
 
 /**
  * @description MCP 客户端管理器类

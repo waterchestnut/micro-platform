@@ -19,6 +19,10 @@ src/skill/
     │   └── SKILL.md
     ├── refactoring-expert/  # 代码重构专家（系统自带）
     │   └── SKILL.md
+    ├── document-extractor/  # 文档内容提取专家（系统自带）
+    │   ├── SKILL.md         # Skill 定义
+    │   └── scripts/         # 可执行脚本
+    │       └── index.js
     └── [your-skill]/        # 你的自定义 Skill
         ├── SKILL.md         # Skill 定义文件
         ├── scripts/         # 可选：执行脚本
@@ -324,6 +328,24 @@ API 测试专家，帮助设计测试用例、执行 API 测试。
 代码重构专家，帮助改进代码结构、应用设计模式。
 
 **适用场景**：代码重构、坏味道识别
+
+### document-extractor
+文档内容提取专家，支持从 PDF、Word、Excel、HTML 等格式文档中提取文本内容。调用 gRPC 服务实现文本提取。
+
+**可用指令**：
+- `@extractFromPdf[url, mode]` - 从 PDF 提取文本
+  - `url`: 文件 URL（必需）
+  - `mode`: 可选，传入 'ocr' 启用 OCR 识别
+- `@extractFromWord[url]` - 从 Word 提取文本
+  - `url`: 文件 URL（必需）
+- `@extractFromExcel[url, format]` - 从 Excel 提取文本
+  - `url`: 文件 URL（必需）
+  - `format`: 可选，格式类型: 'xls', 'csv', 'xlsx'
+- `@extractFromHtml[url]` - 从 HTML 提取文本
+  - `url`: 文件 URL（必需）
+- `@smartExtract[url, format, mode, subtype]` - 智能提取（自动识别格式）
+
+**适用场景**：文档内容提取、文档分析、格式转换
 
 ## API 文档
 

@@ -25,10 +25,10 @@ export default {
         skills: {
             /** 是否启用 Skills */
             enabled: true,
-            /** 该频道专用的 Skills 列表（空数组表示使用所有可用 Skills） */
-            skillNames: [],
+            /** 该频道专用的 Skills 列表 */
+            skillNames: ['code-reviewer', 'refactoring-expert', 'api-tester', 'document-extractor'],
             /** 最大匹配 Skills 数量 */
-            maxSkills: 3,
+            maxSkills: 4,
             /** 匹配阈值 */
             threshold: 0.3,
             /** 是否启用 Skill 指令自动执行 */

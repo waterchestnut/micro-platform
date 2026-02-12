@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package rag;
+
+service Extractor {
+  rpc pdf2Text (TextExtractorRequest) returns (TextExtractorResponse) {}
+  rpc word2Text (TextExtractorRequest) returns (TextExtractorResponse) {}
+  rpc excel2Text (TextExtractorRequest) returns (TextExtractorResponse) {}
+  rpc html2Text (TextExtractorRequest) returns (TextExtractorResponse) {}
+}
+
+message TextExtractorRequest {
+  string language = 1;
+  bytes content = 2;
+}
+
+message TextExtractorResponse {
+  string text = 1;
+}
