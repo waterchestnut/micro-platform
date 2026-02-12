@@ -251,9 +251,6 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                 answerReasoning += reasoningContent
                 options.streamCallback(JSON.stringify({role: 'assistant', ...choice?.delta, messageCode}))
             }
-
-            // 收集原始块用于后续处理
-            //answerList.push(chunk)
         }
 
         // 检查大模型是否选择了某个技能（动态加载机制）
