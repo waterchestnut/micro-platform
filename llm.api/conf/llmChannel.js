@@ -21,6 +21,19 @@ export default {
         },
         /** 是否启用MCP调用 */
         enableMcp: true,
+        /** Agent Skills 配置 */
+        skills: {
+            /** 是否启用 Skills */
+            enabled: true,
+            /** 该频道专用的 Skills 列表（空数组表示使用所有可用 Skills） */
+            skillNames: [],
+            /** 最大匹配 Skills 数量 */
+            maxSkills: 3,
+            /** 匹配阈值 */
+            threshold: 0.3,
+            /** 是否启用 Skill 指令自动执行 */
+            enableSkillExecution: true,
+        },
     },
     /** 文献助手 */
     pdfviewer_literature: {
@@ -31,5 +44,27 @@ export default {
     {{segs}}`,
         /** 是否启用MCP调用 */
         enableMcp: false,
+        /** Agent Skills 配置 */
+        skills: {
+            enabled: false,
+            skillNames: [],
+            maxSkills: 2,
+            threshold: 0.3,
+            enableSkillExecution: false,
+        },
+    },
+    /** 代码助手 - 启用代码相关 Skills */
+    code_assistant: {
+        /** 系统提示词 */
+        sysPrompt: `你是一个专业的代码助手，可以帮助用户编写、审查和优化代码。`,
+        /** Agent Skills 配置 */
+        skills: {
+            enabled: true,
+            /** 指定只能使用代码相关的 Skills */
+            skillNames: ['code-reviewer', 'refactoring-expert'],
+            maxSkills: 2,
+            threshold: 0.2,
+            enableSkillExecution: true,
+        }
     },
 }

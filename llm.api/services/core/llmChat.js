@@ -16,6 +16,7 @@ import {getAnswerCache, saveAnswerCache} from './answerCache.js'
 import {calcTextTokenCount} from '../openai/util.js'
 import {getMessages} from './message.js'
 import {mcpToolManager} from '../../mcp/index.js'
+import {initSkillChatContext, checkSkillSelection, executeSkillToolCalls, getSkillStats} from '../../skill/index.js'
 
 const tools = llm.tools
 const logger = llm.logger
@@ -112,6 +113,31 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             })
         }
     }
+
+    // 匹配并注入 Agent Skills 上下文（基于频道配置，分级加载）
+    let skillContext = null
+    try {
+        // 初始化 Skills 聊天上下文
+        const { prompt, context } = await initSkillChatContext(channel, query, {
+            ...options,
+            loadMode: options.skillLoadMode || 'candidates',
+            context: { channel, channelGroup, llmModel }
+        })
+        
+        skillContext = context
+        
+        if (prompt) {
+            messages.push({
+                'role': 'system',
+                'content': prompt
+            })
+            logger.info(`已注入 ${skillContext.candidates.length} 个候选 Skills`)
+        }
+    } catch (error) {
+        logger.warn(`Skills 初始化失败: ${error.message}`)
+        // Skills 初始化失败不影响主流程
+    }
+
     messages = await appendHistoryMessages(conversationCode, messages, 20000)
     if (options.inputs?.length) {
         messages.push({
@@ -144,13 +170,26 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         stream: true, // 启用流式输出
     }
 
+    // 合并所有可用工具（MCP工具 + Skill工具）
+    const allTools = []
+    
     // 如果有MCP工具且当前频道启用了MCP，则添加工具
     if (hasMcpTools) {
         const mcpTools = await mcpToolManager.getTools(channel)
         if (mcpTools.length > 0) {
-            createBody.tools = mcpTools
-            createBody.tool_choice = 'auto' // 让模型自动选择何时使用工具
+            allTools.push(...mcpTools)
         }
+    }
+    
+        // 添加 Skill 执行工具
+        if (skillContext && skillContext.tools.length > 0) {
+            allTools.push(...skillContext.tools)
+        }
+    
+    // 如果有工具，添加到请求体
+    if (allTools.length > 0) {
+        createBody.tools = allTools
+        createBody.tool_choice = 'auto' // 让模型自动选择何时使用工具
     }
 
     let answerContent = ''
@@ -215,6 +254,29 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             //answerList.push(chunk)
         }
 
+        // 检查大模型是否选择了某个技能（动态加载机制）
+        if (!receivedToolCall && answerContent && skillContext) {
+            const selectedSkill = await checkSkillSelection(answerContent, skillContext)
+            if (selectedSkill) {
+                // 追加技能详细说明到消息
+                messages.push({
+                    role: 'system',
+                    content: selectedSkill.prompt
+                })
+                
+                // 如果有工具，也添加到请求中
+                if (selectedSkill.tools.length > 0) {
+                    createBody.tools = [...(createBody.tools || []), ...selectedSkill.tools]
+                }
+                
+                logger.info(`动态加载技能详情: ${selectedSkill.name}`)
+                
+                // 重置内容并重新请求
+                answerContent = ''
+                continue
+            }
+        }
+
         // 如果收到了工具调用，处理它们
         if (receivedToolCall && toolCalls.length > 0) {
             // 过滤掉空的工具调用
@@ -229,8 +291,10 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                 }
                 messages.push(assistantMessage)
 
-                // 执行工具调用
-                const toolResults = await mcpToolManager.executeToolCalls(channel, toolCalls)
+                // 执行工具调用（区分 MCP 工具和 Skill 工具）
+                const toolResults = skillContext 
+                    ? await executeSkillToolCalls(toolCalls, skillContext)
+                    : await mcpToolManager.executeToolCalls(channel, toolCalls)
 
                 // 将工具调用结果添加到消息历史中
                 for (const toolResult of toolResults) {
@@ -266,7 +330,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         answerTokens,
         tools: createBody.tools,
         toolChoice: createBody.tool_choice,
-        iterationCount: iterationCount
+        iterationCount: iterationCount,
+        skills: skillContext ? getSkillStats(skillContext) : null
     })
 
     if (options.cache && options.channelCacheKey) {
@@ -314,7 +379,8 @@ async function saveMessage(query, messageCode, messages, conversationCode, chann
             answerList: options.answerList,
             tools: options.tools,
             toolChoice: options.toolChoice,
-            iterationCount: options.iterationCount
+            iterationCount: options.iterationCount,
+            skills: options.skills
         },
         messageTokens: options.messageTokens,
         answerTokens: options.answerTokens

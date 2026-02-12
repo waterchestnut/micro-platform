@@ -7,7 +7,7 @@
 import {Client} from '@modelcontextprotocol/sdk/client/index.js'
 import {SSEClientTransport} from '@modelcontextprotocol/sdk/client/sse.js'
 
-const logger = llm.logger
+const logger = (typeof llm !== 'undefined' && llm?.logger) ? llm.logger : console
 
 /**
  * @description SSE 模式的 MCP 客户端类
