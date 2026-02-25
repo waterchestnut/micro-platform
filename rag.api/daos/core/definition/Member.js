@@ -20,4 +20,4 @@ export default new Schema({
     userCode: {type: String, description: '用户标识'},
     realName: {type: String, description: '姓名'},
     memberType: {type: String, default: 'read', description: '成员类型', enum: MemberTypeEnum.toValues()},
-})
+}, {_id: false})

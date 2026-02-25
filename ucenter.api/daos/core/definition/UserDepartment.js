@@ -22,4 +22,4 @@ export default new Schema({
     departmentCode: {type: String, description: '部门标识'},
     jobCode: {type: String, description: '职位标识'},
     jobStatus: {type: String, default: 0, description: '职位状态'},
-})
+}, {_id: false})

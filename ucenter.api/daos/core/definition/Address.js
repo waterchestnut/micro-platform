@@ -36,4 +36,4 @@ export default new Schema({
     district: {type: String, description: '区code'},
     districtName: {type: String, description: '区名称'},
     content: {type: String, description: '详细地址'},
-})
+}, {_id: false})

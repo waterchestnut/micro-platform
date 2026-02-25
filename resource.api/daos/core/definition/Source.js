@@ -22,4 +22,4 @@ export default new Schema({
     href: {type: String, description: '链接'},
     sourceKey: {type: String, description: '来源标识'},
     openAccess: {type: Boolean, description: '是否能开放获取'},
-})
+}, {_id: false})

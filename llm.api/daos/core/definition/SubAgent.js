@@ -19,4 +19,4 @@ const tools = llm.tools
 export default new Schema({
     agentCode: {type: String, description: '子智能体标识'},
     handleStatus: {type: Number, default: 0, description: '执行状态', enum: AgentHandleStatusEnum.toValues()},
-})
+}, {_id: false})

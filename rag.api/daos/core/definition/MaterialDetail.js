@@ -26,4 +26,4 @@ export default new Schema({
     language: {type: String, description: '材料的语言'},
     isOriginal: {type: Number, default: 1, description: '是否为原文'},
     fileCode : {type: String, description: '文件的唯一标识'},
-})
+}, {_id: false})

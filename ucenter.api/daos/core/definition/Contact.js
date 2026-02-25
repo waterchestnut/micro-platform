@@ -24,4 +24,4 @@ export default new Schema({
     phone: {type: String, description: '固定电话'},
     postcode: {type: String, description: '邮编'},
     email: {type: String, description: '邮箱'},
-})
+}, {_id: false})

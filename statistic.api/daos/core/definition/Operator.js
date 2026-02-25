@@ -19,4 +19,4 @@ export default new Schema({
     userCode: {type: String, description: '用户标识'},
     realName: {type: String, description: '姓名'},
     orgCode: {type: String, description: '所属机构'},
-})
+}, {_id: false})

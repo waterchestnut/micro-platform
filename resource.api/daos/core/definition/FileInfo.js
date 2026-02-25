@@ -38,4 +38,4 @@ export default new Schema({
     fileHashCode : {type: String, description: '文件内容的hash值'},
     fileExt : {type: String, description: '文件后缀'},
     url : {type: String, description: '文件下载地址'}
-})
+}, {_id: false})

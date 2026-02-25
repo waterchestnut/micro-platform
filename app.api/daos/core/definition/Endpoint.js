@@ -22,4 +22,4 @@ export default new Schema({
     endpointType: {type: String, description: '访问端类型', enum: EndpointTypeEnum.toValues()},
     visitPath: {type: String, description: '访问地址'},
     status: {type: Number, default: 0, description: '状态', enum: StatusEnum.toValues()},
-})
+}, {_id: false})

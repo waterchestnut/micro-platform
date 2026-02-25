@@ -47,4 +47,4 @@ export default new Schema({
     degree: {type: Number, description: '学位', enum: DegreeEnum.toValues()},
     startTime: {type: Date, description: '开始时间'},
     endTime: {type: Date, description: '结束时间'},
-})
+}, {_id: false})

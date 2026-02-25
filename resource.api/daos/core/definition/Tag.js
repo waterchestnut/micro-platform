@@ -18,4 +18,4 @@ const tools = resource.tools
 export default new Schema({
     key: {type: String, description: '键名'},
     value: {type: String, description: '键值'},
-})
+}, {_id: false})

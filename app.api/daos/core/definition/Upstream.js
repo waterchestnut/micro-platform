@@ -18,4 +18,4 @@ const tools = app.tools
 export default new Schema({
     host: {type: String, description: '主机(含端口)'},
     weight: {type: Number, default: 1, description: '权重'},
-})
+}, {_id: false})
