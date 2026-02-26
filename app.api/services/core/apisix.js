@@ -110,7 +110,7 @@ export async function getClientRouteData(clientCode, clientName, upstreams, need
             'cors': {
                 'allow_credential': false,
                 'allow_headers': '*',
-                'allow_methods': 'GET,POST,OPTIONS',
+                'allow_methods': 'GET,POST,OPTIONS,PUT,DELETE,PATCH',
                 'allow_origins': '*',
                 'allow_origins_by_regex': apisixConfig.allowOriginsRegex,
                 'expose_headers': '*',
