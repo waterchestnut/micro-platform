@@ -55,7 +55,7 @@ export async function saveStatistic (info, req = null) {
         info.content.method = info.content.method || req.method
     }
 
-    return sendMessage(config.kafka.topics.statistic.topic, config.kafka.topics.statistic.groupId, [{value: JSON.stringify(info)}])
+    return sendMessage([{key: info.msgCode, value: JSON.stringify(info), topic: config.kafka.topics.statistic.topic}])
 }
 
 /**
