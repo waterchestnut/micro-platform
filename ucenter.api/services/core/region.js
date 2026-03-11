@@ -25,7 +25,7 @@ export async function getAllRegions(sort = null, maxLevel = 0) {
     if (maxLevel) {
         optionsIn.levelNum = {$lte: maxLevel}
     }
-    return regionDac.getTop(100000, {}, sort)
+    return regionDac.getTop(100000, optionsIn, sort)
 }
 
 /**
