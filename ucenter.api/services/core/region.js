@@ -6,6 +6,7 @@
 
 import retSchema from '../../daos/retSchema.js'
 import regionDac from '../../daos/core/dac/regionDac.js'
+import {pinyin} from 'pinyin-pro'
 
 const tools = ucenter.tools
 const logger = ucenter.logger
@@ -51,6 +52,31 @@ export async function getChildren(regionCode, maxLevel = 0) {
         optionsIn.levelNum = {$lte: maxLevel}
     }
     return regionDac.getTop(100000, optionsIn, sort)
+}
+
+/**
+ * @description 检索区域及其父节点
+ * @author menglb
+ * @param {String} regionName 区域名称
+ * @param {Number} [levelNum=0] 要检索的层级
+ * @returns {Promise<Array>} 区域节点列表
+ */
+export async function searchParents(regionName, levelNum = 0) {
+    let names = regionName.split('|')
+    let regionInfo = await regionDac.getOneByFilter({
+        levelNum,
+        $or: [{regionName: {$in: names}}, {nameEn: {$in: names}}, {fullName: {$in: names}}]
+    })
+    if (!regionInfo) {
+        return []
+    }
+    if (regionInfo.path?.length < 2) {
+        return [regionInfo]
+    }
+
+    let sort = {levelNum: 1, orderNum: 1}
+    let optionsIn = {regionCode: regionInfo.path}
+    return regionDac.getTop(regionInfo.path.length, optionsIn, sort)
 }
 
 /**
@@ -134,10 +160,21 @@ export async function addRegion(userInfo, region) {
         throw new Error('需要地区名称和地区标识')
     }
 
-    let oldRegion = await regionDac.getByCode(region.regionCode);
+    let oldRegion = await regionDac.getByCode(region.regionCode)
     if (oldRegion) {
         throw new Error('地区标识已经存在')
     }
+
+    let letters = region.letters || pinyin(region.regionName, {
+        pattern: 'first',
+        toneType: 'none',
+        type: 'array'
+    }).join('').toLowerCase()
+    let firstLetter = region.firstLetter || letters.substring(0, 1)
+    let namePinyin = region.pinyin || pinyin(region.regionName, {
+        pattern: 'pinyin',
+        toneType: 'none', type: 'array'
+    }).join('').toLowerCase()
 
     let regionInfo = {
         regionCode: region.regionCode,
@@ -153,11 +190,11 @@ export async function addRegion(userInfo, region) {
         nameEn: region.nameEn,
         shortName: region.shortName,
         shortNameEn: region.shortNameEn,
-        firstLetter: region.firstLetter,
-        letters: region.letters,
-        pinyin: region.pinyin,
+        firstLetter,
+        letters,
+        pinyin: namePinyin,
         extra: region.extra
-    };
+    }
 
     return regionDac.add(regionInfo)
 }
@@ -195,7 +232,23 @@ export async function updateRegion(regionCode, newRegion) {
         letters: newRegion.letters,
         pinyin: newRegion.pinyin,
         extra: newRegion.extra
-    };
+    }
+
+    if (newRegion.regionName) {
+        let letters = newRegion.letters || pinyin(newRegion.regionName, {
+            pattern: 'first',
+            toneType: 'none',
+            type: 'array'
+        }).join('').toLowerCase()
+        let firstLetter = newRegion.firstLetter || letters.substring(0, 1)
+        let namePinyin = newRegion.pinyin || pinyin(newRegion.regionName, {
+            pattern: 'pinyin',
+            toneType: 'none', type: 'array'
+        }).join('').toLowerCase()
+        region.firstLetter = firstLetter
+        region.letters = letters
+        region.pinyin = namePinyin
+    }
 
     return regionDac.update(region)
 }
@@ -212,7 +265,7 @@ export async function deleteRegion(regionCode) {
     }
 
     /** 能否删除的校验 */
-    let region = await regionDac.getByCode(regionCode);
+    let region = await regionDac.getByCode(regionCode)
     if (!region) {
         throw new Error('地区不存在')
     }
