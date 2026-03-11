@@ -82,7 +82,8 @@ export async function getTreeRegions(parentCode = '', maxLevel = 0) {
                 firstLetter: _.firstLetter,
                 letters: _.letters,
                 pinyin: _.pinyin,
-                orderNum: _.orderNum
+                orderNum: _.orderNum,
+                fullName: _.fullName,
             }
             let childList = regions.filter(item => item.parentCode === _.regionCode)
             if (childList?.length) {
