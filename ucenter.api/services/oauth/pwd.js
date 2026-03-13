@@ -41,22 +41,22 @@ async function getRateCacheKey(clientCode) {
  */
 export async function getClientToken(params) {
     if (!params.clientCode || !params.clientSecret) {
-        throw retSchema.FAIL_OAUTH_PARAM_MISS
+        return retSchema.FAIL_OAUTH_PARAM_MISS
     }
     let visitCount = redisClient.addIncr(getRateCacheKey(params.clientCode), 24 * 60 * 60)
     if (visitCount > config.client.tokenLimit) {
-        throw new Error('操作过于频繁')
+        return retSchema.FAIL_OVERLY_OFTEN
     }
 
     let clientInfo = await clientDac.getByCode(params.clientCode)
     if (!clientInfo?.clientCode) {
-        throw retSchema.FAIL_OAUTH_CLIENT_MISS
+        return retSchema.FAIL_OAUTH_CLIENT_MISS
     }
     if (clientInfo.status !== 0) {
-        throw retSchema.FAIL_OAUTH_CLIENT_DISABLED
+        return retSchema.FAIL_OAUTH_CLIENT_DISABLED
     }
     if (clientInfo.clientSecret !== params.clientSecret) {
-        throw retSchema.FAIL_OAUTH_CLIENTSECRET_INVALID
+        return retSchema.FAIL_OAUTH_CLIENTSECRET_INVALID
     }
 
     /*生成clientAccessToken*/
@@ -90,7 +90,7 @@ export async function refreshClientAccessToken(clientRefreshToken, deleteOld = t
     }
     let visitCount = redisClient.addIncr(getRateCacheKey(tokenInfo.clientCode), 24 * 60 * 60)
     if (visitCount > config.client.tokenLimit) {
-        throw new Error('操作过于频繁')
+        return retSchema.FAIL_OVERLY_OFTEN
     }
 
     /*读取并验证应用信息*/

@@ -8,6 +8,7 @@
 export default {
     'SUCCESS': {code: 0, msg: '成功'},
     'FAIL_PARAM_MISS': {code: 1, msg: '参数不全'},
+    'FAIL_OVERLY_OFTEN': {code: 2, msg: '操作过于频繁'},
     'FAIL_UNEXPECTED': {code: -99, msg: '未知错误'},
 
     'FAIL_OAUTH_PARAM_MISS': {code: 1000, msg: '参数不全'},

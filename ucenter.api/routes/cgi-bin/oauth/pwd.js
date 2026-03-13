@@ -17,7 +17,7 @@ export default async function (fastify, opts) {
                 },
                 required: ['clientCode', 'clientSecret']
             },
-            tags: ['cgi-bin'],
+            tags: ['cgi-bin', 'cgi-bin-oauth-pwd'],
             response: {
                 default: {
                     ...getDefaultResponseSchema({
@@ -43,7 +43,7 @@ export default async function (fastify, opts) {
                 },
                 required: ['clientRefreshToken']
             },
-            tags: ['cgi-bin'],
+            tags: ['cgi-bin', 'cgi-bin-oauth-pwd'],
             response: {
                 default: {
                     ...getDefaultResponseSchema({

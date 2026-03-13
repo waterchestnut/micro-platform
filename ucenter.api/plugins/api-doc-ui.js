@@ -26,6 +26,7 @@ export default fp(async (fastify) => {
         {name: 'public-bin', description: '公开调用的api'},
         {name: 'local-bin', description: '局域网调用的api'},
         {name: 'cgi-bin', description: '第三方应用调用的api'},
+        {name: 'cgi-bin-oauth-pwd', description: '第三方应用密码模式授权的api'},
         {name: 'auth', description: '权限验证、管理相关的api'},
         {name: 'oauth', description: 'oauth相关的api'},
         {name: 'client-proxy', description: 'oauth授权客户端代理'},
