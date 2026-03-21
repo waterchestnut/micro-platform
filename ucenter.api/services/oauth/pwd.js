@@ -9,12 +9,12 @@ import redisClient from '../../daos/cache/redisClient.js'
 import accessTokenDac from '../../daos/core/dac/accessTokenDac.js'
 import refreshTokenDac from '../../daos/core/dac/refreshTokenDac.js'
 import clientDac from '../../daos/core/dac/clientDac.js'
-import {addClientAccessToken} from "../core/clientAccessToken.js"
+import {addClientAccessToken} from '../core/clientAccessToken.js'
 import {
     addClientRefreshToken,
     deleteClientRefreshToken,
     getClientRefreshTokenInfo
-} from "../core/clientRefreshToken.js"
+} from '../core/clientRefreshToken.js'
 
 const tools = ucenter.tools
 const logger = ucenter.logger
@@ -61,12 +61,12 @@ export async function getClientToken(params) {
 
     /*生成clientAccessToken*/
     let clientAccessTokenInfo = await addClientAccessToken(clientInfo.clientCode, undefined, clientInfo)
-    await accessTokenDac.add(clientAccessTokenInfo)
+    await accessTokenDac.add({...clientAccessTokenInfo, accessToken: clientAccessTokenInfo.clientAccessToken})
 
     /*生成clientRefreshToken*/
     clientInfo.accessToken = clientAccessTokenInfo.accessToken
     let clientRefreshTokenInfo = await addClientRefreshToken(clientInfo.clientCode, undefined, clientInfo)
-    await refreshTokenDac.add(clientRefreshTokenInfo)
+    await refreshTokenDac.add({...clientRefreshTokenInfo, refreshToken: clientRefreshTokenInfo.clientRefreshToken})
     return {
         clientAccessToken: clientAccessTokenInfo.clientAccessToken,
         clientRefreshToken: clientRefreshTokenInfo.clientRefreshToken,
@@ -107,12 +107,12 @@ export async function refreshClientAccessToken(clientRefreshToken, deleteOld = t
 
     /*生成clientAccessToken*/
     let clientAccessTokenInfo = await addClientAccessToken(clientInfo.clientCode, undefined, clientInfo)
-    await accessTokenDac.add(clientAccessTokenInfo)
+    await accessTokenDac.add({...clientAccessTokenInfo, accessToken: clientAccessTokenInfo.clientAccessToken})
 
     /*生成clientRefreshToken*/
     clientInfo.accessToken = clientAccessTokenInfo.accessToken
     let clientRefreshTokenInfo = await addClientRefreshToken(clientInfo.clientCode, undefined, clientInfo)
-    await refreshTokenDac.add(clientRefreshTokenInfo)
+    await refreshTokenDac.add({...clientRefreshTokenInfo, refreshToken: clientRefreshTokenInfo.clientRefreshToken})
     return {
         clientAccessToken: clientAccessTokenInfo.clientAccessToken,
         clientRefreshToken: clientRefreshTokenInfo.clientRefreshToken,

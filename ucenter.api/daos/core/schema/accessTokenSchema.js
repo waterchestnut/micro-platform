@@ -16,6 +16,7 @@ const tools = ucenter.tools
  * @author xianyang
  * @property {String} accessToken accessToken的值
  * @property {String} clientCode 应用标识
+ * @property {String} clientAccessToken 应用Token的值
  * @property {String} userCode 用户标识
  * @property {Number} expiresTime 过期时间(单位：毫秒)
  * @property {String[]} scopes 授权范围
@@ -28,6 +29,7 @@ const tools = ucenter.tools
 const accessTokenSchema = new Schema({
     accessToken: {type: String, description: 'accessToken的值', required: true},
     clientCode: {type: String, description: '应用标识'},
+    clientAccessToken: {type: String, description: '应用Token的值'},
     userCode: {type: String, description: '用户标识'},
     expiresTime: {type: Number, description: '过期时间'},
     scopes: {type: [String], description: '授权范围'},
