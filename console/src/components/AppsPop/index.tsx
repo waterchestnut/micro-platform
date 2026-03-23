@@ -49,7 +49,7 @@ const AppsPop: React.FC<AppsPopProps> = (props) => {
       rootStyle={{
         top: '64px'
       }}
-      width='800px'
+      size='800'
       extra={
         <Button
           type='text'
