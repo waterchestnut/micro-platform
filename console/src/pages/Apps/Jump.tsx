@@ -51,8 +51,7 @@ const Jump: React.FC = () => {
     return (
       <iframe
         src={visitPath}
-        style={{width: '100%', height: 'calc(100% - 3px)'}}
-        frameBorder='0'
+        style={{width: '100%', height: 'calc(100% - 3px)', border: 'none'}}
         allow='microphone'>
       </iframe>
     )
