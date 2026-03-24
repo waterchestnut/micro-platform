@@ -209,6 +209,7 @@ export default class {
      * @returns {Promise<Object>} 返回添加成功的记录
      */
     async add(info) {
+        delete info._id
         let record = new this._Model(info)
         let doc = await record.save()
         return doc
