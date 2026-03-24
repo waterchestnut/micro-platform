@@ -108,7 +108,7 @@ export async function getInitialState(): Promise<{
     currentUser,
     settings: defaultSettings as Partial<LayoutSettings>,
     toShowClients,
-    menuData: formatMenuData(toShowClients, currentUser?.privs, currentUser?.privs),
+    menuData: formatMenuData(toShowClients, [], currentUser?.privs),
   }
 }
 

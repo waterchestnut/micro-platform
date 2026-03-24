@@ -5,6 +5,7 @@ import {CloseOutlined} from '@ant-design/icons'
 import {ProList} from '@ant-design/pro-components'
 import {createStyles} from 'antd-style'
 import {history} from '@umijs/max'
+import {checkPermissions} from '@/utils/authority'
 
 const {Text} = Typography
 
@@ -34,6 +35,7 @@ const useStyles = createStyles(({token}) => {
 const AppsPop: React.FC<AppsPopProps> = (props) => {
   const {appsPopOpened, setAppsPopOpened} = useModel('appsPop')
   const {initialState} = useModel('@@initialState')
+  const {currentUser} = initialState || {}
 
   const {styles} = useStyles()
 
@@ -74,9 +76,10 @@ const AppsPop: React.FC<AppsPopProps> = (props) => {
         }}
         rowSelection={false}
         grid={{gutter: 16, column: 2}}
-        metas={{
-          title: {
+        columns={[
+          {
             dataIndex: 'clientName',
+            listSlot: 'title',
             render: (text, record) => {
               return (
                 <Text
@@ -90,8 +93,9 @@ const AppsPop: React.FC<AppsPopProps> = (props) => {
               )
             }
           },
-          content: {
+          {
             dataIndex: 'description',
+            listSlot: 'content',
             render: (text, record) => {
               return (
                 <Text
@@ -102,8 +106,11 @@ const AppsPop: React.FC<AppsPopProps> = (props) => {
               )
             }
           },
-        }}
-        dataSource={initialState?.toShowClients || []}
+        ]}
+        dataSource={(initialState?.toShowClients || []).filter((clientInfo) => {
+          let authority = clientInfo.needAuth2Show ? [`${clientInfo.clientCode}-browse`] : false
+          return checkPermissions(authority, currentUser?.privs)
+        })}
       />
     </Drawer>
   )
