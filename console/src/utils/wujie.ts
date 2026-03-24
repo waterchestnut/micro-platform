@@ -4,6 +4,9 @@
 import {history} from '@@/core/history'
 import {getAccessToken, getUserCache, toLogin} from '@/utils/authority'
 
+//@ts-ignore
+const platformBaseUrl = PLATFORM_BASE
+
 /** 获取传递给子应用的功能Props */
 export function getCommonProps() {
   return {
@@ -21,6 +24,9 @@ export function getCommonProps() {
     },
     toClient: (clientCode: string, path: string) => {
       history.push(`/sub/${clientCode}?${clientCode}=${encodeURIComponent(path)}`)
+    },
+    getToClientUrl: (clientCode: string, path: string) => {
+      return `${platformBaseUrl}/sub/${clientCode}?${clientCode}=${encodeURIComponent(path)}`
     },
   }
 }

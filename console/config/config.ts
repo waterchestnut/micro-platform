@@ -158,5 +158,9 @@ export default defineConfig({
     APP_API_BASE: process.env.APP_API_BASE || 'http://localhost:12003',
     /*APP管理平台地址*/
     APP_PLATFORM_BASE: process.env.APP_PLATFORM_BASE || 'http://localhost:11003',
+    /*资源服务平台地址*/
+    RESOURCE_PLATFORM_BASE: process.env.RESOURCE_PLATFORM_BASE || 'http://localhost:11007',
+    /*总控制台地址*/
+    PLATFORM_BASE: process.env.PLATFORM_BASE || 'http://localhost:11001',
   },
 });
