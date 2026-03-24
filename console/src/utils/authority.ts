@@ -9,6 +9,10 @@ export function checkPermissions(authority: boolean | string | string[], current
   if (!authority) {
     return true
   }
+  if (currentAuthority?.includes('all')) {
+    /*超级权限访问*/
+    return true
+  }
   if (Array.isArray(authority)) {
     if (authority.includes('all')) {
       return true
