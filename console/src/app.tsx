@@ -11,6 +11,9 @@ import {checkPermissions, toLogin} from '@/utils/authority'
 import {getPCShowClients} from '@/services/app/client'
 import {Button} from 'antd'
 import AppsMenuButton from '@/components/AppsPop/AppsMenuButton'
+import routes from '../config/routes'
+import IconMap from '@/icons/iconMap'
+import {getIntl, getLocale} from '@umijs/max'
 
 const isDev = process.env.NODE_ENV === 'development'
 
@@ -33,21 +36,35 @@ function menuDataRender(menuList: any[], currentPrivs: any[]) {
     .filter((_: any) => _)
 }
 
+const loopMenuItem = (menus: any[]): any[] => {
+  const intl = getIntl(getLocale())
+  const formatMessage = intl.formatMessage
+
+  return menus.map(({icon, routes, name, ...item}) => ({
+    ...item,
+    icon: icon && (IconMap[icon] || icon),
+    name: name ? formatMessage({id: 'menu.' + name, defaultMessage: name}) : undefined,
+    routes: routes && loopMenuItem(routes),
+  }))
+}
+
 const formatMenuData = (toShowClients: any[], myClients: any[], currentPrivs: any[]) => {
-  let staticList = [
+  let staticList: any[] = [
     {
       name: '首页',
       path: '/home',
       /*icon: <HomeOutlined/>*/
     }
   ]
-  let list: any[] = toShowClients.map((clientInfo: APPAPI.ClientPublic) => {
+  let dynamicList: any[] = toShowClients.map((clientInfo: APPAPI.ClientPublic) => {
     return {
       name: clientInfo.clientName,
-      path: `/sub/${clientInfo.clientCode}`
+      path: `/sub/${clientInfo.clientCode}`,
+      authority: clientInfo.needAuth2Show ? [`${clientInfo.clientCode}-browse`] : false,
     }
   })
-  return menuDataRender(staticList.concat(list), currentPrivs)
+  let extraList: any[] = loopMenuItem(routes[0]?.routes?.filter((route: any) => route.path === '/personal') || [])
+  return menuDataRender(staticList.concat(dynamicList).concat(extraList), currentPrivs)
 }
 
 /**
