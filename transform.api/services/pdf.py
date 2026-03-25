@@ -25,7 +25,7 @@ def get_pdf_text(content, need_ocr=False):
                 pil_image.close()
             else:
                 text_page = page.get_textpage()
-                content = text_page.get_text_range()
+                content = text_page.get_text_bounded()
                 text_page.close()
             images.close()
             page.close()
