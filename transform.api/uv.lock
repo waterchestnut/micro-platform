@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = "==3.12.*"
 
 [[package]]
@@ -829,6 +829,7 @@ dependencies = [
     { name = "spacy" },
     { name = "uvicorn" },
     { name = "xinference-client" },
+    { name = "xlrd" },
     { name = "zh-core-web-lg" },
 ]
 
@@ -850,6 +851,7 @@ requires-dist = [
     { name = "spacy", specifier = ">=3.8.7" },
     { name = "uvicorn", specifier = ">=0.34.1,<0.35.0" },
     { name = "xinference-client", specifier = ">=1.14.0" },
+    { name = "xlrd", specifier = ">=2.0.2" },
     { name = "zh-core-web-lg", url = "https://lib.lc.jtxuexi.com/zh_core_web_lg-3.8.0-py3-none-any.whl" },
 ]
 
@@ -1254,6 +1256,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/67/cf/aa4df7d88c67445bcc41056fe713032fcf263bdf5c8fd36dddd287aa3b85/xinference_client-1.14.0.tar.gz", hash = "sha256:ccd93cb18a244ee9cba1f88ebbb7c90e08eca2aaa6824c044d1bc86a123ab32e", size = 57527, upload-time = "2025-11-30T04:30:42.618Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/76/b2/d0129393803edfe2776e996aff3c5faf82073d6ee792dbd6d7d0b5dc8ab5/xinference_client-1.14.0-py3-none-any.whl", hash = "sha256:119973c3818c5cf8ffa6c02ec70d5b18948e52b32ec8348714fe706f7f24c8bd", size = 39182, upload-time = "2025-11-30T04:30:41.365Z" },
+]
+
+[[package]]
+name = "xlrd"
+version = "2.0.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/07/5a/377161c2d3538d1990d7af382c79f3b2372e880b65de21b01b1a2b78691e/xlrd-2.0.2.tar.gz", hash = "sha256:08b5e25de58f21ce71dc7db3b3b8106c1fa776f3024c54e45b45b374e89234c9", size = 100167, upload-time = "2025-06-14T08:46:39.039Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1a/62/c8d562e7766786ba6587d09c5a8ba9f718ed3fa8af7f4553e8f91c36f302/xlrd-2.0.2-py2.py3-none-any.whl", hash = "sha256:ea762c3d29f4cca48d82df517b6d89fbce4db3107f9d78713e48cd321d5c9aa9", size = 96555, upload-time = "2025-06-14T08:46:37.766Z" },
 ]
 
 [[package]]

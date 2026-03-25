@@ -26,11 +26,11 @@ class Extractor(extractor_pb2_grpc.ExtractorServicer):
 
     def excel2Text(self, request, context):
         if request.language == 'xls':
-            text = get_xls_text(request.content)
+            text = get_xls_text(BytesIO(request.content))
         elif request.language == 'csv':
-            text = get_csv_text(request.content)
+            text = get_csv_text(BytesIO(request.content))
         else:
-            text = get_xlsx_text(request.content)
+            text = get_xlsx_text(BytesIO(request.content))
 
         return extractor_pb2.TextExtractorResponse(text=text)
 

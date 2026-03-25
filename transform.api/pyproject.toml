@@ -26,6 +26,7 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "openai>=2.9.0",
     "xinference-client>=1.14.0",
+    "xlrd>=2.0.2",
 ]
 [tool.uv]
 allow-insecure-host = ["lib.lc.jtxuexi.com"]
