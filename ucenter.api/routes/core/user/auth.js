@@ -318,4 +318,52 @@ export default async function (fastify, opts) {
     }, async function (request, reply) {
         return await emailLoginService.registerByEmail(request.reqParams)
     })
+
+    // 根据手机短信验证码重置密码
+    fastify.post('/reset-pwd/phone', {
+        schema: {
+            description: '根据手机短信验证码重置密码',
+            summary: '手机验证码重置密码',
+            body: {
+                type: 'object',
+                properties: {
+                    mobile: {type: 'string', description: '手机号'},
+                    smsCode: {type: 'string', description: '短信验证码'},
+                    pwd: {type: 'string', description: '新密码'},
+                    encrypt: {type: 'boolean', description: '密码是否加密'}
+                },
+                required: ['mobile', 'smsCode', 'pwd']
+            },
+            tags: ['user-auth'],
+            response: {
+                default: {...getResSwaggerSchema()}
+            }
+        }
+    }, async function (request, reply) {
+        return await smsLoginService.resetPwdByMobile(request.reqParams)
+    })
+
+    // 根据邮箱验证码重置密码
+    fastify.post('/reset-pwd/email', {
+        schema: {
+            description: '根据邮箱验证码重置密码',
+            summary: '邮箱验证码重置密码',
+            body: {
+                type: 'object',
+                properties: {
+                    email: {type: 'string', description: '邮箱'},
+                    emailCode: {type: 'string', description: '邮箱验证码'},
+                    pwd: {type: 'string', description: '新密码'},
+                    encrypt: {type: 'boolean', description: '密码是否加密'}
+                },
+                required: ['email', 'emailCode', 'pwd']
+            },
+            tags: ['user-auth'],
+            response: {
+                default: {...getResSwaggerSchema()}
+            }
+        }
+    }, async function (request, reply) {
+        return await emailLoginService.resetPwdByEmail(request.reqParams)
+    })
 }
