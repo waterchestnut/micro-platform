@@ -2,6 +2,31 @@
 /* eslint-disable */
 import { ResponseStructure, ucenterRequest as request } from '@/services/request';
 
+/** 通用获取邮箱验证码 通用获取邮箱验证码 返回值: Default Response POST /core/user/auth/email-code */
+export async function postCoreUserAuthEmailCode(
+  body: {
+    email: string;
+    captchaKey: string;
+    captcha: string;
+  },
+  options?: { [key: string]: any },
+) {
+  return request<{
+    statusCode: number;
+    code: number;
+    msg?: string;
+    errorLevel?: string;
+    data?: Record<string, any>;
+  }>('/core/user/auth/email-code', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  });
+}
+
 /** 邮箱快捷登录 邮箱，验证码方式登录 返回值: Default Response POST /core/user/auth/email/login */
 export async function postCoreUserAuthEmailLogin(
   body: {
@@ -239,6 +264,66 @@ export async function postCoreUserAuthRegisterPhoneVerify(
     errorLevel?: string;
     data?: Record<string, any>;
   }>('/core/user/auth/register/phone/verify', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  });
+}
+
+/** 邮箱验证码重置密码 根据邮箱验证码重置密码 返回值: Default Response POST /core/user/auth/reset-pwd/email */
+export async function postCoreUserAuthResetPwdEmail(
+  body: {
+    /** 邮箱 */
+    email: string;
+    /** 邮箱验证码 */
+    emailCode: string;
+    /** 新密码 */
+    pwd: string;
+    /** 密码是否加密 */
+    encrypt?: boolean;
+  },
+  options?: { [key: string]: any },
+) {
+  return request<{
+    statusCode: number;
+    code: number;
+    msg?: string;
+    errorLevel?: string;
+    data?: Record<string, any>;
+  }>('/core/user/auth/reset-pwd/email', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  });
+}
+
+/** 手机验证码重置密码 根据手机短信验证码重置密码 返回值: Default Response POST /core/user/auth/reset-pwd/phone */
+export async function postCoreUserAuthResetPwdPhone(
+  body: {
+    /** 手机号 */
+    mobile: string;
+    /** 短信验证码 */
+    smsCode: string;
+    /** 新密码 */
+    pwd: string;
+    /** 密码是否加密 */
+    encrypt?: boolean;
+  },
+  options?: { [key: string]: any },
+) {
+  return request<{
+    statusCode: number;
+    code: number;
+    msg?: string;
+    errorLevel?: string;
+    data?: Record<string, any>;
+  }>('/core/user/auth/reset-pwd/phone', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

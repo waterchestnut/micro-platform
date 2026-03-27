@@ -15,3 +15,93 @@ export async function getCoreUserCur(options?: { [key: string]: any }) {
     ...(options || {}),
   });
 }
+
+/** 更换登录邮箱 更换登录邮箱 返回值: Default Response POST /core/user/email */
+export async function postCoreUserEmail(
+  body: {
+    /** 新邮箱 */
+    email: string;
+    /** 邮箱验证码 */
+    emailCode: string;
+  },
+  options?: { [key: string]: any },
+) {
+  return request<{
+    statusCode: number;
+    code: number;
+    msg?: string;
+    errorLevel?: string;
+    data?: Record<string, any>;
+  }>('/core/user/email', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  });
+}
+
+/** 更换登录手机号 更换登录手机号 返回值: Default Response POST /core/user/mobile */
+export async function postCoreUserMobile(
+  body: {
+    /** 新手机号 */
+    mobile: string;
+    /** 短信验证码 */
+    smsCode: string;
+  },
+  options?: { [key: string]: any },
+) {
+  return request<{
+    statusCode: number;
+    code: number;
+    msg?: string;
+    errorLevel?: string;
+    data?: Record<string, any>;
+  }>('/core/user/mobile', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  });
+}
+
+/** 修改个人信息 修改个人信息 返回值: Default Response POST /core/user/profile */
+export async function postCoreUserProfile(
+  body: {
+    /** 真实姓名 */
+    realName?: string;
+    /** 昵称 */
+    nickName?: string;
+    /** 头像URL */
+    avatarUrl?: string;
+    /** 民族 */
+    nation?: string;
+    /** 政治面貌 */
+    politics?: string;
+    /** 生日 */
+    birthday?: string;
+    /** 性别 */
+    gender?: string;
+    /** 学历 */
+    degree?: string;
+  },
+  options?: { [key: string]: any },
+) {
+  return request<{
+    statusCode: number;
+    code: number;
+    msg?: string;
+    errorLevel?: string;
+    data?: Record<string, any>;
+  }>('/core/user/profile', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  });
+}

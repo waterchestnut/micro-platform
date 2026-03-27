@@ -26,6 +26,9 @@ export default {
   'POST /core/user/auth/sms-code': (req: Request, res: Response) => {
     res.status(200).send({});
   },
+  'POST /core/user/auth/email-code': (req: Request, res: Response) => {
+    res.status(200).send({});
+  },
   'POST /core/user/auth/register/phone/verify': (req: Request, res: Response) => {
     res.status(200).send({});
   },
@@ -36,6 +39,12 @@ export default {
     res.status(200).send({});
   },
   'POST /core/user/auth/register/email': (req: Request, res: Response) => {
+    res.status(200).send({});
+  },
+  'POST /core/user/auth/reset-pwd/phone': (req: Request, res: Response) => {
+    res.status(200).send({});
+  },
+  'POST /core/user/auth/reset-pwd/email': (req: Request, res: Response) => {
     res.status(200).send({});
   },
 };

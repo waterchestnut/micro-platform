@@ -23,6 +23,42 @@ export async function getPublicBinMobileRangeCheck(
   });
 }
 
+/** 获取区域列表 获取所有的区域列表 返回值: Default Response GET /public-bin/region/all */
+export async function getPublicBinRegionAll(
+  // 叠加生成的Param类型 (非body参数swagger默认没有生成对象)
+  params: UCENTERAPI.getPublicBinRegionAllParams,
+  options?: { [key: string]: any },
+) {
+  return request<{
+    statusCode: number;
+    code: number;
+    msg?: string;
+    errorLevel?: string;
+    data?: UCENTERAPI.Region[];
+  }>('/public-bin/region/all', {
+    method: 'GET',
+    params: {
+      ...params,
+    },
+    ...(options || {}),
+  });
+}
+
+/** 获取区域树形结构 获取区域树形结构 GET /public-bin/region/tree */
+export async function getPublicBinRegionTree(
+  // 叠加生成的Param类型 (非body参数swagger默认没有生成对象)
+  params: UCENTERAPI.getPublicBinRegionTreeParams,
+  options?: { [key: string]: any },
+) {
+  return request<any>('/public-bin/region/tree', {
+    method: 'GET',
+    params: {
+      ...params,
+    },
+    ...(options || {}),
+  });
+}
+
 /** 获取角色列表 获取平台所有的角色列表 返回值: Default Response GET /public-bin/user-role/group/all */
 export async function getPublicBinUserRoleGroupAll(options?: { [key: string]: any }) {
   return request<{

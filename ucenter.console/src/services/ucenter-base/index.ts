@@ -5,6 +5,7 @@
 import * as api0 from './api0';
 import * as auth from './auth';
 import * as cgiBin from './cgiBin';
+import * as cgiBinOauthPwd from './cgiBinOauthPwd';
 import * as clientProxy from './clientProxy';
 import * as code from './code';
 import * as clientIpmi from './clientIpmi';
@@ -22,6 +23,7 @@ export default {
   api0,
   auth,
   cgiBin,
+  cgiBinOauthPwd,
   clientProxy,
   code,
   clientIpmi,

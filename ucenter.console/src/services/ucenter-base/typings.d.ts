@@ -4,6 +4,8 @@ declare namespace UCENTERAPI {
     accessToken: string;
     /** 应用标识 */
     clientCode?: string;
+    /** 应用Token的值 */
+    clientAccessToken?: string;
     /** 用户标识 */
     userCode?: string;
     /** 过期时间 */
@@ -114,6 +116,36 @@ declare namespace UCENTERAPI {
       postcode?: string;
       email?: string;
     };
+    /** Experience */
+    Experience?: {
+      userCode?: string;
+      realName?: string;
+      experienceType?: 'education' | 'government' | 'institution' | 'enterprise';
+      institutionCode?: string;
+      institutionName?: string;
+      jobCode?: string;
+      jobName?: string;
+      address?: {
+        continent?: string;
+        continentName?: string;
+        country?: string;
+        countryName?: string;
+        province?: string;
+        provinceName?: string;
+        city?: string;
+        cityName?: string;
+        district?: string;
+        districtName?: string;
+        content?: string;
+      };
+      collegeCode?: string;
+      collegeName?: string;
+      specialtyCode?: string;
+      specialtyName?: string;
+      degree?: 0 | 1 | 2 | 3 | 4;
+      startTime?: string;
+      endTime?: string;
+    };
     /** Tag */
     Tag?: { key?: string; value?: string };
     /** UserDepartment */
@@ -135,6 +167,13 @@ declare namespace UCENTERAPI {
       undergraduate?: number;
       master?: number;
       doctor?: number;
+    };
+    /** ExperienceTypeEnum */
+    ExperienceTypeEnum?: {
+      education?: string;
+      government?: string;
+      institution?: string;
+      enterprise?: string;
     };
     /** GenderEnum */
     GenderEnum?: { notSet?: number; male?: number; female?: number };
@@ -189,6 +228,7 @@ declare namespace UCENTERAPI {
     AccessToken?: {
       accessToken: string;
       clientCode?: string;
+      clientAccessToken?: string;
       userCode?: string;
       expiresTime?: number;
       scopes?: string[];
@@ -353,6 +393,7 @@ declare namespace UCENTERAPI {
     RefreshToken?: {
       refreshToken: string;
       clientCode?: string;
+      clientRefreshToken?: string;
       userCode?: string;
       expiresTime?: number;
       scopes?: string[];
@@ -416,6 +457,39 @@ declare namespace UCENTERAPI {
       adminClass?: { classCode?: string; className?: string };
       idNum?: string;
       grade?: string;
+      collegeCode?: string;
+      collegeName?: string;
+      specialtyCode?: string;
+      specialtyName?: string;
+      experiences?: {
+        userCode?: string;
+        realName?: string;
+        experienceType?: 'education' | 'government' | 'institution' | 'enterprise';
+        institutionCode?: string;
+        institutionName?: string;
+        jobCode?: string;
+        jobName?: string;
+        address?: {
+          continent?: string;
+          continentName?: string;
+          country?: string;
+          countryName?: string;
+          province?: string;
+          provinceName?: string;
+          city?: string;
+          cityName?: string;
+          district?: string;
+          districtName?: string;
+          content?: string;
+        };
+        collegeCode?: string;
+        collegeName?: string;
+        specialtyCode?: string;
+        specialtyName?: string;
+        degree?: 0 | 1 | 2 | 3 | 4;
+        startTime?: string;
+        endTime?: string;
+      }[];
     };
     /** UserInfoWithToken */
     UserInfoWithToken?: {
@@ -453,6 +527,39 @@ declare namespace UCENTERAPI {
       adminClass?: { classCode?: string; className?: string };
       idNum?: string;
       grade?: string;
+      collegeCode?: string;
+      collegeName?: string;
+      specialtyCode?: string;
+      specialtyName?: string;
+      experiences?: {
+        userCode?: string;
+        realName?: string;
+        experienceType?: 'education' | 'government' | 'institution' | 'enterprise';
+        institutionCode?: string;
+        institutionName?: string;
+        jobCode?: string;
+        jobName?: string;
+        address?: {
+          continent?: string;
+          continentName?: string;
+          country?: string;
+          countryName?: string;
+          province?: string;
+          provinceName?: string;
+          city?: string;
+          cityName?: string;
+          district?: string;
+          districtName?: string;
+          content?: string;
+        };
+        collegeCode?: string;
+        collegeName?: string;
+        specialtyCode?: string;
+        specialtyName?: string;
+        degree?: 0 | 1 | 2 | 3 | 4;
+        startTime?: string;
+        endTime?: string;
+      }[];
       accessToken?: string;
       expiresTime?: number;
       refreshToken?: string;
@@ -512,6 +619,7 @@ declare namespace UCENTERAPI {
     AccessToken?: {
       accessToken: string;
       clientCode?: string;
+      clientAccessToken?: string;
       userCode?: string;
       expiresTime?: number;
       scopes?: string[];
@@ -711,6 +819,7 @@ declare namespace UCENTERAPI {
     RefreshToken?: {
       refreshToken: string;
       clientCode?: string;
+      clientRefreshToken?: string;
       userCode?: string;
       expiresTime?: number;
       scopes?: string[];
@@ -782,6 +891,41 @@ declare namespace UCENTERAPI {
       adminClass?: { classCode?: string; className?: string; _id?: string };
       idNum?: string;
       grade?: string;
+      collegeCode?: string;
+      collegeName?: string;
+      specialtyCode?: string;
+      specialtyName?: string;
+      experiences?: {
+        userCode?: string;
+        realName?: string;
+        experienceType?: 'education' | 'government' | 'institution' | 'enterprise';
+        institutionCode?: string;
+        institutionName?: string;
+        jobCode?: string;
+        jobName?: string;
+        address?: {
+          continent?: string;
+          continentName?: string;
+          country?: string;
+          countryName?: string;
+          province?: string;
+          provinceName?: string;
+          city?: string;
+          cityName?: string;
+          district?: string;
+          districtName?: string;
+          content?: string;
+          _id?: string;
+        };
+        collegeCode?: string;
+        collegeName?: string;
+        specialtyCode?: string;
+        specialtyName?: string;
+        degree?: 0 | 1 | 2 | 3 | 4;
+        startTime?: string;
+        endTime?: string;
+        _id?: string;
+      }[];
       insertTime?: string;
       updateTime?: string;
       _id?: string;
@@ -844,6 +988,18 @@ declare namespace UCENTERAPI {
 
   type getPublicBinMobileRangeCheckParams = {
     phone: string;
+  };
+
+  type getPublicBinRegionAllParams = {
+    /** 最大层级 */
+    maxLevel?: number;
+  };
+
+  type getPublicBinRegionTreeParams = {
+    /** 父级区域标识 */
+    parentCode?: string;
+    /** 最大层级 */
+    maxLevel?: number;
   };
 
   type Group = {
@@ -1094,6 +1250,8 @@ declare namespace UCENTERAPI {
     refreshToken: string;
     /** 应用标识 */
     clientCode?: string;
+    /** 应用refreshToken的值 */
+    clientRefreshToken?: string;
     /** 用户标识 */
     userCode?: string;
     /** 过期时间 */
@@ -1209,6 +1367,44 @@ declare namespace UCENTERAPI {
     idNum?: string;
     /** 年级 */
     grade?: string;
+    /** 学院标识 */
+    collegeCode?: string;
+    /** 学院名称 */
+    collegeName?: string;
+    /** 专业标识 */
+    specialtyCode?: string;
+    /** 专业名称 */
+    specialtyName?: string;
+    /** 经历 */
+    experiences?: {
+      userCode?: string;
+      realName?: string;
+      experienceType?: 'education' | 'government' | 'institution' | 'enterprise';
+      institutionCode?: string;
+      institutionName?: string;
+      jobCode?: string;
+      jobName?: string;
+      address?: {
+        continent?: string;
+        continentName?: string;
+        country?: string;
+        countryName?: string;
+        province?: string;
+        provinceName?: string;
+        city?: string;
+        cityName?: string;
+        district?: string;
+        districtName?: string;
+        content?: string;
+      };
+      collegeCode?: string;
+      collegeName?: string;
+      specialtyCode?: string;
+      specialtyName?: string;
+      degree?: 0 | 1 | 2 | 3 | 4;
+      startTime?: string;
+      endTime?: string;
+    }[];
   };
 
   type UserInfoWithToken = {
@@ -1275,6 +1471,44 @@ declare namespace UCENTERAPI {
     idNum?: string;
     /** 年级 */
     grade?: string;
+    /** 学院标识 */
+    collegeCode?: string;
+    /** 学院名称 */
+    collegeName?: string;
+    /** 专业标识 */
+    specialtyCode?: string;
+    /** 专业名称 */
+    specialtyName?: string;
+    /** 经历 */
+    experiences?: {
+      userCode?: string;
+      realName?: string;
+      experienceType?: 'education' | 'government' | 'institution' | 'enterprise';
+      institutionCode?: string;
+      institutionName?: string;
+      jobCode?: string;
+      jobName?: string;
+      address?: {
+        continent?: string;
+        continentName?: string;
+        country?: string;
+        countryName?: string;
+        province?: string;
+        provinceName?: string;
+        city?: string;
+        cityName?: string;
+        district?: string;
+        districtName?: string;
+        content?: string;
+      };
+      collegeCode?: string;
+      collegeName?: string;
+      specialtyCode?: string;
+      specialtyName?: string;
+      degree?: 0 | 1 | 2 | 3 | 4;
+      startTime?: string;
+      endTime?: string;
+    }[];
     accessToken?: string;
     expiresTime?: number;
     refreshToken?: string;
