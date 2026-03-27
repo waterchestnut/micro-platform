@@ -16,8 +16,8 @@ export async function getCoreUserCur(options?: { [key: string]: any }) {
   });
 }
 
-/** 更换登录邮箱 更换登录邮箱 返回值: Default Response POST /core/user/email */
-export async function postCoreUserEmail(
+/** 更换登录邮箱 更换登录邮箱 返回值: Default Response POST /core/user/cur/email */
+export async function postCoreUserCurEmail(
   body: {
     /** 新邮箱 */
     email: string;
@@ -32,7 +32,7 @@ export async function postCoreUserEmail(
     msg?: string;
     errorLevel?: string;
     data?: Record<string, any>;
-  }>('/core/user/email', {
+  }>('/core/user/cur/email', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -42,8 +42,8 @@ export async function postCoreUserEmail(
   });
 }
 
-/** 更换登录手机号 更换登录手机号 返回值: Default Response POST /core/user/mobile */
-export async function postCoreUserMobile(
+/** 更换登录手机号 更换登录手机号 返回值: Default Response POST /core/user/cur/mobile */
+export async function postCoreUserCurMobile(
   body: {
     /** 新手机号 */
     mobile: string;
@@ -58,7 +58,7 @@ export async function postCoreUserMobile(
     msg?: string;
     errorLevel?: string;
     data?: Record<string, any>;
-  }>('/core/user/mobile', {
+  }>('/core/user/cur/mobile', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -68,8 +68,8 @@ export async function postCoreUserMobile(
   });
 }
 
-/** 修改个人信息 修改个人信息 返回值: Default Response POST /core/user/profile */
-export async function postCoreUserProfile(
+/** 修改个人信息 修改个人信息 返回值: Default Response POST /core/user/cur/profile */
+export async function postCoreUserCurProfile(
   body: {
     /** 真实姓名 */
     realName?: string;
@@ -96,7 +96,7 @@ export async function postCoreUserProfile(
     msg?: string;
     errorLevel?: string;
     data?: Record<string, any>;
-  }>('/core/user/profile', {
+  }>('/core/user/cur/profile', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

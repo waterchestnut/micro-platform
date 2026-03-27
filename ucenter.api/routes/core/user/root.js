@@ -83,7 +83,7 @@ export default async function (fastify, opts) {
         }
     }
 
-    fastify.post('/profile', {
+    fastify.post('/cur/profile', {
         schema: {
             description: '修改个人信息',
             summary: '修改个人信息',
@@ -101,7 +101,7 @@ export default async function (fastify, opts) {
         return await userInfoService.updateUserInfo(userCode, request.reqParams, 0)
     })
 
-    fastify.post('/mobile', {
+    fastify.post('/cur/mobile', {
         schema: {
             description: '更换登录手机号',
             summary: '更换登录手机号',
@@ -126,7 +126,7 @@ export default async function (fastify, opts) {
         return await smsLoginService.updateMobile(request.reqParams, userCode, 0)
     })
 
-    fastify.post('/email', {
+    fastify.post('/cur/email', {
         schema: {
             description: '更换登录邮箱',
             summary: '更换登录邮箱',
