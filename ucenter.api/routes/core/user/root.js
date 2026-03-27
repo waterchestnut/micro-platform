@@ -34,6 +34,7 @@ export default async function (fastify, opts) {
         }
         return deleteBigField(request.userInfo)
     })
+
     fastify.post('/list', {
         schema: {
             description: '获取用户列表',

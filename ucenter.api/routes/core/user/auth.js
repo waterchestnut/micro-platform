@@ -187,6 +187,32 @@ export default async function (fastify, opts) {
         })
     })
 
+    // 通用获取邮箱验证码
+    fastify.post('/email-code', {
+        schema: {
+            description: '通用获取邮箱验证码',
+            summary: '通用获取邮箱验证码',
+            body: {
+                type: 'object',
+                properties: {
+                    email: {type: 'string'},
+                    captchaKey: {type: 'string'},
+                    captcha: {type: 'string'}
+                },
+                required: ['email', 'captchaKey', 'captcha']
+            },
+            tags: ['user-auth'],
+            response: {
+                default: {...getResSwaggerSchema()}
+            }
+        }
+    }, async function (request, reply) {
+        return await emailCodeService.sendCode(request.reqParams.email, true, {
+            captchaKey: request.reqParams.captchaKey,
+            captcha: request.reqParams.captcha
+        })
+    })
+
     // 注册时获取手机验证码
     fastify.post('/register/phone/verify', {
         schema: {

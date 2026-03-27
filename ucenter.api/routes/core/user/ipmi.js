@@ -6,7 +6,7 @@
 
 import * as userInfoService from '../../../services/core/userInfo.js'
 import {getPageListResSwaggerSchema, getResSwaggerSchema} from '../../../daos/swaggerSchema/responseHandler.js'
-import {getUserByInfo} from "../../../services/core/userInfo.js";
+import {getUserByInfo} from '../../../services/core/userInfo.js'
 
 export const autoPrefix = '/core/user/ipmi'
 
@@ -117,8 +117,9 @@ export default async function (fastify, opts) {
     }, async function (request, reply) {
         return await userInfoService.deleteUserInfo(request.reqParams.userCode)
     })
+
     // 新增：更新用户角色的路由
-  fastify.post('/updateRole', {
+    fastify.post('/updateRole', {
         schema: {
             description: '更新用户角色',
             summary: '更新用户的 groupCodes（角色数组）',
@@ -126,10 +127,10 @@ export default async function (fastify, opts) {
                 type: 'object',
                 required: ['userCode', 'roles'],
                 properties: {
-                    userCode: { type: 'string' },
+                    userCode: {type: 'string'},
                     roles: {
                         type: 'array',
-                        items: { type: 'string' },
+                        items: {type: 'string'},
                         description: '用户的新角色列表'
                     },
                 },
@@ -139,33 +140,33 @@ export default async function (fastify, opts) {
                     description: '成功更新角色',
                     type: 'object',
                     properties: {
-                        code: { type: 'integer' },
-                        msg: { type: 'string' },
+                        code: {type: 'integer'},
+                        msg: {type: 'string'},
                     },
                 },
                 default: {
                     description: '请求失败',
                     type: 'object',
                     properties: {
-                        code: { type: 'integer' },
-                        msg: { type: 'string' },
+                        code: {type: 'integer'},
+                        msg: {type: 'string'},
                     },
                 },
             },
         },
         handler: async (request, reply) => {
-            const { userCode, roles } = request.body;
+            const {userCode, roles} = request.body
             try {
-                const result = await userInfoService.updateUserRole(userCode, roles);
+                const result = await userInfoService.updateUserRole(userCode, roles)
                 if (result.code === 0) {
-                    return reply.code(200).send({ code: 0, msg: '角色更新成功' });
+                    return reply.code(200).send({code: 0, msg: '角色更新成功'})
                 } else {
-                    return reply.code(400).send({ code: result.code || -1, msg: result.msg || '角色更新失败' });
+                    return reply.code(400).send({code: result.code || -1, msg: result.msg || '角色更新失败'})
                 }
             } catch (err) {
-                return reply.code(500).send({ code: -1, msg: err.message || '角色更新失败' });
+                return reply.code(500).send({code: -1, msg: err.message || '角色更新失败'})
             }
         },
-    });
+    })
 
 }
