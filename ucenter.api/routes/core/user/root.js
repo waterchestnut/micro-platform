@@ -67,4 +67,36 @@ export default async function (fastify, opts) {
         return await userInfoService.getUserList(request.reqParams.filter, request.reqParams.pageIndex, request.reqParams.pageSize, request.reqParams.options)
     })
 
+    const profileSchema = {
+        type: 'object',
+        properties: {
+            realName: {type: 'string', description: '真实姓名'},
+            nickName: {type: 'string', description: '昵称'},
+            avatarUrl: {type: 'string', description: '头像URL'},
+            nation: {type: 'string', description: '民族'},
+            politics: {type: 'string', description: '政治面貌'},
+            birthday: {type: 'string', description: '生日'},
+            gender: {type: 'string', description: '性别'},
+            degree: {type: 'string', description: '学历'},
+        }
+    }
+
+    fastify.post('/profile', {
+        schema: {
+            description: '修改个人信息',
+            summary: '修改个人信息',
+            body: profileSchema,
+            tags: ['user'],
+            response: {
+                default: {...getResSwaggerSchema()}
+            }
+        }
+    }, async function (request, reply) {
+        if (!request.userInfo) {
+            return {...retSchema.FAIL_TOKEN_NO_REDIRECT}
+        }
+        const userCode = request.userInfo.userCode
+        return await userInfoService.updateUserInfo(userCode, request.reqParams, 0)
+    })
+
 }
