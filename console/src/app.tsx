@@ -14,6 +14,7 @@ import AppsMenuButton from '@/components/AppsPop/AppsMenuButton'
 import routes from '../config/routes'
 import IconMap from '@/icons/iconMap'
 import {getIntl, getLocale} from '@umijs/max'
+import {getDocHttpUrl} from '@/utils/util'
 
 const isDev = process.env.NODE_ENV === 'development'
 
@@ -127,7 +128,7 @@ export const layout: RunTimeLayoutConfig = ({initialState, setInitialState}) => 
       locale: false,
     },
     avatarProps: {
-      src: initialState?.currentUser?.avatarUrl,
+      src: initialState?.currentUser?.avatarUrl ? getDocHttpUrl(initialState?.currentUser?.avatarUrl) : undefined,
       title: <AvatarName/>,
       render: (_, avatarChildren) => {
         return <AvatarDropdown>{avatarChildren}</AvatarDropdown>

@@ -153,6 +153,8 @@ export default defineConfig({
     UCENTER_API_BASE: process.env.UCENTER_API_BASE || 'http://localhost:12001',
     /*用户中心平台地址*/
     UCENTER_PLATFORM_BASE: process.env.UCENTER_PLATFORM_BASE || 'http://localhost:11002',
+    /*文件服务地址*/
+    DOC_API_BASE: process.env.DOC_API_BASE || 'http://localhost:12004',
     UPLOAD_FILE_SIZE_LIMIT: process.env.UPLOAD_FILE_SIZE_LIMIT || 500 * 1024 * 1024,
     /*APP管理接口地址*/
     APP_API_BASE: process.env.APP_API_BASE || 'http://localhost:12003',

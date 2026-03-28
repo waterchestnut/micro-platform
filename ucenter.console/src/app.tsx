@@ -1,16 +1,18 @@
-import {Footer, AvatarDropdown, AvatarName} from '@/components';
-import {LinkOutlined} from '@ant-design/icons';
-import type {Settings as LayoutSettings} from '@ant-design/pro-components';
-import {SettingDrawer} from '@ant-design/pro-components';
-import type {RunTimeLayoutConfig} from '@umijs/max';
-import defaultSettings from '../config/defaultSettings';
-import {errorConfig} from './requestErrorConfig';
-import {queryCurrentUser} from '@/services/ucenter/user';
-import React from 'react';
-import {isEmbedded} from "@/utils/embed";
-import {toLogin} from "@/utils/authority";
+import {Footer, AvatarDropdown, AvatarName} from '@/components'
+import {LinkOutlined} from '@ant-design/icons'
+import type {Settings as LayoutSettings} from '@ant-design/pro-components'
+import {SettingDrawer} from '@ant-design/pro-components'
+import type {RunTimeLayoutConfig} from '@umijs/max'
+import defaultSettings from '../config/defaultSettings'
+import {errorConfig} from './requestErrorConfig'
+import {queryCurrentUser} from '@/services/ucenter/user'
+import React from 'react'
+import {isEmbedded} from '@/utils/embed'
+import {toLogin} from '@/utils/authority'
+import {getDocHttpUrl} from '@/utils/util'
 
-const isDev = process.env.NODE_ENV === 'development';
+const isDev = process.env.NODE_ENV === 'development'
+
 /**
  * @see  https://umijs.org/zh-CN/plugins/plugin-initial-state
  * */
@@ -22,23 +24,23 @@ export async function getInitialState(): Promise<{
 }> {
   const fetchUserInfo = async (redirect = true) => {
     try {
-      const msg = await queryCurrentUser();
-      return msg.data;
+      const msg = await queryCurrentUser()
+      return msg.data
     } catch (error) {
       if (redirect) {
-        toLogin();
+        toLogin()
       }
     }
-    return undefined;
-  };
+    return undefined
+  }
   // 加载用户信息
-  const currentUser = await fetchUserInfo(false);
+  const currentUser = await fetchUserInfo(false)
 
   return {
     fetchUserInfo,
     currentUser,
     settings: defaultSettings as Partial<LayoutSettings>,
-  };
+  }
 }
 
 // ProLayout 支持的api https://procomponents.ant.design/components/layout
@@ -46,10 +48,10 @@ export const layout: RunTimeLayoutConfig = ({initialState, setInitialState}) => 
   return {
     actionsRender: () => [/*<Question key="doc"/>, <SelectLang key="SelectLang"/>*/],
     avatarProps: isEmbedded() ? undefined : {
-      src: initialState?.currentUser?.avatarUrl,
+      src: initialState?.currentUser?.avatarUrl ? getDocHttpUrl(initialState?.currentUser?.avatarUrl) : undefined,
       title: <AvatarName/>,
       render: (_, avatarChildren) => {
-        return <AvatarDropdown>{avatarChildren}</AvatarDropdown>;
+        return <AvatarDropdown>{avatarChildren}</AvatarDropdown>
       },
     },
     waterMarkProps: {
@@ -88,14 +90,14 @@ export const layout: RunTimeLayoutConfig = ({initialState, setInitialState}) => 
       isDev
         ? [
           // @ts-ignore
-          <a key="swagger" title='接口文档(swagger ui)' href={UCENTER_API_BASE + "/documentation"} target="_blank"
-             rel="noreferrer">
+          <a key='swagger' title='接口文档(swagger ui)' href={UCENTER_API_BASE + '/documentation'} target='_blank'
+             rel='noreferrer'>
             <LinkOutlined/>
             <span>接口文档(swagger ui)</span>
           </a>,
           // @ts-ignore
-          <a key="reference" title='接口文档(reference)' href={UCENTER_API_BASE + "/reference"} target="_blank"
-             rel="noreferrer">
+          <a key='reference' title='接口文档(reference)' href={UCENTER_API_BASE + '/reference'} target='_blank'
+             rel='noreferrer'>
             <LinkOutlined/>
             <span>接口文档(reference)</span>
           </a>,
@@ -121,12 +123,12 @@ export const layout: RunTimeLayoutConfig = ({initialState, setInitialState}) => 
                   setInitialState((preInitialState) => ({
                     ...preInitialState,
                     settings,
-                  }));
+                  }))
                 }}
               />
             )}
           </>
-        );
+        )
       },
     ...
       initialState?.settings,
@@ -134,8 +136,8 @@ export const layout: RunTimeLayoutConfig = ({initialState, setInitialState}) => 
       isEmbedded() ? 'side' : 'mix',
     /*appList: [{title: '测试', url: 'https://www.bing.com'}],*/
     logo: isEmbedded() ? '/logo.svg' : '/logo_white.svg',
-  };
-};
+  }
+}
 
 /**
  * @name request 配置，可以配置错误处理
@@ -144,4 +146,4 @@ export const layout: RunTimeLayoutConfig = ({initialState, setInitialState}) => 
  */
 export const request = {
   ...errorConfig,
-};
+}
