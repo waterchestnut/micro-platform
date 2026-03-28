@@ -24,6 +24,7 @@ const AgreementList: React.FC = () => {
     {
       title: '协议标题',
       dataIndex: 'title',
+      search: false,
     },
     {
       title: '协议类型',
@@ -33,21 +34,25 @@ const AgreementList: React.FC = () => {
     {
       title: '版本号',
       dataIndex: 'version',
+      search: false,
     },
     {
       title: '状态',
       dataIndex: 'status',
       valueEnum: StatusEnum.toValueEnum(),
+      search: false,
     },
     {
       title: '生效时间',
       dataIndex: 'effectiveTime',
-      valueType: 'dateTime',
+      valueType: 'date',
+      search: false,
     },
     {
       title: '创建时间',
       dataIndex: 'insertTime',
       valueType: 'dateTime',
+      search: false,
     },
     {
       title: '操作',
