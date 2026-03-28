@@ -20,6 +20,23 @@ declare namespace UCENTERAPI {
     oauthType?: 0 | 1 | 2;
   };
 
+  type Agreement = {
+    /** 协议标识 */
+    agreementCode: string;
+    /** 协议标题 */
+    title?: string;
+    /** 协议内容 */
+    content?: string;
+    /** 协议类型：参见AgreementTypeEnum */
+    type: 1 | 2;
+    /** 协议版本号 */
+    version: number;
+    /** 状态：参见StatusEnum */
+    status?: -1 | 0 | 1;
+    /** 生效时间 */
+    effectiveTime?: string;
+  };
+
   type AuthCode = {
     /** code的值 */
     authCode: string;
@@ -158,6 +175,8 @@ declare namespace UCENTERAPI {
   };
 
   type fullEnumModels = {
+    /** AgreementTypeEnum */
+    AgreementTypeEnum?: { user?: number; privacy?: number };
     /** AuthTypeEnum */
     AuthTypeEnum?: { managed?: number; builtIn?: number; trail?: number; store?: number };
     /** DegreeEnum */
@@ -235,6 +254,16 @@ declare namespace UCENTERAPI {
       retUrl?: string;
       status?: -1 | 0 | 1;
       oauthType?: 0 | 1 | 2;
+    };
+    /** Agreement */
+    Agreement?: {
+      agreementCode: string;
+      title?: string;
+      content?: string;
+      type: 1 | 2;
+      version: number;
+      status?: -1 | 0 | 1;
+      effectiveTime?: string;
     };
     /** AuthCode */
     AuthCode?: {
@@ -630,6 +659,19 @@ declare namespace UCENTERAPI {
       updateTime?: string;
       _id?: string;
     };
+    /** Agreement */
+    Agreement?: {
+      agreementCode: string;
+      title?: string;
+      content?: string;
+      type: 1 | 2;
+      version: number;
+      status?: -1 | 0 | 1;
+      effectiveTime?: string;
+      insertTime?: string;
+      updateTime?: string;
+      _id?: string;
+    };
     /** AuthCode */
     AuthCode?: {
       authCode: string;
@@ -947,6 +989,10 @@ declare namespace UCENTERAPI {
   type getClientProxyOauthSignInParams = {
     accessToken: string;
     refreshToken?: string;
+  };
+
+  type getCoreAgreementIpmiDetailParams = {
+    agreementCode: string;
   };
 
   type getCoreCaptchaParams = {

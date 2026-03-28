@@ -19,6 +19,7 @@ import authCodeSchema from './authCodeSchema.js'
 import pageConfigSchema from './pageConfigSchema.js'
 import refreshTokenSchema from './refreshTokenSchema.js'
 import mobileRangeSchema from './mobileRangeSchema.js'
+import agreementSchema from './agreementSchema.js'
 
 const mongodbConfig = ucenter.config.mongodbConfig
 
@@ -54,3 +55,4 @@ export const AuthCode = conn.model('AuthCode', authCodeSchema, 'authCode')
 export const PageConfig = conn.model('PageConfig', pageConfigSchema, 'pageConfig')
 export const RefreshToken = conn.model('RefreshToken', refreshTokenSchema, 'refreshToken')
 export const MobileRange = conn.model('MobileRange', mobileRangeSchema, 'mobileRange')
+export const Agreement = conn.model('Agreement', agreementSchema, 'agreement')

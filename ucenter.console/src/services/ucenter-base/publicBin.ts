@@ -2,6 +2,34 @@
 /* eslint-disable */
 import { ResponseStructure, ucenterRequest as request } from '@/services/request';
 
+/** 获取隐私协议 获取隐私协议 返回值: Default Response GET /public-bin/agreement/privacy */
+export async function getPublicBinAgreementPrivacy(options?: { [key: string]: any }) {
+  return request<{
+    statusCode: number;
+    code: number;
+    msg?: string;
+    errorLevel?: string;
+    data?: UCENTERAPI.Agreement;
+  }>('/public-bin/agreement/privacy', {
+    method: 'GET',
+    ...(options || {}),
+  });
+}
+
+/** 获取用户协议 获取用户协议 返回值: Default Response GET /public-bin/agreement/user */
+export async function getPublicBinAgreementUser(options?: { [key: string]: any }) {
+  return request<{
+    statusCode: number;
+    code: number;
+    msg?: string;
+    errorLevel?: string;
+    data?: UCENTERAPI.Agreement;
+  }>('/public-bin/agreement/user', {
+    method: 'GET',
+    ...(options || {}),
+  });
+}
+
 /** 检查手机号归属地 检查手机号或固定电话的归属城市 返回值: Default Response GET /public-bin/mobile-range/check */
 export async function getPublicBinMobileRangeCheck(
   // 叠加生成的Param类型 (非body参数swagger默认没有生成对象)

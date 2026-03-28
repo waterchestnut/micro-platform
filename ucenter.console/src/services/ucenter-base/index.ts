@@ -8,6 +8,7 @@ import * as cgiBin from './cgiBin';
 import * as cgiBinOauthPwd from './cgiBinOauthPwd';
 import * as clientProxy from './clientProxy';
 import * as code from './code';
+import * as agreementIpmi from './agreementIpmi';
 import * as clientIpmi from './clientIpmi';
 import * as departmentIpmi from './departmentIpmi';
 import * as groupIpmi from './groupIpmi';
@@ -26,6 +27,7 @@ export default {
   cgiBinOauthPwd,
   clientProxy,
   code,
+  agreementIpmi,
   clientIpmi,
   departmentIpmi,
   groupIpmi,

@@ -2,6 +2,12 @@
 import { Request, Response } from 'express';
 
 export default {
+  'GET /public-bin/agreement/user': (req: Request, res: Response) => {
+    res.status(200).send({});
+  },
+  'GET /public-bin/agreement/privacy': (req: Request, res: Response) => {
+    res.status(200).send({});
+  },
   'GET /public-bin/mobile-range/check': (req: Request, res: Response) => {
     res.status(200).send({});
   },

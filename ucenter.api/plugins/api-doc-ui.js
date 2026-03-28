@@ -36,6 +36,7 @@ export default fp(async (fastify) => {
         {name: 'department-ipmi', description: '部门管理相关的API'},
         {name: 'job-ipmi', description: '职位管理相关的API'},
         {name: 'region-ipmi', description: '地区管理相关的API'},
+        {name: 'agreement-ipmi', description: '协议管理相关的API'},
     ]
 
     fastify.register(swagger, {
