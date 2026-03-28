@@ -7,9 +7,9 @@
 import userInfoDac from '../../daos/core/dac/userInfoDac.js'
 import groupDac from '../../daos/core/dac/groupDac.js'
 import retSchema from '../../daos/retSchema.js'
-import { checkPassword, formatPublicUserInfo, formatUserList, generateUserModel, getMd5Pwd } from "./userUtils.js"
-import { checkOrgStatus } from "./orgInfo.js"
-import * as rsaLogic from "./commonRsa.js"
+import {checkPassword, formatPublicUserInfo, formatUserList, generateUserModel, getMd5Pwd} from './userUtils.js'
+import {checkOrgStatus} from './orgInfo.js'
+import * as rsaLogic from './commonRsa.js'
 
 const tools = ucenter.tools
 const logger = ucenter.logger
@@ -36,17 +36,17 @@ export async function getUserByInfo(info) {
     let options = {
         complexFilter: {
             $or: [
-                { realName: { $regex: info, $options: 'i' } },
-                { mobile:  { $regex: info, $options: 'i' } },
-                { userCode: { $regex: info, $options: 'i' } }
+                {realName: {$regex: info, $options: 'i'}},
+                {mobile: {$regex: info, $options: 'i'}},
+                {userCode: {$regex: info, $options: 'i'}}
             ],
-            groupCodes: { $in: ['student'] }  // 新增的筛选条件
+            groupCodes: {$in: ['student']}  // 新增的筛选条件
         }
-    };
+    }
 
     console.log(options)
 
-    let data=userInfoDac.getTop(1000, options);
+    let data = userInfoDac.getTop(1000, options)
     return data
 }
 
@@ -196,9 +196,9 @@ export async function updateUserInfo(userCode, newUser, isDelToken = 1, schemaCo
         mobileList: newUser.mobileList,
         phoneList: newUser.phoneList,
         emailList: newUser.emailList,
-        nickName: newUser.nickName || '',
-        realName: newUser.realName || '',
-        avatarUrl: newUser.avatarUrl || '',
+        nickName: newUser.nickName || userInfo.nickName || '',
+        realName: newUser.realName || userInfo.realName || '',
+        avatarUrl: newUser.avatarUrl || userInfo.avatarUrl || '',
         office: newUser.office,
         nation: newUser.nation,
         politics: newUser.politics,
@@ -248,7 +248,7 @@ export async function deleteUserInfo(userCode) {
     let user = {
         userCode,
         status: -1
-    };
+    }
 
     return userInfoDac.update(user)
 }
@@ -283,24 +283,24 @@ export async function getUserPrivs(userCode) {
  */
 export async function updateUserRole(userCode, newRole) {
     if (typeof userCode !== 'string') {
-        userCode = String(userCode);
+        userCode = String(userCode)
     }
     if (!userCode) {
-        throw new Error('用户标识不能为空');
+        throw new Error('用户标识不能为空')
     }
-    const userInfo = await userInfoDac.getByCode(userCode);
+    const userInfo = await userInfoDac.getByCode(userCode)
     if (!userInfo) {
-        throw new Error('用户不存在或未找到');
+        throw new Error('用户不存在或未找到')
     }
     if (!Array.isArray(newRole) || newRole.length === 0) {
-        throw new Error('新角色不能为空');
+        throw new Error('新角色不能为空')
     }
-    userInfo.groupCodes = newRole;
-    const updateResult = await userInfoDac.update(userInfo);
+    userInfo.groupCodes = newRole
+    const updateResult = await userInfoDac.update(userInfo)
     if (updateResult) {
-        return { code: 0, msg: '更新成功' };
+        return {code: 0, msg: '更新成功'}
     } else {
-        return { code: -1, msg: '更新失败' };
+        return {code: -1, msg: '更新失败'}
     }
 }
 
