@@ -3,7 +3,7 @@ import { Request, Response } from 'express';
 
 export default {
   'POST /core/user/ipmi/updateRole': (req: Request, res: Response) => {
-    res.status(200).send({ code: 86, msg: '平造效式最此大不转月例众细变。' });
+    res.status(200).send({ code: 77, msg: '往体型日如门派住特养保率给常。' });
   },
   'GET /core/user/cur': (req: Request, res: Response) => {
     res.status(200).send({});

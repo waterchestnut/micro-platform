@@ -81,12 +81,12 @@ export async function postCoreUserCurProfile(
     nation?: string;
     /** 政治面貌 */
     politics?: string;
-    /** 生日 */
+    /** 生日，格式：YYYY-MM-DD */
     birthday?: string;
-    /** 性别 */
-    gender?: string;
-    /** 学历 */
-    degree?: string;
+    /** 性别：0-未定义, 1-男性, 2-女性 */
+    gender?: 0 | 1 | 2;
+    /** 学历：0-未设置, 1-专科, 2-本科, 3-硕士, 4-博士 */
+    degree?: 0 | 1 | 2 | 3 | 4;
   },
   options?: { [key: string]: any },
 ) {

@@ -77,9 +77,9 @@ export default async function (fastify, opts) {
             avatarUrl: {type: 'string', description: '头像URL'},
             nation: {type: 'string', description: '民族'},
             politics: {type: 'string', description: '政治面貌'},
-            birthday: {type: 'string', description: '生日'},
-            gender: {type: 'string', description: '性别'},
-            degree: {type: 'string', description: '学历'},
+            birthday: {type: 'string', format: 'date', description: '生日，格式：YYYY-MM-DD'},
+            gender: {type: 'number', enum: [0, 1, 2], description: '性别：0-未定义, 1-男性, 2-女性'},
+            degree: {type: 'number', enum: [0, 1, 2, 3, 4], description: '学历：0-未设置, 1-专科, 2-本科, 3-硕士, 4-博士'},
         }
     }
 
