@@ -82,7 +82,7 @@ export async function addAgreement(data) {
         throw new Error('协议版本号不能为空')
     }
     logger.info(`添加协议: ${data.type} - ${data.version}`)
-    return await agreementDac.create(data)
+    return await agreementDac.add(data)
 }
 
 /**
@@ -111,5 +111,5 @@ export async function deleteAgreement(agreementCode) {
         throw new Error('协议标识不能为空')
     }
     logger.info(`删除协议: ${agreementCode}`)
-    return await agreementDac.deleteByCode(agreementCode)
+    return await agreementDac.update({agreementCode, status: -1})
 }

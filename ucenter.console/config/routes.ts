@@ -137,6 +137,14 @@ export default [
         component: './Phone/Query',
       },
       {
+        name: 'agreement.list',
+        icon: 'fileText',
+        path: '/agreement/list',
+        access: 'normalRouteFilter',
+        authority: ['ucenter-ipmi-agreement-browse'],
+        component: './Agreement/List',
+      },
+      {
         path: '/',
         redirect: '/home',
       },

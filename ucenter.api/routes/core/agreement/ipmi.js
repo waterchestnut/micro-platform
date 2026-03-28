@@ -21,7 +21,9 @@ export default async function (fastify, opts) {
             type: {type: 'number', enum: AgreementTypeEnum.toValues(), description: '协议类型'},
             version: {type: 'number', description: '协议版本号'},
             status: {type: 'number', enum: StatusEnum.toValues(), description: '状态'},
-            effectiveTime: {type: 'string', format: 'date-time', description: '生效时间'},
+            effectiveTime: {type: 'string', format: 'date', description: '生效时间'},
+            insertTime: {type: 'string', description: '添加时间'},
+            updateTime: {type: 'string', description: '最近修改时间'},
         }
     }
 

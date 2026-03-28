@@ -49,4 +49,18 @@ export default {
   'menu.editor.flow': 'Flow Editor',
   'menu.editor.mind': 'Mind Editor',
   'menu.editor.koni': 'Koni Editor',
+
+  'menu.user.list': 'User',
+  'menu.group.list': 'Role',
+  'menu.client.list': 'Client',
+  'menu.auth': 'Auth',
+  'menu.auth.module': 'Modules',
+  'menu.auth.priv': 'Privs',
+  'menu.auth.page': 'Page Routes',
+  'menu.org.list': 'Organization',
+  'menu.department.list': 'Department',
+  'menu.job.list': 'Job',
+  'menu.region.list': 'Region',
+  'menu.phonenumber': 'Phone Number',
+  'menu.agreement.list': 'Agreement',
 };
