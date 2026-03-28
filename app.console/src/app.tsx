@@ -10,6 +10,7 @@ import {queryCurrentUser} from '@/services/ucenter/user'
 import React from 'react'
 import {isEmbedded} from '@/utils/embed'
 import {toLogin} from '@/utils/authority'
+import {getDocHttpUrl} from '@/utils/util'
 
 const isDev = process.env.NODE_ENV === 'development'
 
@@ -50,7 +51,7 @@ export const layout: RunTimeLayoutConfig = ({initialState, setInitialState}) => 
   return {
     actionsRender: () => [/*<Question key="doc"/>, <SelectLang key="SelectLang"/>*/],
     avatarProps: isEmbedded() ? undefined : {
-      src: initialState?.currentUser?.avatarUrl,
+      src: initialState?.currentUser?.avatarUrl ? getDocHttpUrl(initialState?.currentUser?.avatarUrl) : undefined,
       title: <AvatarName/>,
       render: (_, avatarChildren) => {
         return <AvatarDropdown>{avatarChildren}</AvatarDropdown>

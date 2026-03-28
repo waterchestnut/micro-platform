@@ -57,17 +57,27 @@ export const waitTime = (time = 100) => {
 }
 
 /**
+ * @description 拼接文件服务的绝对地址
+ */
+export const getDocHttpUrl = (relativeUrl: string): string => {
+  if (relativeUrl.startsWith('http')) {
+    return relativeUrl
+  }
+  // @ts-ignore
+  return `${DOC_API_BASE}${relativeUrl.startsWith('/') ? '' : '/'}${relativeUrl}`
+}
+
+/**
  * @description 拼接文件的下载地址
  * @param {String} fileCode 文件标识
  * @param {String} [fileName=''] 文件名
  * @returns {String} 文件下载地址
  */
-export function getDownloadUrl(fileCode: string, fileName: string = '') {
+export function getDownloadUrl(fileCode: string, fileName: string = ''): string {
   if (isNull(fileCode)) {
-    return null
+    return ''
   }
-  // @ts-ignore
-  return `${DOC_API_BASE}/file/download/${fileName}?fileCode=${fileCode}`
+  return `/file/download/${fileName}?fileCode=${fileCode}`
 }
 
 /**
@@ -79,6 +89,10 @@ export const formatUploadFile = (files: any[] = []): any[] => {
   let list: any[] = []
   files.forEach(file => {
     let fileCode = file.fileCode || file.response?.data?.fileCode
+    if (file.url) {
+      // @ts-ignore
+      file.url = file.url.replace(`${DOC_API_BASE}`, '')
+    }
     list.push({
       uid: file.uid,
       lastModified: file.lastModified,
