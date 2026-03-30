@@ -25,4 +25,7 @@ export default {
   'menu.sub': '子应用',
   'menu.sub.ucenter': '用户&授权',
   'menu.sub.app': '应用',
-};
+  'menu.personal': '个人中心',
+  'menu.personal.profile': '个人资料',
+  'menu.personal.setting': '设置',
+}

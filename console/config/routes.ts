@@ -49,6 +49,25 @@ export default [
         component: './Apps/Jump',
       },
       {
+        path: '/personal',
+        component: './Personal/Layout',
+        authority: ['all'],
+        routes: [
+          {
+            path: '/personal/profile',
+            name: 'personal.profile',
+            icon: 'user',
+            component: './Personal/Profile',
+          },
+          {
+            path: '/personal/setting',
+            name: 'personal.setting',
+            icon: 'setting',
+            component: './Personal/Setting',
+          },
+        ]
+      },
+      {
         path: '/',
         redirect: '/home',
       },
