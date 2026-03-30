@@ -161,6 +161,13 @@ export default [
             authority: ['ucenter-browse'],
             component: './Personal/Profile',
           },
+          {
+            path: '/personal/setting',
+            name: 'setting',
+            access: 'normalRouteFilter',
+            authority: ['ucenter-browse'],
+            component: './Personal/Setting',
+          },
         ],
       },
       {

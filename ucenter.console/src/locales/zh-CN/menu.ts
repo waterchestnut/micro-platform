@@ -64,5 +64,6 @@ export default {
   'menu.phonenumber': '手机号归属地',
   'menu.personal': '个人中心',
   'menu.personal.profile': '个人资料',
+  'menu.personal.setting': '安全设置',
   'menu.agreement.list': '协议管理',
 };
