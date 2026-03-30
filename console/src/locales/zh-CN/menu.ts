@@ -28,4 +28,6 @@ export default {
   'menu.personal': '个人中心',
   'menu.personal.profile': '个人资料',
   'menu.personal.setting': '设置',
+
+  'menu.chat': '智能助手',
 }

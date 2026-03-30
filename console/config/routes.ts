@@ -24,6 +24,13 @@ export default [
         component: './Home',
       },
       {
+        path: '/chat',
+        name: 'chat',
+        icon: 'Robot',
+        component: './Chat',
+        authority: ['all'],
+      },
+      {
         name: 'sub.ucenter',
         path: '/sub/ucenter',
         component: './Apps/Ucenter',
