@@ -1,8 +1,8 @@
 import React, {useEffect, useState} from 'react'
-import {Card} from 'antd'
 import {queryCurrentUser} from '@/services/ucenter/user'
 import MobileEdit from './components/MobileEdit'
 import EmailEdit from './components/EmailEdit'
+import {PageLoading} from '@ant-design/pro-components'
 
 interface UserInfo {
   mobile?: string
@@ -31,25 +31,27 @@ const Setting: React.FC = () => {
     }
   }
 
-  useEffect(() => {
-    fetchUserInfo()
-  }, [])
-
   const handleRefresh = () => {
     setRefreshKey(prev => prev + 1)
     fetchUserInfo()
   }
 
+  useEffect(() => {
+    handleRefresh()
+  }, [])
+
   return (
     <div key={refreshKey}>
-      <MobileEdit
-        mobile={userInfo.mobile}
-        onEditFinish={handleRefresh}
-      />
-      <EmailEdit
-        email={userInfo.email}
-        onEditFinish={handleRefresh}
-      />
+      {
+        loading ? (
+          <PageLoading/>
+        ) : (
+          <>
+            <MobileEdit mobile={userInfo.mobile} onEditFinish={handleRefresh}/>
+            <EmailEdit email={userInfo.email} onEditFinish={handleRefresh}/>
+          </>
+        )
+      }
     </div>
   )
 }

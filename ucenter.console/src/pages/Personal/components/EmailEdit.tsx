@@ -104,22 +104,19 @@ const EmailEdit: React.FC<EmailEditProps> = (props) => {
           label='当前邮箱'
           readonly
           placeholder='-'
-          fieldProps={{
-            prefix: <MailOutlined/>,
-          }}
           initialValue={email}
-        />
-        <ProFormText
-          name='newEmail'
-          label='新邮箱'
-          placeholder='请输入新邮箱'
-          fieldProps={{
-            prefix: <MailOutlined/>,
-          }}
         />
         {
           editing && (
             <>
+              <ProFormText
+                name='newEmail'
+                label='新邮箱'
+                placeholder='请输入新邮箱'
+                fieldProps={{
+                  prefix: <MailOutlined/>,
+                }}
+              />
               <ProFormText
                 name='captcha'
                 label='图形验证码'
@@ -131,7 +128,7 @@ const EmailEdit: React.FC<EmailEditProps> = (props) => {
                   <div
                     dangerouslySetInnerHTML={{__html: captchaHtml}}
                     onClick={refreshCaptcha}
-                    style={{cursor: 'pointer', height: '20px'}}
+                    style={{cursor: 'pointer', width: '100px', margin: '-15px -15px -15px 0'}}
                   />
                 }
               />

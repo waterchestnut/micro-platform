@@ -104,22 +104,19 @@ const MobileEdit: React.FC<MobileEditProps> = (props) => {
           label='当前手机号'
           readonly
           placeholder='-'
-          fieldProps={{
-            prefix: <MobileOutlined/>,
-          }}
           initialValue={mobile}
-        />
-        <ProFormText
-          name='newMobile'
-          label='新手机号'
-          placeholder='请输入新手机号'
-          fieldProps={{
-            prefix: <MobileOutlined/>,
-          }}
         />
         {
           editing && (
             <>
+              <ProFormText
+                name='newMobile'
+                label='新手机号'
+                placeholder='请输入新手机号'
+                fieldProps={{
+                  prefix: <MobileOutlined/>,
+                }}
+              />
               <ProFormText
                 name='captcha'
                 label='图形验证码'
@@ -131,7 +128,7 @@ const MobileEdit: React.FC<MobileEditProps> = (props) => {
                   <div
                     dangerouslySetInnerHTML={{__html: captchaHtml}}
                     onClick={refreshCaptcha}
-                    style={{cursor: 'pointer', height: '20px'}}
+                    style={{cursor: 'pointer', width: '100px', margin: '-15px -15px -15px 0'}}
                   />
                 }
               />
