@@ -95,7 +95,7 @@ export const formatUploadFile = (files: any[] = []): any[] => {
       fileCode,
       fileHashCode: file.fileHashCode || file.response?.data?.fileHashCode,
       fileExt: file.fileExt || file.response?.data?.fileExt,
-      url: file.url || getDownloadUrl(fileCode, file.fileName)
+      url: file.url || getDownloadUrl(fileCode, file.name || file.response?.data?.fileName)
     })
   })
   return list

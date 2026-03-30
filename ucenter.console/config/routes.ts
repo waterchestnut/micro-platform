@@ -148,6 +148,22 @@ export default [
         component: './Agreement/List',
       },
       {
+        path: '/personal',
+        name: 'personal',
+        icon: 'user',
+        access: 'normalRouteFilter',
+        authority: ['ucenter-browse'],
+        routes: [
+          {
+            path: '/personal/profile',
+            name: 'profile',
+            access: 'normalRouteFilter',
+            authority: ['ucenter-browse'],
+            component: './Personal/Profile',
+          },
+        ],
+      },
+      {
         path: '/',
         redirect: '/home',
       },

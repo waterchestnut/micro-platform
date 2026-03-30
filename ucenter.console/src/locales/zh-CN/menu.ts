@@ -62,5 +62,7 @@ export default {
   'menu.job.list': '职位管理',
   'menu.region.list': '地区管理',
   'menu.phonenumber': '手机号归属地',
+  'menu.personal': '个人中心',
+  'menu.personal.profile': '个人资料',
   'menu.agreement.list': '协议管理',
 };

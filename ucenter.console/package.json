@@ -52,6 +52,7 @@
     "antd": "^5.24.0",
     "antd-style": "^3.7.1",
     "classnames": "^2.5.1",
+    "dayjs": "^1.11.20",
     "lodash": "^4.17.21",
     "moment": "^2.30.1",
     "node-forge": "^1.3.1",
