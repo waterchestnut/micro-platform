@@ -14,3 +14,9 @@ export async function ucenterRequest<T>(relativeUrl: string, options?: { [key: s
   const url = UCENTER_API_BASE + relativeUrl;
   return request<ResponseStructure & T>(url, {...options});
 }
+
+export async function docRequest<T>(relativeUrl: string, options?: { [key: string]: any }) {
+  // @ts-ignore
+  const url = DOC_API_BASE + relativeUrl
+  return request<ResponseStructure & T>(url, {...options})
+}

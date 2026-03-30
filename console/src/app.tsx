@@ -131,7 +131,7 @@ export const layout: RunTimeLayoutConfig = ({initialState, setInitialState}) => 
       src: initialState?.currentUser?.avatarUrl ? getDocHttpUrl(initialState?.currentUser?.avatarUrl) : undefined,
       title: <AvatarName/>,
       render: (_, avatarChildren) => {
-        return <AvatarDropdown>{avatarChildren}</AvatarDropdown>
+        return <AvatarDropdown menu={true}>{avatarChildren}</AvatarDropdown>
       },
     },
     waterMarkProps: {

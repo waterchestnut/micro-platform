@@ -89,3 +89,60 @@ export async function emailRegisterVerify(email: string, captchaKey: string, cap
     data: {email, captchaKey, captcha}
   })
 }
+
+/** 通用获取手机验证码 */
+export async function getSmsCode(phone: string, captchaKey: string, captcha: string) {
+  return ucenterRequest('/core/user/auth/sms-code',{
+    method: 'POST',
+    data: {
+      phone,
+      captchaKey,
+      captcha: `${captcha}`
+    }
+  })
+}
+
+/** 通用获取邮箱验证码 */
+export async function getEmailCode(email: string, captchaKey: string, captcha: string) {
+  //console.log('getEmailCode', email, captchaKey, captcha)
+  return ucenterRequest('/core/user/auth/email-code',{
+    method: 'POST',
+    data: {
+      email,
+      captchaKey,
+      captcha: `${captcha}`
+    }
+  })
+}
+
+/** 根据手机验证码修改密码 */
+export async function resetPwdByMobile(mobile: string, smsCode: string, newPassword: string) {
+  let publicKey = (await getPublicKey()).data
+  const publicK = forge.pki.publicKeyFromPem(publicKey)
+  const encrypted = btoa(publicK.encrypt(encodeURIComponent(newPassword), 'RSA-OAEP'))
+  return ucenterRequest('/core/user/auth/reset-pwd/phone',{
+    method: 'POST',
+    data: {
+      mobile,
+      smsCode,
+      pwd: encrypted,
+      encrypt: 1
+    }
+  })
+}
+
+/** 根据邮箱验证码修改密码 */
+export async function resetPwdByEmail(email: string, emailCode: string, newPassword: string) {
+  let publicKey = (await getPublicKey()).data
+  const publicK = forge.pki.publicKeyFromPem(publicKey)
+  const encrypted = btoa(publicK.encrypt(encodeURIComponent(newPassword), 'RSA-OAEP'))
+  return ucenterRequest('/core/user/auth/reset-pwd/email',{
+    method: 'POST',
+    data: {
+      email,
+      emailCode,
+      pwd: encrypted,
+      encrypt: 1
+    }
+  })
+}
