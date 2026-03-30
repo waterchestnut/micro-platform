@@ -20,3 +20,9 @@ export async function appRequest<T>(relativeUrl: string, options?: { [key: strin
   const url = APP_API_BASE + relativeUrl;
   return request<ResponseStructure & T>(url, {...options});
 }
+
+export async function llmRequest<T>(relativeUrl: string, options?: { [key: string]: any }) {
+  // @ts-ignore
+  const url = LLM_API_BASE + relativeUrl
+  return request<ResponseStructure & T>(url, {...options})
+}
