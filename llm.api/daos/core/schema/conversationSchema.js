@@ -22,6 +22,7 @@ const tools = llm.tools
  * @property {String} conversationType 会话类型：参见ConversationTypeEnum
  * @property {String} llmModel 默认大模型配置节点
  * @property {Schema.Types.Mixed} operator 会话所属人
+ * @property {String[]} userCodes 参与会话的用户标识
  * @property {Number} status 状态：参见StatusEnum
  * @property {Schema.Types.Mixed[]} tags 标签，参见Tag
  * @property {Date} insertTime 创建时间
@@ -42,6 +43,7 @@ const conversationSchema = new Schema({
     conversationType: {type: String, default: 'chat', description: '会话类型', enum: ConversationTypeEnum.toValues()},
     llmModel: {type: String, description: '大模型配置节点'},
     operator: {type: Object, description: '会话所属人'},
+    userCodes: {type: [String], description: '参与会话的用户标识'},
     status: {type: Number, default: 0, description: '状态', enum: StatusEnum.toValues()},
     tags: {type: [Tag], description: '标签'},
     insertTime: {

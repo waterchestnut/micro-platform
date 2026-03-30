@@ -69,7 +69,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                 userCode: curUserInfo.userCode,
                 realName: curUserInfo.realName
             },
-            status: 0
+            status: 0,
+            userCodes: [curUserInfo.userCode]
         })
     }
 
