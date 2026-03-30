@@ -1,5 +1,5 @@
-import { useState, useRef } from 'react';
-import { Flex, Avatar, Button, theme, Tooltip } from 'antd';
+import { useState, useRef, useMemo, useEffect, useCallback } from 'react';
+import { Flex, Avatar, Button, theme, Tooltip, message } from 'antd';
 import { Bubble, Sender, Conversations, Think, Sources, Mermaid, XProvider, BubbleListProps, Attachments } from '@ant-design/x';
 import { PaperClipOutlined, AudioOutlined } from '@ant-design/icons';
 import { XMarkdown } from '@ant-design/x-markdown';
@@ -13,11 +13,24 @@ interface Conversation {
   icon?: React.ReactNode;
 }
 
+interface AttachmentFile {
+  key: string;
+  uid: string;
+  name: string;
+  url?: string;
+  status: 'done' | 'uploading' | 'error';
+}
+
+interface AttachmentFileWithOrigin extends AttachmentFile {
+  originFileObj?: File;
+}
+
 interface Message {
   key: string;
   role: 'user' | 'ai';
   content: string;
-  attachments?: { key: string; uid: string; name: string; url: string; status: 'done' }[];
+  attachments?: AttachmentFile[];
+  timestamp?: number;
 }
 
 const Chat: React.FC = () => {
@@ -25,7 +38,7 @@ const Chat: React.FC = () => {
   const [conversations, setConversations] = useState<Conversation[]>([
     { key: '1', label: '如何实现快速排序算法？', icon: <MessageOutlined /> },
     { key: '2', label: '解释一下什么是微服务架构', icon: <MessageOutlined /> },
-    { key: '3', label: '帮我写一个Python脚本', icon: <MessageOutlined /> },
+    { key: '3', label: '帮我写一个 Python 脚本', icon: <MessageOutlined /> },
   ]);
   const [activeConv, setActiveConv] = useState<string>('1');
   const [messages, setMessages] = useState<Message[]>([
@@ -41,34 +54,56 @@ const Chat: React.FC = () => {
 - 分析数据
 
 请在下方输入你的问题！`,
+      timestamp: Date.now(),
     },
   ]);
   const [loading, setLoading] = useState(false);
   const [inputValue, setInputValue] = useState('');
-  const [attachments, setAttachments] = useState<any[]>([]);
+  const [attachments, setAttachments] = useState<AttachmentFileWithOrigin[]>([]);
   const listRef = useRef<any>(null);
+  const objectURLsRef = useRef<Set<string>>(new Set());
 
-  const handleSend = (content: string) => {
+  useEffect(() => {
+    return () => {
+      objectURLsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      objectURLsRef.current.clear();
+    };
+  }, []);
+
+  const createAttachmentURL = useCallback((file: AttachmentFileWithOrigin): string => {
+    if (file.url) return file.url;
+    if (file.originFileObj) {
+      const url = URL.createObjectURL(file.originFileObj);
+      objectURLsRef.current.add(url);
+      return url;
+    }
+    return '';
+  }, []);
+
+  const handleSend = useCallback(async (content: string) => {
     if (!content.trim() && attachments.length === 0) return;
 
-    const userMessage: Message = {
-      key: Date.now().toString(),
-      role: 'user',
-      content: content || '[附件]',
-      attachments: attachments.map((file, index) => ({
-        key: `file-${index}`,
-        uid: file.uid || String(index),
-        name: file.name,
-        url: file.url || URL.createObjectURL(file.originFileObj || file),
-        status: 'done',
-      })),
-    };
-    setMessages((prev) => [...prev, userMessage]);
-    setInputValue('');
-    setAttachments([]);
-    setLoading(true);
+    try {
+      const userMessage: Message = {
+        key: Date.now().toString(),
+        role: 'user',
+        content: content || '[附件]',
+        attachments: attachments.map((file) => ({
+          key: file.uid,
+          uid: file.uid,
+          name: file.name,
+          url: createAttachmentURL(file),
+          status: 'done' as const,
+        })),
+        timestamp: Date.now(),
+      };
+      setMessages((prev) => [...prev, userMessage]);
+      setInputValue('');
+      setAttachments([]);
+      setLoading(true);
 
-    setTimeout(() => {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+
       const assistantMessage: Message = {
         key: (Date.now() + 1).toString(),
         role: 'ai',
@@ -99,24 +134,30 @@ $$
 ### 思考过程
 
 这是一个技术问题，我将提供代码示例和详细说明。`,
+        timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, assistantMessage]);
+    } catch (error) {
+      message.error('发送消息失败，请重试');
+      console.error('Send message error:', error);
+    } finally {
       setLoading(false);
-    }, 1500);
-  };
+    }
+  }, [attachments, createAttachmentURL]);
 
-  const handleConversationSelect = (key: string, item?: any) => {
+  const handleConversationSelect = useCallback((key: string, item?: any) => {
     setActiveConv(key);
     setMessages([
       {
         key: '1',
         role: 'ai',
         content: `已切换到会话：${item?.label || '新会话'}\n\n这是会话历史记录的模拟展示。`,
+        timestamp: Date.now(),
       },
     ]);
-  };
+  }, []);
 
-  const handleNewConversation = () => {
+  const handleNewConversation = useCallback(() => {
     const newKey = Date.now().toString();
     setConversations((prev) => [
       { key: newKey, label: '新会话', icon: <MessageOutlined /> },
@@ -127,31 +168,63 @@ $$
       {
         key: '1',
         role: 'ai',
-        content: '你好！我是AI助手，有什么可以帮助你的吗？',
+        content: '你好！我是 AI 助手，有什么可以帮助你的吗？',
+        timestamp: Date.now(),
       },
     ]);
-  };
+  }, []);
 
-  const items: BubbleListProps['items'] = messages.map((item) => ({
-    key: item.key,
-    role: item.role,
-    content: item.content,
-    contentRender: (content) => (
-      <XMarkdown
-        content={content as string}
-        components={{
-          think: Think as any,
-          sources: Sources as any,
-          mermaid: Mermaid as any,
-        }}
-      />
-    ),
-    attachments: item.attachments as any,
-    loading: item.role === 'ai' && loading && item.key === messages[messages.length - 1]?.key,
-    avatar: item.role === 'user'
-      ? <Avatar icon={<UserOutlined />} style={{ backgroundColor: token.colorSuccess }} />
-      : <Avatar icon={<RobotOutlined />} style={{ backgroundColor: token.colorPrimary }} />,
-  }));
+  const handleFileSelect = useCallback((files: File[]) => {
+    const fileList = files.map((file, index) => ({
+      key: `file-${Date.now()}-${index}`,
+      uid: `file-${Date.now()}-${index}`,
+      name: file.name,
+      originFileObj: file,
+      status: 'done' as const,
+    }));
+    setAttachments((prev) => [...prev, ...fileList]);
+  }, []);
+
+  const handlePasteFile = useCallback((files: FileList) => {
+    const fileList = Array.from(files).map((file, index) => ({
+      key: `paste-${Date.now()}-${index}`,
+      uid: `paste-${Date.now()}-${index}`,
+      name: file.name,
+      originFileObj: file,
+      status: 'done' as const,
+    }));
+    setAttachments((prev) => [...prev, ...fileList]);
+  }, []);
+
+  const items: BubbleListProps['items'] = useMemo(() =>
+    messages.map((item) => ({
+      key: item.key,
+      role: item.role,
+      content: item.content,
+      contentRender: (content: React.ReactNode) => (
+        <XMarkdown
+          content={content as string}
+          components={{
+            think: Think as any,
+            sources: Sources as any,
+            mermaid: Mermaid as any,
+          }}
+        />
+      ),
+      attachments: item.attachments?.map((file) => ({
+        key: file.uid,
+        uid: file.uid,
+        name: file.name,
+        url: file.url || createAttachmentURL(file),
+        status: file.status,
+      })),
+      loading: item.role === 'ai' && loading && item.key === messages[messages.length - 1]?.key,
+      avatar: item.role === 'user'
+        ? <Avatar icon={<UserOutlined />} style={{ backgroundColor: token.colorSuccess }} />
+        : <Avatar icon={<RobotOutlined />} style={{ backgroundColor: token.colorPrimary }} />,
+    })),
+    [messages, loading, token.colorSuccess, token.colorPrimary, createAttachmentURL]
+  );
 
   return (
     <XProvider>
@@ -197,16 +270,9 @@ $$
               onChange={setInputValue}
               onSubmit={handleSend}
               placeholder="请输入您的问题..."
-              allowSpeech
-              onPasteFile={(files) => {
-                const fileList = Array.from(files).map((file, index) => ({
-                  uid: `paste-${index}`,
-                  name: file.name,
-                  originFileObj: file,
-                }));
-                setAttachments((prev) => [...prev, ...fileList]);
-              }}
-              suffix={
+              onPasteFile={handlePasteFile}
+              allowSpeech={true}
+              prefix={
                 <Flex gap="small">
                   <Tooltip title="附件">
                     <Button
@@ -218,22 +284,11 @@ $$
                         input.multiple = true;
                         input.onchange = () => {
                           if (input.files) {
-                            const fileList = Array.from(input.files).map((file, index) => ({
-                              uid: `file-${Date.now()}-${index}`,
-                              name: file.name,
-                              originFileObj: file,
-                            }));
-                            setAttachments((prev) => [...prev, ...fileList]);
+                            handleFileSelect(Array.from(input.files));
                           }
                         };
                         input.click();
                       }}
-                    />
-                  </Tooltip>
-                  <Tooltip title="语音输入">
-                    <Button
-                      type="text"
-                      icon={<AudioOutlined />}
                     />
                   </Tooltip>
                 </Flex>
@@ -242,16 +297,16 @@ $$
             />
             {attachments.length > 0 && (
               <Attachments
-                items={attachments.map((file, index) => ({
-                  key: file.uid || String(index),
-                  uid: file.uid || String(index),
+                items={attachments.map((file) => ({
+                  key: file.uid,
+                  uid: file.uid,
                   name: file.name,
-                  status: 'done',
+                  status: file.status,
                 }))}
                 onRemove={(file) => {
                   setAttachments((prev) => prev.filter((item) => item.uid !== file.uid));
                 }}
-                style={{ marginTop: 8, maxWidth: 900 }}
+                style={{ marginTop: 8 }}
               />
             )}
           </div>
