@@ -6,7 +6,6 @@ import {
   Conversations,
   Think,
   Sources,
-  Mermaid,
   XProvider,
   BubbleListProps,
   Attachments,
@@ -15,12 +14,15 @@ import {
   type ThoughtChainItemType
 } from '@ant-design/x'
 import {CloudUploadOutlined, CodeOutlined, EditOutlined, CheckCircleOutlined} from '@ant-design/icons'
-import {XMarkdown} from '@ant-design/x-markdown'
+import {type ComponentProps, XMarkdown} from '@ant-design/x-markdown'
 import Latex from '@ant-design/x-markdown/plugins/Latex'
 import Footer from '@/components/Footer'
 import {UserOutlined, RobotOutlined, MessageOutlined, LinkOutlined} from '@ant-design/icons'
+import zhCN from 'antd/locale/zh_CN'
+import zhCN_X from '@ant-design/x/locale/zh_CN'
 import ThinkComponent from '@/pages/Chat/components/ThinkComponent'
 import CodeComponent from '@/pages/Chat/components/CodeComponent'
+import {getSupComponent} from '@/pages/Chat/components/SupComponent'
 
 interface Conversation {
   key: string;
@@ -112,6 +114,20 @@ function hello() {
 }
 \`\`\`
 
+#### Sequence Diagram
+
+\`\`\` mermaid
+sequenceDiagram
+    participant Client
+    participant Server
+    participant Database
+
+    Client->>Server: POST /api/data
+    Server->>Database: INSERT record
+    Database-->>Server: Success
+    Server-->>Client: 201 Created
+\`\`\`
+
 ### 数学公式
 
 行内公式：$E = mc^2$
@@ -123,8 +139,8 @@ $$
 
 ### 参考资料
 
-- [MDN Web Docs](https://developer.mozilla.org)
-- [Stack Overflow](https://stackoverflow.com)
+- [MDN Web Docs](https://developer.mozilla.org)<sup>1</sup>
+- [Stack Overflow](https://stackoverflow.com)<sup>2</sup>
 
 ### 思考过程
 
@@ -195,7 +211,7 @@ $$
     setAttachmentItems(updatedFileList)
   }
 
-  const renderThoughtChain = ({children}: { children: string }) => {
+  const renderThoughtChain = ({children}: ComponentProps) => {
     const steps: ThoughtChainItemType[] = [
       {
         key: '1',
@@ -231,6 +247,26 @@ $$
     return <ThoughtChain items={steps} line='dashed'/>
   }
 
+  const sourceItems = [
+    {
+      title: '1. Data source',
+      key: 1,
+      url: 'https://x.ant.design/components/overview',
+      description:
+        'Artificial Intelligence, often abbreviated as AI, is a broad branch of computer science concerned with building smart machines capable of performing tasks that typically require human intelligence.',
+    },
+    {
+      title: '2. Data source',
+      key: 2,
+      url: 'https://x.ant.design/components/overview',
+    },
+    {
+      title: '3. Data source',
+      key: 3,
+      url: 'https://x.ant.design/components/overview',
+    },
+  ];
+
   const items: BubbleListProps['items'] = useMemo(() =>
       messages.map((item) => ({
         key: item.key,
@@ -242,9 +278,8 @@ $$
             components={{
               think: ThinkComponent,
               code: CodeComponent,
-              sources: Sources as any,
-              mermaid: Mermaid as any,
-              thoughtchain: renderThoughtChain as any,
+              sup: getSupComponent(sourceItems),
+              thoughtchain: renderThoughtChain,
             }}
             config={{extensions: Latex()}}
           />
@@ -291,7 +326,7 @@ $$
   )
 
   return (
-    <XProvider>
+    <XProvider locale={{...zhCN_X,...zhCN}}>
       <Flex style={{height: '100%', backgroundColor: token.colorBgLayout}}>
         <div style={{
           width: 280,
