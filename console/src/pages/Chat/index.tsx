@@ -1,25 +1,9 @@
 import {useState, useRef, useMemo, useEffect, useCallback} from 'react'
-import {
-  Flex,
-  Avatar,
-  Button,
-  theme,
-  message,
-  Badge,
-  type GetProp,
-  type GetRef,
-  Typography,
-  Spin,
-  Space,
-  Input,
-  Pagination
-} from 'antd'
+import {Flex, Avatar, Button, theme, message, Badge, type GetProp, type GetRef, Typography, Spin, Space} from 'antd'
 import {createStyles} from 'antd-style'
-import {SearchOutlined, PlusOutlined} from '@ant-design/icons'
 import {
   Bubble,
   Sender,
-  Conversations,
   Think,
   Sources,
   XProvider,
@@ -32,19 +16,13 @@ import {
 import {CloudUploadOutlined, CodeOutlined, EditOutlined, CheckCircleOutlined} from '@ant-design/icons'
 import {type ComponentProps, XMarkdown} from '@ant-design/x-markdown'
 import Latex from '@ant-design/x-markdown/plugins/Latex'
-import Footer from '@/components/Footer'
 import {UserOutlined, RobotOutlined, MessageOutlined, LinkOutlined} from '@ant-design/icons'
 import zhCN from 'antd/locale/zh_CN'
 import zhCN_X from '@ant-design/x/locale/zh_CN'
 import ThinkComponent from '@/pages/Chat/components/ThinkComponent'
 import CodeComponent from '@/pages/Chat/components/CodeComponent'
 import {getSupComponent} from '@/pages/Chat/components/SupComponent'
-
-interface Conversation {
-  key: string;
-  label: string;
-  icon?: React.ReactNode;
-}
+import ConversationList, {type Conversation} from '@/pages/Chat/components/ConversationList'
 
 interface Message {
   key: string;
@@ -56,66 +34,35 @@ interface Message {
 
 type AttachmentItem = GetProp<AttachmentsProps, 'items'>[number];
 
-const useStyles = createStyles(({token, css}) => {
-  return {
-    container: css`
-      height: 100%;
-      background-color: ${token.colorBgLayout};
-    `,
-    sidebar: css`
-      width: 280px;
-      border-right: 1px solid ${token.colorBorder};
-      background-color: ${token.colorBgContainer};
-      display: flex;
-      flex-direction: column;
-    `,
-    sidebarHeader: css`
-      padding: 16px;
-      border-bottom: 1px solid ${token.colorBorder};
-    `,
-    sidebarContent: css`
-      flex: 1;
-      overflow: auto;
-    `,
-    sidebarFooter: css`
-      padding: 12px 0;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
+const useStyles = createStyles(({token, css}) => ({
+  container: css`
+    height: 100%;
+    background-color: ${token.colorBgLayout};
+  `,
+  main: css`
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  `,
+  messageList: css`
+    flex: 1;
+    overflow: auto;
+    padding: 24px;
+  `,
+  messageContainer: css`
+    max-width: 1200px;
+    margin: 0 auto;
 
-      .ant-sidebar-footer {
-        margin-block-start: 24px;
-        margin-block-end: 13px;
-      }
-    `,
-    sidebarSearch: css`
-      padding: 0 16px;
-    `,
-    main: css`
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-    `,
-    messageList: css`
-      flex: 1;
-      overflow: auto;
-      padding: 24px;
-    `,
-    messageContainer: css`
-      max-width: 1200px;
-      margin: 0 auto;
-
-      .ant-bubble-start .ant-bubble-body {
-        width: 100%;
-      }
-    `,
-    inputArea: css`
-      padding: 16px 24px;
-      background-color: ${token.colorBgContainer};
-      border-top: 1px solid ${token.colorBorder};
-    `,
-  }
-})
+    .ant-bubble-start .ant-bubble-body {
+      width: 100%;
+    }
+  `,
+  inputArea: css`
+    padding: 16px 24px;
+    background-color: ${token.colorBgContainer};
+    border-top: 1px solid ${token.colorBorder};
+  `,
+}))
 
 const Index: React.FC = () => {
   const {token} = theme.useToken()
@@ -175,9 +122,6 @@ const Index: React.FC = () => {
   const [attachmentsOpen, setAttachmentsOpen] = useState(false)
   const [attachmentItems, setAttachmentItems] = useState<AttachmentItem[]>([])
   const [recording, setRecording] = useState(false)
-  const [searchText, setSearchText] = useState('')
-  const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState(10)
   const listRef = useRef<any>(null)
   const senderRef = useRef<GetRef<typeof Sender>>(null)
 
@@ -303,24 +247,6 @@ $$
       },
     ])
   }, [])
-
-  const filteredConversations = useMemo(() => {
-    if (!searchText.trim()) return conversations
-    return conversations.filter((conv) =>
-      conv.label.toLowerCase().includes(searchText.toLowerCase())
-    )
-  }, [conversations, searchText])
-
-  const paginatedConversations = useMemo(() => {
-    const start = (currentPage - 1) * pageSize
-    const end = start + pageSize
-    return filteredConversations.slice(start, end)
-  }, [filteredConversations, currentPage, pageSize])
-
-  const handlePageChange = (page: number, pageSize?: number) => {
-    setCurrentPage(page)
-    if (pageSize) setPageSize(pageSize)
-  }
 
   const handleAttachmentsChange: AttachmentsProps['onChange'] = ({file, fileList}) => {
     const updatedFileList = fileList.map((item) => {
@@ -518,49 +444,12 @@ $$
   return (
     <XProvider locale={{...zhCN_X, ...zhCN}}>
       <Flex className={styles.container}>
-        <div className={styles.sidebar}>
-          <div className={styles.sidebarHeader}>
-            <Button
-              type='dashed'
-              onClick={handleNewConversation}
-              block
-              icon={<PlusOutlined/>}
-            >
-              新建会话
-            </Button>
-          </div>
-          <div className={styles.sidebarContent}>
-            <Conversations
-              items={paginatedConversations}
-              activeKey={activeConv}
-              onActiveChange={handleConversationSelect}
-            />
-          </div>
-          <div className={styles.sidebarFooter}>
-            {filteredConversations.length > pageSize && (
-              <Pagination
-                simple
-                current={currentPage}
-                total={filteredConversations.length}
-                pageSize={pageSize}
-                onChange={handlePageChange}
-                size='small'
-                style={{justifyContent: 'center', marginTop: 8}}
-              />
-            )}
-            <div className={styles.sidebarSearch}>
-              <Input
-                placeholder='搜索会话'
-                prefix={<SearchOutlined/>}
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-                allowClear
-                size='small'
-              />
-            </div>
-            <Footer style={{borderTop: `1px solid ${token.colorBorder}`}} prefixCls='sidebar-footer'/>
-          </div>
-        </div>
+        <ConversationList
+          conversations={conversations}
+          activeKey={activeConv}
+          onConversationSelect={handleConversationSelect}
+          onNewConversation={handleNewConversation}
+        />
 
         <div className={styles.main}>
           <div className={styles.messageList}>
