@@ -1,5 +1,6 @@
 import {useState, useRef, useMemo, useEffect, useCallback} from 'react'
 import {Flex, Avatar, Button, theme, message, Badge, type GetProp, type GetRef, Typography} from 'antd'
+import {createStyles} from 'antd-style'
 import {
   Bubble,
   Sender,
@@ -40,8 +41,59 @@ interface Message {
 
 type AttachmentItem = GetProp<AttachmentsProps, 'items'>[number];
 
+const useStyles = createStyles(({token, css}) => {
+  return {
+    container: css`
+      height: 100%;
+      background-color: ${token.colorBgLayout};
+    `,
+    sidebar: css`
+      width: 280px;
+      border-right: 1px solid ${token.colorBorder};
+      background-color: ${token.colorBgContainer};
+      display: flex;
+      flex-direction: column;
+    `,
+    sidebarHeader: css`
+      padding: 16px;
+      border-bottom: 1px solid ${token.colorBorder};
+    `,
+    sidebarContent: css`
+      flex: 1;
+      overflow: auto;
+    `,
+    sidebarFooter: css`
+      padding: 12px 16px;
+    `,
+    main: css`
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    `,
+    messageList: css`
+      flex: 1;
+      overflow: auto;
+      padding: 24px;
+    `,
+    messageContainer: css`
+      max-width: 1200px;
+      margin: 0 auto;
+
+      .ant-bubble-start .ant-bubble-body {
+        width: 100%;
+      }
+    `,
+    inputArea: css`
+      padding: 16px 24px;
+      background-color: ${token.colorBgContainer};
+      border-top: 1px solid ${token.colorBorder};
+    `,
+  }
+})
+
 const Index: React.FC = () => {
   const {token} = theme.useToken()
+  const {styles} = useStyles()
   const [conversations, setConversations] = useState<Conversation[]>([
     {key: '1', label: '如何实现快速排序算法？', icon: <MessageOutlined/>},
     {key: '2', label: '解释一下什么是微服务架构', icon: <MessageOutlined/>},
@@ -327,15 +379,9 @@ $$
 
   return (
     <XProvider locale={{...zhCN_X,...zhCN}}>
-      <Flex style={{height: '100%', backgroundColor: token.colorBgLayout}}>
-        <div style={{
-          width: 280,
-          borderRight: `1px solid ${token.colorBorder}`,
-          backgroundColor: token.colorBgContainer,
-          display: 'flex',
-          flexDirection: 'column',
-        }}>
-          <div style={{padding: '16px', borderBottom: `1px solid ${token.colorBorder}`}}>
+      <Flex className={styles.container}>
+        <div className={styles.sidebar}>
+          <div className={styles.sidebarHeader}>
             <Button
               type='dashed'
               onClick={handleNewConversation}
@@ -344,7 +390,7 @@ $$
               新建会话
             </Button>
           </div>
-          <div style={{flex: 1, overflow: 'auto'}}>
+          <div className={styles.sidebarContent}>
             <Conversations
               items={conversations}
               activeKey={activeConv}
@@ -354,20 +400,16 @@ $$
           <Footer style={{padding: '12px 16px'}}/>
         </div>
 
-        <div style={{flex: 1, display: 'flex', flexDirection: 'column'}}>
-          <div style={{flex: 1, overflow: 'auto', padding: '24px'}}>
+        <div className={styles.main}>
+          <div className={styles.messageList}>
             <Bubble.List
               ref={listRef}
               items={items}
               autoScroll
-              style={{maxWidth: 1200, margin: '0 auto'}}
+              className={styles.messageContainer}
             />
           </div>
-          <div style={{
-            padding: '16px 24px',
-            backgroundColor: token.colorBgContainer,
-            borderTop: `1px solid ${token.colorBorder}`
-          }}>
+          <div className={styles.inputArea}>
             <Sender
               ref={senderRef}
               value={inputValue}
@@ -387,7 +429,7 @@ $$
                   setRecording(nextRecording)
                 },
               }}
-              style={{maxWidth: 1200, margin: '0 auto'}}
+              className={styles.messageContainer}
             />
           </div>
         </div>
