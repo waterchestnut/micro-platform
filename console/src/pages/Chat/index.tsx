@@ -1,6 +1,21 @@
 import {useState, useRef, useMemo, useEffect, useCallback} from 'react'
-import {Flex, Avatar, Button, theme, message, Badge, type GetProp, type GetRef, Typography, Spin, Space} from 'antd'
+import {
+  Flex,
+  Avatar,
+  Button,
+  theme,
+  message,
+  Badge,
+  type GetProp,
+  type GetRef,
+  Typography,
+  Spin,
+  Space,
+  Input,
+  Pagination
+} from 'antd'
 import {createStyles} from 'antd-style'
+import {SearchOutlined, PlusOutlined} from '@ant-design/icons'
 import {
   Bubble,
   Sender,
@@ -63,7 +78,18 @@ const useStyles = createStyles(({token, css}) => {
       overflow: auto;
     `,
     sidebarFooter: css`
-      padding: 12px 16px;
+      padding: 12px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+
+      .ant-sidebar-footer {
+        margin-block-start: 24px;
+        margin-block-end: 13px;
+      }
+    `,
+    sidebarSearch: css`
+      padding: 0 16px;
     `,
     main: css`
       flex: 1;
@@ -98,6 +124,28 @@ const Index: React.FC = () => {
     {key: '1', label: '如何实现快速排序算法？', icon: <MessageOutlined/>},
     {key: '2', label: '解释一下什么是微服务架构', icon: <MessageOutlined/>},
     {key: '3', label: '帮我写一个 Python 脚本', icon: <MessageOutlined/>},
+    {key: '4', label: 'React Hooks 最佳实践', icon: <MessageOutlined/>},
+    {key: '5', label: 'Docker 容器化部署指南', icon: <MessageOutlined/>},
+    {key: '6', label: 'TypeScript 泛型详解', icon: <MessageOutlined/>},
+    {key: '7', label: 'MySQL 索引优化策略', icon: <MessageOutlined/>},
+    {key: '8', label: 'Redis 缓存穿透解决方案', icon: <MessageOutlined/>},
+    {key: '9', label: 'Kubernetes 集群搭建教程', icon: <MessageOutlined/>},
+    {key: '10', label: 'Webpack 打包优化技巧', icon: <MessageOutlined/>},
+    {key: '11', label: 'GraphQL vs REST API 对比', icon: <MessageOutlined/>},
+    {key: '12', label: 'JWT 认证机制实现', icon: <MessageOutlined/>},
+    {key: '13', label: '消息队列 RabbitMQ 使用指南', icon: <MessageOutlined/>},
+    {key: '14', label: 'Elasticsearch 全文检索实践', icon: <MessageOutlined/>},
+    {key: '15', label: 'CI/CD 流水线配置', icon: <MessageOutlined/>},
+    {key: '16', label: 'Nginx 反向代理配置', icon: <MessageOutlined/>},
+    {key: '17', label: 'HTTPS 证书部署流程', icon: <MessageOutlined/>},
+    {key: '18', label: 'Git 分支管理策略', icon: <MessageOutlined/>},
+    {key: '19', label: '代码审查 Checklist', icon: <MessageOutlined/>},
+    {key: '20', label: '性能监控方案对比', icon: <MessageOutlined/>},
+    {key: '21', label: '分布式锁实现方案', icon: <MessageOutlined/>},
+    {key: '22', label: '限流熔断降级策略', icon: <MessageOutlined/>},
+    {key: '23', label: '数据库读写分离实践', icon: <MessageOutlined/>},
+    {key: '24', label: '微服务链路追踪', icon: <MessageOutlined/>},
+    {key: '25', label: '前端错误监控上报', icon: <MessageOutlined/>},
   ])
   const [activeConv, setActiveConv] = useState<string>('1')
   const [messages, setMessages] = useState<Message[]>([
@@ -127,6 +175,9 @@ const Index: React.FC = () => {
   const [attachmentsOpen, setAttachmentsOpen] = useState(false)
   const [attachmentItems, setAttachmentItems] = useState<AttachmentItem[]>([])
   const [recording, setRecording] = useState(false)
+  const [searchText, setSearchText] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
   const listRef = useRef<any>(null)
   const senderRef = useRef<GetRef<typeof Sender>>(null)
 
@@ -252,6 +303,24 @@ $$
       },
     ])
   }, [])
+
+  const filteredConversations = useMemo(() => {
+    if (!searchText.trim()) return conversations
+    return conversations.filter((conv) =>
+      conv.label.toLowerCase().includes(searchText.toLowerCase())
+    )
+  }, [conversations, searchText])
+
+  const paginatedConversations = useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    const end = start + pageSize
+    return filteredConversations.slice(start, end)
+  }, [filteredConversations, currentPage, pageSize])
+
+  const handlePageChange = (page: number, pageSize?: number) => {
+    setCurrentPage(page)
+    if (pageSize) setPageSize(pageSize)
+  }
 
   const handleAttachmentsChange: AttachmentsProps['onChange'] = ({file, fileList}) => {
     const updatedFileList = fileList.map((item) => {
@@ -455,18 +524,42 @@ $$
               type='dashed'
               onClick={handleNewConversation}
               block
+              icon={<PlusOutlined/>}
             >
               新建会话
             </Button>
           </div>
           <div className={styles.sidebarContent}>
             <Conversations
-              items={conversations}
+              items={paginatedConversations}
               activeKey={activeConv}
               onActiveChange={handleConversationSelect}
             />
           </div>
-          <Footer style={{padding: '12px 16px'}}/>
+          <div className={styles.sidebarFooter}>
+            {filteredConversations.length > pageSize && (
+              <Pagination
+                simple
+                current={currentPage}
+                total={filteredConversations.length}
+                pageSize={pageSize}
+                onChange={handlePageChange}
+                size='small'
+                style={{justifyContent: 'center', marginTop: 8}}
+              />
+            )}
+            <div className={styles.sidebarSearch}>
+              <Input
+                placeholder='搜索会话'
+                prefix={<SearchOutlined/>}
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                allowClear
+                size='small'
+              />
+            </div>
+            <Footer style={{borderTop: `1px solid ${token.colorBorder}`}} prefixCls='sidebar-footer'/>
+          </div>
         </div>
 
         <div className={styles.main}>

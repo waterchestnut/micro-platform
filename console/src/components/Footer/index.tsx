@@ -5,6 +5,7 @@ import {useLocation} from '@umijs/max'
 
 export type FooterProps = {
   style?: React.CSSProperties | undefined;
+  prefixCls?: string;
 }
 
 const Footer: React.FC<FooterProps> = (props) => {
@@ -21,6 +22,7 @@ const Footer: React.FC<FooterProps> = (props) => {
         background: 'none',
         ...props.style
       }}
+      prefixCls={props.prefixCls}
       links={[
         {
           key: 'fastify',
