@@ -1,5 +1,5 @@
 import {useState, useRef, useMemo, useEffect, useCallback} from 'react'
-import {Flex, Avatar, Button, theme, message, Badge, type GetProp, type GetRef} from 'antd'
+import {Flex, Avatar, Button, theme, message, Badge, type GetProp, type GetRef, Typography} from 'antd'
 import {
   Bubble,
   Sender,
@@ -10,13 +10,17 @@ import {
   XProvider,
   BubbleListProps,
   Attachments,
-  type AttachmentsProps
+  type AttachmentsProps,
+  ThoughtChain,
+  type ThoughtChainItemType
 } from '@ant-design/x'
-import {CloudUploadOutlined} from '@ant-design/icons'
+import {CloudUploadOutlined, CodeOutlined, EditOutlined, CheckCircleOutlined} from '@ant-design/icons'
 import {XMarkdown} from '@ant-design/x-markdown'
-import {PageContainer} from '@ant-design/pro-components'
+import Latex from '@ant-design/x-markdown/plugins/Latex'
 import Footer from '@/components/Footer'
 import {UserOutlined, RobotOutlined, MessageOutlined, LinkOutlined} from '@ant-design/icons'
+import ThinkComponent from '@/pages/Chat/components/ThinkComponent'
+import CodeComponent from '@/pages/Chat/components/CodeComponent'
 
 interface Conversation {
   key: string;
@@ -34,7 +38,7 @@ interface Message {
 
 type AttachmentItem = GetProp<AttachmentsProps, 'items'>[number];
 
-const Chat: React.FC = () => {
+const Index: React.FC = () => {
   const {token} = theme.useToken()
   const [conversations, setConversations] = useState<Conversation[]>([
     {key: '1', label: '如何实现快速排序算法？', icon: <MessageOutlined/>},
@@ -124,7 +128,16 @@ $$
 
 ### 思考过程
 
-这是一个技术问题，我将提供代码示例和详细说明。`,
+<think>这是一个技术问题，我将提供代码示例和详细说明。</think>
+
+### 思维链
+
+<thoughtchain>
+1. 分析用户问题，理解需求
+2. 检索相关知识点和代码示例
+3. 组织答案结构，提供详细说明
+4. 验证答案准确性
+</thoughtchain>`,
         timestamp: Date.now(),
       }
       setMessages((prev) => [...prev, assistantMessage])
@@ -182,6 +195,42 @@ $$
     setAttachmentItems(updatedFileList)
   }
 
+  const renderThoughtChain = ({children}: { children: string }) => {
+    const steps: ThoughtChainItemType[] = [
+      {
+        key: '1',
+        title: '分析问题',
+        description: '理解用户问题并分析需求',
+        icon: <CodeOutlined/>,
+        collapsible: true,
+        content: (
+          <Flex gap='small' vertical>
+            <Think title='思考过程'>{children}</Think>
+          </Flex>
+        ),
+      },
+      {
+        key: '2',
+        title: '生成答案',
+        description: '根据分析结果生成回答',
+        icon: <EditOutlined/>,
+        collapsible: true,
+        status: 'success',
+        content: (
+          <Flex gap='small' vertical>
+            <ThoughtChain.Item
+              variant='solid'
+              status='success'
+              title='答案生成完成'
+              description='已为用户提供完整解答'
+            />
+          </Flex>
+        ),
+      },
+    ]
+    return <ThoughtChain items={steps} line='dashed'/>
+  }
+
   const items: BubbleListProps['items'] = useMemo(() =>
       messages.map((item) => ({
         key: item.key,
@@ -191,10 +240,13 @@ $$
           <XMarkdown
             content={content as string}
             components={{
-              think: Think as any,
+              think: ThinkComponent,
+              code: CodeComponent,
               sources: Sources as any,
               mermaid: Mermaid as any,
+              thoughtchain: renderThoughtChain as any,
             }}
+            config={{extensions: Latex()}}
           />
         ),
         attachments: item.attachments,
@@ -309,4 +361,4 @@ $$
   )
 }
 
-export default Chat
+export default Index
