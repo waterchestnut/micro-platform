@@ -1,5 +1,5 @@
 import {useState, useRef, useMemo, useEffect, useCallback} from 'react'
-import {Flex, Avatar, Button, theme, message, Badge, type GetProp, type GetRef, Typography} from 'antd'
+import {Flex, Avatar, Button, theme, message, Badge, type GetProp, type GetRef, Typography, Spin, Space} from 'antd'
 import {createStyles} from 'antd-style'
 import {
   Bubble,
@@ -12,7 +12,7 @@ import {
   Attachments,
   type AttachmentsProps,
   ThoughtChain,
-  type ThoughtChainItemType
+  type ThoughtChainItemType, FileCardProps, FileCard
 } from '@ant-design/x'
 import {CloudUploadOutlined, CodeOutlined, EditOutlined, CheckCircleOutlined} from '@ant-design/icons'
 import {type ComponentProps, XMarkdown} from '@ant-design/x-markdown'
@@ -33,7 +33,7 @@ interface Conversation {
 
 interface Message {
   key: string;
-  role: 'my' | 'ai' | 'system' | 'user';
+  role: 'my' | 'ai' | 'system' | 'user' | 'divider' | 'tip';
   content: string;
   attachments?: AttachmentItem[];
   timestamp?: number;
@@ -103,7 +103,7 @@ const Index: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([
     {
       key: '1',
-      role: 'ai',
+      role: 'tip',
       content: `# 欢迎使用 AI 助手
 
 我可以帮助你：
@@ -115,6 +115,12 @@ const Index: React.FC = () => {
 请在下方输入你的问题！`,
       timestamp: Date.now(),
     },
+    {
+      key: '2',
+      role: 'divider',
+      content: '如何实现快速排序算法？',
+      timestamp: Date.now(),
+    }
   ])
   const [loading, setLoading] = useState(false)
   const [inputValue, setInputValue] = useState('')
@@ -317,33 +323,96 @@ $$
       key: 3,
       url: 'https://x.ant.design/components/overview',
     },
-  ];
+  ]
 
   const items: BubbleListProps['items'] = useMemo(() =>
       messages.map((item) => ({
         key: item.key,
         role: item.role,
         content: item.content,
-        contentRender: (content: React.ReactNode) => (
-          <XMarkdown
-            content={content as string}
-            components={{
-              think: ThinkComponent,
-              code: CodeComponent,
-              sup: getSupComponent(sourceItems),
-              thoughtchain: renderThoughtChain,
-            }}
-            config={{extensions: Latex()}}
-          />
-        ),
         attachments: item.attachments,
         loading: item.role === 'ai' && loading && item.key === messages[messages.length - 1]?.key,
-        placement: item.role === 'my' ? 'end' : 'start',
-        avatar: item.role === 'my'
-          ? <Avatar icon={<UserOutlined/>} style={{backgroundColor: token.colorSuccess}}/>
-          : <Avatar icon={<RobotOutlined/>} style={{backgroundColor: token.colorPrimary}}/>,
       })),
     [messages, loading, token.colorSuccess, token.colorPrimary]
+  )
+
+  const memoRole: BubbleListProps['role'] = useMemo(
+    () => ({
+      ai: {
+        typing: true,
+        header: '智能助手',
+        contentRender: (content: React.ReactNode) => {
+          return (
+            <XMarkdown
+              content={content as string}
+              components={{
+                think: ThinkComponent,
+                code: CodeComponent,
+                sup: getSupComponent(sourceItems),
+                thoughtchain: renderThoughtChain,
+              }}
+              config={{extensions: Latex()}}
+            />
+          )
+        },
+        loadingRender: () => (
+          <Space>
+            <Spin size='small'/>
+            {'正在生成内容，敬请等待。。。'}
+          </Space>
+        ),
+        avatar: () => <Avatar icon={<RobotOutlined/>} style={{backgroundColor: token.colorPrimary}}/>,
+        footer: ((content, info) => {
+          return <div style={{display: 'flex'}}><label><Typography.Text
+            type='secondary'>以上内容由AI生成，请注意甄别。</Typography.Text></label>
+          </div>
+        }),
+      },
+      user: (data) => ({
+        typing: false,
+        header: `User-${data.key}`,
+        contentRender: (content: React.ReactNode) => {
+          return (
+            <XMarkdown
+              content={content as string}
+              components={{
+                think: ThinkComponent,
+                code: CodeComponent,
+                sup: getSupComponent(sourceItems),
+                thoughtchain: renderThoughtChain,
+              }}
+              config={{extensions: Latex()}}
+            />
+          )
+        },
+        avatar: () => <Avatar icon={<UserOutlined/>} style={{backgroundColor: token.colorSuccess}}/>,
+      }),
+      my: (data) => ({
+        placement: 'end',
+        typing: false,
+        header: `我自己`,
+        contentRender: (content: React.ReactNode) => {
+          return (
+            <XMarkdown
+              content={content as string}
+              components={{
+                think: ThinkComponent,
+                code: CodeComponent,
+                sup: getSupComponent(sourceItems),
+                thoughtchain: renderThoughtChain,
+              }}
+              config={{extensions: Latex()}}
+            />
+          )
+        },
+        avatar: () => <Avatar icon={<UserOutlined/>} style={{backgroundColor: token.colorSuccess}}/>,
+      }),
+      tip: {
+        variant: 'filled',
+        styles: {root: {padding: 0}, content: {display: 'flex', justifyContent: 'center', alignItems: 'center'}},
+      },
+    }),
+    [],
   )
 
   const senderHeader = (
@@ -378,7 +447,7 @@ $$
   )
 
   return (
-    <XProvider locale={{...zhCN_X,...zhCN}}>
+    <XProvider locale={{...zhCN_X, ...zhCN}}>
       <Flex className={styles.container}>
         <div className={styles.sidebar}>
           <div className={styles.sidebarHeader}>
@@ -407,6 +476,7 @@ $$
               items={items}
               autoScroll
               className={styles.messageContainer}
+              role={memoRole}
             />
           </div>
           <div className={styles.inputArea}>
