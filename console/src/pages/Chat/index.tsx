@@ -26,7 +26,7 @@ import ConversationList, {type Conversation} from '@/pages/Chat/components/Conve
 
 interface Message {
   key: string;
-  role: 'my' | 'ai' | 'system' | 'user' | 'divider' | 'tip';
+  role: 'my' | 'ai' | 'system' | 'user' | 'divider' | 'notice';
   content: string;
   attachments?: AttachmentItem[];
   timestamp?: number;
@@ -98,7 +98,7 @@ const Index: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([
     {
       key: '1',
-      role: 'tip',
+      role: 'notice',
       content: `# 欢迎使用 AI 助手
 
 我可以帮助你：
@@ -402,7 +402,7 @@ $$
         },
         avatar: () => <Avatar icon={<UserOutlined/>} style={{backgroundColor: token.colorSuccess}}/>,
       }),
-      tip: {
+      notice: {
         variant: 'filled',
         styles: {root: {padding: 0}, content: {display: 'flex', justifyContent: 'center', alignItems: 'center'}},
       },
