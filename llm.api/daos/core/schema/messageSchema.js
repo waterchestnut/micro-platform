@@ -8,6 +8,7 @@ import mongoose from 'mongoose'
 import StatusEnum from '../enum/StatusEnum.js'
 import Tag from '../definition/Tag.js'
 import MessageProgressEnum from '../enum/MessageProgressEnum.js'
+import ThoughtChain from '../definition/ThoughtChain.js'
 
 const Schema = mongoose.Schema
 const tools = llm.tools
@@ -41,6 +42,7 @@ const tools = llm.tools
  * @property {Number} status 状态：参见StatusEnum
  * @property {Schema.Types.Mixed[]} tags 标签，参见Tag
  * @property {Schema.Types.Mixed} extInfo 消息的扩展信息
+ * @property {Schema.Types.Mixed[]} thoughtChains 智能体思维链，参见ThoughtChain
  * @property {Date} insertTime 创建时间
  * @property {Date} updateTime 最近更新时间
  */
@@ -78,6 +80,7 @@ const messageSchema = new Schema({
     status: {type: Number, default: 0, description: '状态', enum: StatusEnum.toValues()},
     tags: {type: [Tag], description: '标签'},
     extInfo: {type: Object, description: '消息的扩展信息'},
+    thoughtChains: {type: [ThoughtChain], description: '智能体思维链'},
     insertTime: {
         type: Date, default: function () {
             return new Date()
