@@ -45,6 +45,16 @@ export async function getGrpcSkill(skillCode) {
 }
 
 /**
+ * @description 获取远程技能详情
+ * @author xianyang
+ * @param {String} channel 频道名称
+ * @returns {Promise<Object[]>} 可用技能列表
+ */
+export async function getGrpcSkillsByChannel(channel) {
+    return grpcSkillDac.getTop(1000, {channels: channel, status: 0})
+}
+
+/**
  * @description 添加远程技能
  * @author xianyang
  * @param {Object} curUserInfo 当前用户
@@ -58,7 +68,7 @@ export async function addGrpcSkill(curUserInfo, grpcSkillInfo) {
     if (!grpcSkillInfo.skillName) {
         throw new Error('需要技能名称')
     }
-    if (!grpcSkillInfo.description) {
+    if (!grpcSkillInfo.skillMD) {
         throw new Error('需要技能描述')
     }
     if (!grpcSkillInfo.grpcHost) {
@@ -97,7 +107,7 @@ export async function addGrpcSkill(curUserInfo, grpcSkillInfo) {
     let newGrpcSkill = {
         skillCode: grpcSkillInfo.skillCode,
         skillName: grpcSkillInfo.skillName,
-        description: grpcSkillInfo.description,
+        skillMD: grpcSkillInfo.skillMD,
         grpcHost: grpcSkillInfo.grpcHost,
         clientCode: grpcSkillInfo.clientCode,
         channels: grpcSkillInfo.channels,
@@ -156,7 +166,7 @@ export async function updateGrpcSkill(curUserInfo, skillCode, newGrpcSkillInfo) 
     let grpcSkillInfo = {
         skillCode,
         skillName: newGrpcSkillInfo.skillName,
-        description: newGrpcSkillInfo.description,
+        skillMD: newGrpcSkillInfo.skillMD,
         grpcHost: newGrpcSkillInfo.grpcHost,
         channels: newGrpcSkillInfo.channels,
         note: newGrpcSkillInfo.note,

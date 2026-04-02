@@ -16,7 +16,7 @@ const tools = llm.tools
  * @author xianyang
  * @property {String} skillCode 唯一标识
  * @property {String} skillName 技能名称
- * @property {String} description 技能描述（标准的SKILL.md格式）
+ * @property {String} skillMD 技能描述（SKILL.md格式）
  * @property {String} grpcHost 远程主机地址
  * @property {String} clientCode 所属应用标识
  * @property {String[]} channels 哪些聊天通道可以使用
@@ -37,7 +37,7 @@ const grpcSkillSchema = new Schema({
         required: true
     },
     skillName: {type: String, description: '技能名称', required: true},
-    description: {type: String, description: '技能描述（标准的SKILL.md格式）', required: true},
+    skillMD: {type: String, description: '技能描述（SKILL.md格式）', required: true},
     grpcHost: {type: String, description: '远程主机地址', required: true},
     clientCode: {type: String, description: '所属应用标识', required: true},
     channels: {type: [String], description: '哪些聊天通道可以使用', required: true},
