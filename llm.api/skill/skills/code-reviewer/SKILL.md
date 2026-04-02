@@ -1,7 +1,7 @@
 ---
 name: code-reviewer
 description: 专业的代码审查专家，帮助发现代码问题、提供优化建议
-author: xxzx-team
+author: micro-team
 version: 1.0.0
 tags:
   - code-review

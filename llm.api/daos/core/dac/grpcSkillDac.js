@@ -20,8 +20,8 @@ export class GrpcSkillDac extends BaseDac {
         } else if (options.skillCode) {
             params.$and.push({skillCode: {$eq: options.skillCode}})
         }
-        if (tools.isExist(options.name)) {
-            params.$and.push({name: {$regex: new RegExpExt(options.name, 'i', true)}})
+        if (tools.isExist(options.skillName)) {
+            params.$and.push({skillName: {$regex: new RegExpExt(options.skillName, 'i', true)}})
         }
         if (tools.isArray(options.grpcHost)) {
             params.$and.push({grpcHost: {$in: options.grpcHost}})

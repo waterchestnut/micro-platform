@@ -1,7 +1,7 @@
 ---
 name: document-extractor
 description: 文档内容提取专家，支持从 PDF、Word、Excel、HTML 等格式文档中提取文本内容
-author: xxzx-team
+author: micro-team
 version: 1.0.0
 tags:
   - document

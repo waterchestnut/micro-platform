@@ -1,7 +1,7 @@
 ---
 name: refactoring-expert
 description: 代码重构专家，帮助改进代码结构、提升可维护性和可读性
-author: xxzx-team
+author: micro-team
 version: 1.0.0
 tags:
   - refactoring

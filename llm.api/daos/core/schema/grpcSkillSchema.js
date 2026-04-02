@@ -15,7 +15,7 @@ const tools = llm.tools
  * @description 定义grpcSkill的结构
  * @author xianyang
  * @property {String} skillCode 唯一标识
- * @property {String} name 技能名称
+ * @property {String} skillName 技能名称
  * @property {String} description 技能描述（标准的SKILL.md格式）
  * @property {String} grpcHost 远程主机地址
  * @property {String} clientCode 所属应用标识
@@ -36,7 +36,7 @@ const grpcSkillSchema = new Schema({
         description: '技能标识',
         required: true
     },
-    name: {type: String, description: '技能名称', required: true},
+    skillName: {type: String, description: '技能名称', required: true},
     description: {type: String, description: '技能描述（标准的SKILL.md格式）', required: true},
     grpcHost: {type: String, description: '远程主机地址', required: true},
     clientCode: {type: String, description: '所属应用标识', required: true},
@@ -65,7 +65,7 @@ const grpcSkillSchema = new Schema({
 grpcSkillSchema.index({insertTime: 1})
 grpcSkillSchema.index({updateTime: 1})
 grpcSkillSchema.index({skillCode: 1})
-grpcSkillSchema.index({name: 1})
+grpcSkillSchema.index({skillName: 1})
 grpcSkillSchema.index({grpcHost: 1})
 grpcSkillSchema.index({clientCode: 1})
 grpcSkillSchema.index({channels: 1})

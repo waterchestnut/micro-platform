@@ -5,6 +5,7 @@
  */
 
 import grpcSkillDac from '../../daos/core/dac/grpcSkillDac.js'
+import {listSkills} from '../../skill/index.js'
 
 const tools = llm.tools
 const logger = llm.logger
@@ -54,7 +55,7 @@ export async function addGrpcSkill(curUserInfo, grpcSkillInfo) {
     if (!grpcSkillInfo) {
         throw new Error('未传递技能数据')
     }
-    if (!grpcSkillInfo.name) {
+    if (!grpcSkillInfo.skillName) {
         throw new Error('需要技能名称')
     }
     if (!grpcSkillInfo.description) {
@@ -70,6 +71,22 @@ export async function addGrpcSkill(curUserInfo, grpcSkillInfo) {
         throw new Error('需要指定聊天通道')
     }
 
+    const skillNameRegex = /^[a-zA-Z][a-zA-Z0-9-]*$/
+    if (!skillNameRegex.test(grpcSkillInfo.skillName)) {
+        throw new Error('技能名称格式不正确，只能包含英文字母、数字、短横线，且首字符必须是英文字母')
+    }
+
+    const existingGrpcSkill = await grpcSkillDac.getOneByFilter({skillName: grpcSkillInfo.skillName, status: {$ne: -1}})
+    if (existingGrpcSkill) {
+        throw new Error('技能名称已存在')
+    }
+
+    const localSkills = await listSkills()
+    const localSkillNames = localSkills.map(s => s.name)
+    if (localSkillNames.includes(grpcSkillInfo.skillName)) {
+        throw new Error('技能名称已存在')
+    }
+
     grpcSkillInfo.skillCode = grpcSkillInfo.skillCode || tools.getUUID()
 
     let oldGrpcSkill = await grpcSkillDac.getByCode(grpcSkillInfo.skillCode)
@@ -79,7 +96,7 @@ export async function addGrpcSkill(curUserInfo, grpcSkillInfo) {
 
     let newGrpcSkill = {
         skillCode: grpcSkillInfo.skillCode,
-        name: grpcSkillInfo.name,
+        skillName: grpcSkillInfo.skillName,
         description: grpcSkillInfo.description,
         grpcHost: grpcSkillInfo.grpcHost,
         clientCode: grpcSkillInfo.clientCode,
@@ -110,9 +127,35 @@ export async function updateGrpcSkill(curUserInfo, skillCode, newGrpcSkillInfo) 
         throw new Error('没有要更新的数据')
     }
 
+    const currentSkill = await grpcSkillDac.getByCode(skillCode)
+    if (!currentSkill) {
+        throw new Error('要更新的技能不存在')
+    }
+
+    if (newGrpcSkillInfo.skillName && currentSkill.skillName !== newGrpcSkillInfo.skillName) {
+        const skillNameRegex = /^[a-zA-Z][a-zA-Z0-9-]*$/
+        if (!skillNameRegex.test(newGrpcSkillInfo.skillName)) {
+            throw new Error('技能名称格式不正确，只能包含英文字母、数字、短横线，且首字符必须是英文字母')
+        }
+
+        const existingGrpcSkill = await grpcSkillDac.getOneByFilter({
+            skillName: newGrpcSkillInfo.skillName,
+            status: {$ne: -1}
+        })
+        if (existingGrpcSkill) {
+            throw new Error('技能名称已存在')
+        }
+
+        const localSkills = await listSkills()
+        const localSkillNames = localSkills.map(s => s.name)
+        if (localSkillNames.includes(newGrpcSkillInfo.skillName)) {
+            throw new Error('技能名称已存在')
+        }
+    }
+
     let grpcSkillInfo = {
         skillCode,
-        name: newGrpcSkillInfo.name,
+        skillName: newGrpcSkillInfo.skillName,
         description: newGrpcSkillInfo.description,
         grpcHost: newGrpcSkillInfo.grpcHost,
         channels: newGrpcSkillInfo.channels,

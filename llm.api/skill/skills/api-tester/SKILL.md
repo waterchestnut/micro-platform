@@ -1,7 +1,7 @@
 ---
 name: api-tester
 description: API 测试专家，帮助设计测试用例、执行 API 测试和分析结果
-author: xxzx-team
+author: micro-team
 version: 1.0.0
 tags:
   - api-testing
