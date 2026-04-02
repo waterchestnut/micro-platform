@@ -15,7 +15,14 @@ const app = Fastify({
     logger: accessLoggerOptions,
     trustProxy: parseJSON(process.env.FASTIFY_TRUST_PROXY ?? false),
     bodyLimit: process.env.FASTIFY_BODY_LIMIT ? parseInt(process.env.FASTIFY_BODY_LIMIT) : undefined,
-    maxParamLength: process.env.FASTIFY_MAX_PARAM_LENGTH ? parseInt(process.env.FASTIFY_MAX_PARAM_LENGTH) : undefined
+    maxParamLength: process.env.FASTIFY_MAX_PARAM_LENGTH ? parseInt(process.env.FASTIFY_MAX_PARAM_LENGTH) : undefined,
+    ajv: {
+        customOptions: {
+            removeAdditional: false,
+            coerceTypes: true,
+            allErrors: true,
+        },
+    },
 })
 
 // Register your application as a normal plugin.

@@ -12,7 +12,6 @@ import {
     getAllStoreModels
 } from './daos/swaggerSchema/mongooseHandler.js'
 import {getAllEnumModels} from './daos/swaggerSchema/enumHandler.js'
-import Ajv from 'ajv'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -21,21 +20,20 @@ const __dirname = path.dirname(__filename)
 export const options = {
     logger: accessLoggerOptions,
     trustProxy: parseJSON(process.env.FASTIFY_TRUST_PROXY ?? false),
-    maxParamLength: process.env.FASTIFY_MAX_PARAM_LENGTH ? parseInt(process.env.FASTIFY_MAX_PARAM_LENGTH) : undefined
+    routerOptions: {
+        maxParamLength: process.env.FASTIFY_MAX_PARAM_LENGTH ? parseInt(process.env.FASTIFY_MAX_PARAM_LENGTH) : undefined
+    },
+    ajv: {
+        customOptions: {
+            removeAdditional: false,
+            coerceTypes: true,
+            allErrors: true,
+        },
+    },
 }
 
 export default async function (fastify, opts) {
     // Place here your custom code!
-
-    // 参数验证插件自定义
-    const ajv = new Ajv({
-        removeAdditional: false,
-        coerceTypes: true,
-        allErrors: true
-    })
-    fastify.setValidatorCompiler(({ schema, method, url, httpPart }) => {
-        return ajv.compile(schema)
-    })
 
     // 支持sse
     fastify.register(FastifySSEPlugin)

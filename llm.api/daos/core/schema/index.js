@@ -10,6 +10,7 @@ import agentLogSchema from './agentLogSchema.js'
 import conversationSchema from './conversationSchema.js'
 import messageSchema from './messageSchema.js'
 import answerCacheSchema from './answerCacheSchema.js'
+import grpcSkillSchema from './grpcSkillSchema.js'
 
 const mongodbConfig = llm.config.mongodbConfig
 
@@ -36,3 +37,4 @@ export const AgentLog = conn.model('AgentLog', agentLogSchema, 'agentLog')
 export const Conversation = conn.model('Conversation', conversationSchema, 'conversation')
 export const Message = conn.model('Message', messageSchema, 'message')
 export const AnswerCache = conn.model('AnswerCache', answerCacheSchema, 'answerCache')
+export const GrpcSkill = conn.model('GrpcSkill', grpcSkillSchema, 'grpcSkill')

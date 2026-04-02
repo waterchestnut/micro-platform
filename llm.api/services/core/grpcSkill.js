@@ -1,0 +1,171 @@
+/**
+ * @fileOverview 远程gRPC技能相关的业务操作
+ * @author xianyang 2026/4/1
+ * @module
+ */
+
+import grpcSkillDac from '../../daos/core/dac/grpcSkillDac.js'
+
+const tools = llm.tools
+const logger = llm.logger
+
+/**
+ * @description 获取远程技能列表
+ * @author xianyang
+ * @param {Object} [filter] 筛选条件
+ * @param {Number} [pageIndex=1] 页码
+ * @param {Number} [pageSize=10] 分页大小
+ * @param {Object} [options] 排序、格式化等参数
+ * @param {Number} [options.total] 记录的总数（翻页时可省略总数的查询）
+ * @param {{[key: string]:1 | -1}} [options.sort] 排序
+ * @returns {Promise<{total: Number, rows: [Object]}>} {total: 总数, rows: 技能数组}
+ */
+export async function getGrpcSkills(filter = {}, pageIndex = 1, pageSize = 10, options = {}) {
+    let dacOptions = {...filter}
+    if (options.sort) {
+        dacOptions.sort = options.sort
+    } else {
+        dacOptions.sort = {updateTime: -1}
+    }
+    if (options.total) {
+        dacOptions.total = options.total
+    }
+    return grpcSkillDac.getByPage(pageIndex, pageSize, dacOptions)
+}
+
+/**
+ * @description 获取远程技能详情
+ * @author xianyang
+ * @param {String} skillCode 技能标识
+ * @returns {Promise<Object>} 技能详细信息
+ */
+export async function getGrpcSkill(skillCode) {
+    return grpcSkillDac.getByCode(skillCode)
+}
+
+/**
+ * @description 添加远程技能
+ * @author xianyang
+ * @param {Object} curUserInfo 当前用户
+ * @param {Object} grpcSkillInfo 技能信息
+ * @returns {Promise<Object>} 添加成功时返回新添加的技能对象
+ */
+export async function addGrpcSkill(curUserInfo, grpcSkillInfo) {
+    if (!grpcSkillInfo) {
+        throw new Error('未传递技能数据')
+    }
+    if (!grpcSkillInfo.name) {
+        throw new Error('需要技能名称')
+    }
+    if (!grpcSkillInfo.description) {
+        throw new Error('需要技能描述')
+    }
+    if (!grpcSkillInfo.grpcHost) {
+        throw new Error('需要远程主机地址')
+    }
+    if (!grpcSkillInfo.clientCode) {
+        throw new Error('需要所属应用标识')
+    }
+    if (!grpcSkillInfo.channels || !grpcSkillInfo.channels.length) {
+        throw new Error('需要指定聊天通道')
+    }
+
+    grpcSkillInfo.skillCode = grpcSkillInfo.skillCode || tools.getUUID()
+
+    let oldGrpcSkill = await grpcSkillDac.getByCode(grpcSkillInfo.skillCode)
+    if (oldGrpcSkill) {
+        throw new Error('技能标识已存在')
+    }
+
+    let newGrpcSkill = {
+        skillCode: grpcSkillInfo.skillCode,
+        name: grpcSkillInfo.name,
+        description: grpcSkillInfo.description,
+        grpcHost: grpcSkillInfo.grpcHost,
+        clientCode: grpcSkillInfo.clientCode,
+        channels: grpcSkillInfo.channels,
+        note: grpcSkillInfo.note,
+        operator: {userCode: curUserInfo.userCode, realName: curUserInfo.realName},
+        status: 0,
+        tags: grpcSkillInfo.tags,
+    }
+    let ret = await grpcSkillDac.add(newGrpcSkill)
+
+    return ret
+}
+
+/**
+ * @description 修改远程技能
+ * @author xianyang
+ * @param {Object} curUserInfo 当前用户
+ * @param {String} skillCode 技能标识
+ * @param {Object} newGrpcSkillInfo 新的技能对象
+ * @returns {Promise<Object>} 受影响的行数
+ */
+export async function updateGrpcSkill(curUserInfo, skillCode, newGrpcSkillInfo) {
+    if (!skillCode) {
+        throw new Error('缺少技能标识')
+    }
+    if (!newGrpcSkillInfo) {
+        throw new Error('没有要更新的数据')
+    }
+
+    let grpcSkillInfo = {
+        skillCode,
+        name: newGrpcSkillInfo.name,
+        description: newGrpcSkillInfo.description,
+        grpcHost: newGrpcSkillInfo.grpcHost,
+        channels: newGrpcSkillInfo.channels,
+        note: newGrpcSkillInfo.note,
+        tags: newGrpcSkillInfo.tags,
+    }
+
+    let ret = await grpcSkillDac.update(grpcSkillInfo)
+
+    return ret
+}
+
+/**
+ * @description 删除远程技能
+ * @author xianyang
+ * @param {Object} curUserInfo 当前用户
+ * @param {String} skillCode 技能标识
+ * @returns {Promise<Object>} 受影响的行数
+ */
+export async function deleteGrpcSkill(curUserInfo, skillCode) {
+    if (!skillCode) {
+        throw new Error('缺少技能标识')
+    }
+
+    return grpcSkillDac.update({skillCode, status: -1})
+}
+
+/**
+ * @description 启用远程技能
+ * @author xianyang
+ * @param {Object} curUserInfo 当前用户
+ * @param {String} skillCode 技能标识
+ * @returns {Promise<Object>} 受影响的行数
+ */
+export async function enableGrpcSkill(curUserInfo, skillCode) {
+    if (!skillCode) {
+        throw new Error('缺少技能标识')
+    }
+
+    return grpcSkillDac.update({skillCode, status: 0})
+}
+
+/**
+ * @description 禁用远程技能
+ * @author xianyang
+ * @param {Object} curUserInfo 当前用户
+ * @param {String} skillCode 技能标识
+ * @returns {Promise<Object>} 受影响的行数
+ */
+export async function disableGrpcSkill(curUserInfo, skillCode) {
+    if (!skillCode) {
+        throw new Error('缺少技能标识')
+    }
+
+    return grpcSkillDac.update({skillCode, status: 1})
+}

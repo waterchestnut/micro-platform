@@ -21,6 +21,9 @@ export default fp(async (fastify) => {
         {name: 'default', description: '默认分组的API'},
         {name: 'llm', description: 'LLM基础API'},
         {name: 'trans', description: '翻译相关的API'},
+        {name: 'grpc-skill', description: 'GRPC技能基础API'},
+        {name: 'grpc-skill-ipmi', description: 'GRPC技能管理相关的API'},
+        {name: 'grpc-skill-my', description: '当前用户的GRPC技能相关的API'},
     ]
 
     fastify.register(swagger, {
