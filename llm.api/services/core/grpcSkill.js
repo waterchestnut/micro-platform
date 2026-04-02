@@ -6,9 +6,84 @@
 
 import grpcSkillDac from '../../daos/core/dac/grpcSkillDac.js'
 import {listSkills} from '../../skill/index.js'
+import yaml from 'js-yaml'
 
 const tools = llm.tools
 const logger = llm.logger
+
+/**
+ * @description 校验 skillMD 是否符合 SKILL.md 规范
+ * @author xianyang
+ * @param {String} skillMD skillMD 内容
+ * @throws {Error} 校验失败时抛出错误
+ */
+export function validateSkillMD(skillMD) {
+    if (!skillMD || typeof skillMD !== 'string') {
+        throw new Error('skillMD 不能为空')
+    }
+
+    const frontmatterRegex = /^---\s*\n([\s\S]*?)\n---/
+    const match = skillMD.match(frontmatterRegex)
+
+    if (!match) {
+        throw new Error('skillMD 缺少 YAML frontmatter (--- 开头和结尾)')
+    }
+
+    let metadata
+    try {
+        metadata = yaml.load(match[1])
+    } catch (e) {
+        throw new Error(`skillMD frontmatter 格式错误: ${e.message}`)
+    }
+
+    if (!metadata || typeof metadata !== 'object') {
+        throw new Error('skillMD frontmatter 解析失败')
+    }
+
+    const requiredFields = ['name', 'description', 'author', 'version', 'tags']
+    for (const field of requiredFields) {
+        if (!metadata[field]) {
+            throw new Error(`skillMD frontmatter 缺少必需字段: ${field}`)
+        }
+    }
+
+    if (typeof metadata.name !== 'string' || !metadata.name.trim()) {
+        throw new Error('skillMD frontmatter 中 name 必须是字符串且不能为空')
+    }
+
+    if (typeof metadata.description !== 'string' || !metadata.description.trim()) {
+        throw new Error('skillMD frontmatter 中 description 必须是字符串且不能为空')
+    }
+
+    if (typeof metadata.author !== 'string' || !metadata.author.trim()) {
+        throw new Error('skillMD frontmatter 中 author 必须是字符串且不能为空')
+    }
+
+    if (typeof metadata.version !== 'string' || !metadata.version.trim()) {
+        throw new Error('skillMD frontmatter 中 version 必须是字符串且不能为空')
+    }
+
+    if (!Array.isArray(metadata.tags) || metadata.tags.length === 0) {
+        throw new Error('skillMD frontmatter 中 tags 必须是数组且不能为空')
+    }
+
+    const content = skillMD.slice(match[0].length).trim()
+    if (!content) {
+        throw new Error('skillMD 内容不能为空')
+    }
+
+    const requiredSections = ['# ', '## When to Use This Skill', '## Instructions']
+    for (const section of requiredSections) {
+        if (!content.includes(section)) {
+            throw new Error(`skillMD 内容缺少必需章节: ${section}`)
+        }
+    }
+
+    const titleMatch = content.match(/^#\s+(.+)$/m)
+    if (titleMatch && titleMatch[1] !== metadata.name && titleMatch[1] !== metadata.description.split('(')[0].trim()) {
+        logger.warn(`skillMD 标题 "${titleMatch[1]}" 与 name "${metadata.name}" 不匹配`)
+    }
+}
 
 /**
  * @description 获取远程技能列表
@@ -71,6 +146,9 @@ export async function addGrpcSkill(curUserInfo, grpcSkillInfo) {
     if (!grpcSkillInfo.skillMD) {
         throw new Error('需要技能描述')
     }
+
+    validateSkillMD(grpcSkillInfo.skillMD)
+
     if (!grpcSkillInfo.grpcHost) {
         throw new Error('需要远程主机地址')
     }
@@ -161,6 +239,10 @@ export async function updateGrpcSkill(curUserInfo, skillCode, newGrpcSkillInfo) 
         if (localSkillNames.includes(newGrpcSkillInfo.skillName)) {
             throw new Error('技能名称已存在')
         }
+    }
+
+    if (newGrpcSkillInfo.skillMD) {
+        validateSkillMD(newGrpcSkillInfo.skillMD)
     }
 
     let grpcSkillInfo = {

@@ -7,6 +7,7 @@
 import fs from 'fs/promises'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import yaml from 'js-yaml'
 import llmChannelDataSet from '../conf/llmChannel.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -329,49 +330,17 @@ export class SkillManager {
     }
 
     /**
-     * @description 简单 YAML 解析器（仅支持基本格式）
+     * @description 解析 YAML Frontmatter
      * @param {string} yamlContent - YAML 内容
      * @returns {Object}
      */
     parseYaml(yamlContent) {
-        const result = {}
-        const lines = yamlContent.split(/\r?\n/)
-        let currentKey = null
-        let currentArray = null
-
-        for (const line of lines) {
-            const trimmed = line.trim()
-            
-            // 跳过空行和注释
-            if (!trimmed || trimmed.startsWith('#')) continue
-
-            // 数组项
-            if (trimmed.startsWith('- ')) {
-                if (currentArray) {
-                    currentArray.push(trimmed.slice(2).trim())
-                }
-                continue
-            }
-
-            // 键值对
-            const match = trimmed.match(/^(\w+):\s*(.*)$/)
-            if (match) {
-                const [, key, value] = match
-                currentKey = key
-                
-                if (value) {
-                    // 移除引号
-                    result[key] = value.replace(/^["']|["']$/g, '')
-                    currentArray = null
-                } else {
-                    // 可能是数组开始
-                    result[key] = []
-                    currentArray = result[key]
-                }
-            }
+        try {
+            return yaml.load(yamlContent)
+        } catch (error) {
+            logger.warn(`YAML 解析失败: ${error.message}`)
+            return {}
         }
-
-        return result
     }
 
     /**
