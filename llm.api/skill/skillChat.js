@@ -20,9 +20,10 @@ const logger = llm.logger
  */
 
 export class SkillChat {
-    constructor(channel) {
+    constructor(channel, curUserInfo) {
         this.channel = channel
-        this.skillManager = new SkillManager(channel)
+        this.skillManager = new SkillManager(channel, curUserInfo)
+        this.curUserInfo = curUserInfo
     }
 
     /**

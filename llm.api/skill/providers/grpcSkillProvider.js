@@ -6,15 +6,17 @@
 
 import {getGrpcSkillsByChannel} from '../../services/core/grpcSkill.js'
 import skillParser from '../skillParser.js'
+import {execCommand as execGrpcCommand} from '../../grpc/clients/grpcSkillExecutor.js'
 
 const logger = llm.logger
 
 export class GrpcSkillProvider {
-    constructor(channel) {
+    constructor(channel, curUserInfo) {
         this.channel = channel
         this.skillsCache = new Map()
         this.skillsIndex = new Map()
         this.initialized = false
+        this.curUserInfo = curUserInfo
     }
 
     /**
@@ -89,6 +91,15 @@ export class GrpcSkillProvider {
      * @returns {Promise<any>}
      */
     async executeCommand(skill, command, parameters) {
-
+        let grpcSkillInfo = this.skillsIndex.get(skill.name)
+        if (!grpcSkillInfo) {
+            return {
+                success: false,
+                command: command,
+                error: `技能 ${skill.name} 不存在`,
+                message: `命令 ${skill.name}.${command} 执行失败：技能 ${skill.name} 不存在`,
+            }
+        }
+        return await execGrpcCommand(skill.name, command, parameters, this.curUserInfo)
     }
 }

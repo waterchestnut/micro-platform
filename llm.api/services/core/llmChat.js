@@ -116,12 +116,12 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     }
 
     // 匹配并注入 Agent Skills 上下文（基于频道配置，分级加载）
-    const skillChat = new SkillChat()
+    const skillChat = new SkillChat(channel, curUserInfo)
     const {initSkillChatContext, checkSkillSelection, executeSkillToolCalls, getSkillStats} = skillChat
     let skillContext = null
     try {
         // 初始化 Skills 聊天上下文
-        const {prompt, context} = await initSkillChatContext(channel, query, {
+        const {prompt, context} = await initSkillChatContext(query, {
             ...options,
             loadMode: options.skillLoadMode || 'candidates',
             context: {channel, channelGroup, llmModel}

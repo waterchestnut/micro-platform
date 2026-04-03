@@ -40,12 +40,13 @@ const logger = llm.logger
  * @description Agent Skills 管理器类
  */
 export class SkillManager {
-    constructor(channel) {
+    constructor(channel, curUserInfo) {
         this.channel = channel
         this.localSkillProvider = localSkillProvider
-        this.grpcSkillProvider = new GrpcSkillProvider(channel)
+        this.grpcSkillProvider = new GrpcSkillProvider(channel, curUserInfo)
         this.initialized = false
         this.skills = []
+        this.curUserInfo = curUserInfo
     }
 
     /**

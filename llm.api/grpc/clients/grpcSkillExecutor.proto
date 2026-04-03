@@ -22,6 +22,7 @@ message execSkillCommandRequest {
   string skillName = 1;
   string commandName = 2;
   string params = 3;
+  string curUserInfo = 4;
 }
 
 message execSkillCommandResponse {

@@ -13,7 +13,7 @@ const tools = llm.tools
 const protoPath = 'grpc/clients/grpcSkillExecutor.proto'
 const llmProto = loadProto(protoPath).llm
 
-export async function execCommand(grpcHost, skillName, commandName, params) {
+export async function execCommand(grpcHost, skillName, commandName, params = {}, curUserInfo = {}) {
     let client = new llmProto.GrpcSkillExecutor(grpcHost,
         grpc.credentials.createInsecure(), {
             'grpc.max_send_message_length': agentTaskConfig.maxMessageLength,
@@ -21,7 +21,12 @@ export async function execCommand(grpcHost, skillName, commandName, params) {
         })
     return new Promise((resolve, reject) => {
         /*调用远程服务方法*/
-        client.execSkillCommand({skillName, commandName, params: JSON.stringify(params)}, function (err, response) {
+        client.execSkillCommand({
+            skillName,
+            commandName,
+            params: JSON.stringify(params),
+            curUserInfo: JSON.stringify(curUserInfo)
+        }, function (err, response) {
             if (err) {
                 return resolve({
                     success: false,
