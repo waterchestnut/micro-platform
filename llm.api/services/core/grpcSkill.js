@@ -5,7 +5,7 @@
  */
 
 import grpcSkillDac from '../../daos/core/dac/grpcSkillDac.js'
-import {listSkills} from '../../skill/index.js'
+import {listSkills} from '../../skill/providers/localSkillProvider.js'
 import yaml from 'js-yaml'
 
 const tools = llm.tools

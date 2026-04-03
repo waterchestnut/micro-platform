@@ -16,14 +16,14 @@ import {getAnswerCache, saveAnswerCache} from './answerCache.js'
 import {calcTextTokenCount} from '../openai/util.js'
 import {getMessages} from './message.js'
 import {mcpToolManager} from '../../mcp/index.js'
-import {initSkillChatContext, checkSkillSelection, executeSkillToolCalls, getSkillStats} from '../../skill/index.js'
+import {SkillChat} from '../../skill/skillChat.js'
 
 const tools = llm.tools
 const logger = llm.logger
 const config = llm.config
 const defaultLlmConfigKey = 'deepseek31'
 const defaultLlmVLConfigKey = 'qwenVLPlus'
-const defaultChannel = 'micro_common'
+const defaultChannel = 'xxzx_common'
 const defaultChannelGroup = 'none'
 
 /**
@@ -116,6 +116,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     }
 
     // 匹配并注入 Agent Skills 上下文（基于频道配置，分级加载）
+    const skillChat = new SkillChat()
+    const {initSkillChatContext, checkSkillSelection, executeSkillToolCalls, getSkillStats} = skillChat
     let skillContext = null
     try {
         // 初始化 Skills 聊天上下文
