@@ -53,7 +53,7 @@ export class GrpcSkillProvider {
         }
 
         try {
-            const content = skillInfo.skillMD
+            const content = skillInfo.grpcSkillInfo.skillMD
             const skill = skillParser.parseSkillContent(content, skillInfo)
             skill.skillType = 'grpc'
             this.skillsCache.set(skillName, skill)
@@ -91,15 +91,15 @@ export class GrpcSkillProvider {
      * @returns {Promise<any>}
      */
     async executeCommand(skill, command, parameters) {
-        let grpcSkillInfo = this.skillsIndex.get(skill.name)
-        if (!grpcSkillInfo) {
+        let skillInfo = this.skillsIndex.get(skill.name)
+        if (!skillInfo) {
             return {
                 success: false,
-                command: command,
-                error: `技能 ${skill.name} 不存在`,
-                message: `命令 ${skill.name}.${command} 执行失败：技能 ${skill.name} 不存在`,
+                command: command.name,
+                error: `技能 ${skillInfo.name} 不存在`,
+                message: `命令 ${skillInfo.name}.${command.name} 执行失败：技能 ${skillInfo.name} 不存在`,
             }
         }
-        return await execGrpcCommand(skill.name, command, parameters, this.curUserInfo)
+        return await execGrpcCommand(skillInfo.grpcSkillInfo.grpcHost, skillInfo.name, command.name, parameters, this.curUserInfo)
     }
 }

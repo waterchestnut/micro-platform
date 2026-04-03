@@ -26,7 +26,7 @@ export async function execCommand(skillName, commandName, params, curUserInfo) {
     let ret
     try {
         let handler = await getSkillHandler(skillName)
-        ret = await handler.execCommand(skillName, params, curUserInfo)
+        ret = await handler.execCommand(commandName, params, curUserInfo)
     } catch (e) {
         ret = {
             code: -1,

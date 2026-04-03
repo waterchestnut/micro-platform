@@ -35,6 +35,7 @@ export class SkillChat {
      * @returns {Promise<{prompt: string, context: SkillChatContext}>}
      */
     async initSkillChatContext(query, options = {}) {
+        await this.skillManager.initialize()
         const result = await this.skillManager.generateSystemPrompt(query, {
             ...options,
             loadMode: options.loadMode || 'candidates',

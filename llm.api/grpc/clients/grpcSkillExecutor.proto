@@ -13,7 +13,7 @@ package llm;
 
 // 定义服务
 service GrpcSkillExecutor {
-  rpc execSkillCommand (execSkillCommandRequest) returns (stream execSkillCommandResponse) {}
+  rpc execSkillCommand (execSkillCommandRequest) returns (execSkillCommandResponse) {}
 }
 
 // 结构化数据：使用message定义。

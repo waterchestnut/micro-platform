@@ -117,11 +117,10 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
 
     // 匹配并注入 Agent Skills 上下文（基于频道配置，分级加载）
     const skillChat = new SkillChat(channel, curUserInfo)
-    const {initSkillChatContext, checkSkillSelection, executeSkillToolCalls, getSkillStats} = skillChat
     let skillContext = null
     try {
         // 初始化 Skills 聊天上下文
-        const {prompt, context} = await initSkillChatContext(query, {
+        const {prompt, context} = await skillChat.initSkillChatContext(query, {
             ...options,
             loadMode: options.skillLoadMode || 'candidates',
             context: {channel, channelGroup, llmModel}
@@ -258,7 +257,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
 
         // 检查大模型是否选择了某个技能（动态加载机制）
         if (!receivedToolCall && answerContent && skillContext) {
-            const selectedSkill = await checkSkillSelection(answerContent, skillContext)
+            const selectedSkill = await skillChat.checkSkillSelection(answerContent, skillContext)
             if (selectedSkill) {
                 // 追加技能详细说明到消息
                 messages.push({
@@ -303,7 +302,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
 
                 // 执行工具调用（区分 MCP 工具和 Skill 工具）
                 const toolResults = skillContext
-                    ? await executeSkillToolCalls(toolCalls, skillContext)
+                    ? await skillChat.executeSkillToolCalls(toolCalls, skillContext)
                     : await mcpToolManager.executeToolCalls(channel, toolCalls)
 
                 // 将工具调用结果添加到消息历史中
@@ -349,7 +348,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         tools: createBody.tools,
         toolChoice: createBody.tool_choice,
         iterationCount: iterationCount,
-        skills: skillContext ? getSkillStats(skillContext) : null
+        skills: skillContext ? skillChat.getSkillStats(skillContext) : null
     })
 
     if (options.cache && options.channelCacheKey) {

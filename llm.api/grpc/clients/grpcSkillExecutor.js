@@ -41,7 +41,7 @@ export async function execCommand(grpcHost, skillName, commandName, params = {},
                 command: commandName,
                 error: response.msg || '',
                 message: `命令 ${skillName}.${commandName} 执行${response.code === 0 ? '成功' : '失败'}`,
-                data: tools.isString(response.data) ? JSON.parse(response.data) : response.data,
+                data: response.data && tools.isString(response.data) ? JSON.parse(response.data) : response.data,
             })
         })
     })
