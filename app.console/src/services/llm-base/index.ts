@@ -1,0 +1,20 @@
+// @ts-ignore
+/* eslint-disable */
+// API 更新时间：
+// API 唯一标识：
+import * as api0 from './api0';
+import * as llm from './llm';
+import * as grpcSkillIpmi from './grpcSkillIpmi';
+import * as grpcSkill from './grpcSkill';
+import * as grpcSkillMy from './grpcSkillMy';
+import * as trans from './trans';
+import * as coursePlanning from './coursePlanning';
+export default {
+  api0,
+  llm,
+  grpcSkillIpmi,
+  grpcSkill,
+  grpcSkillMy,
+  trans,
+  coursePlanning,
+};

@@ -149,6 +149,13 @@ export default defineConfig({
       mock: true,
       namespace: 'APPAPI'
     },
+    {
+      requestLibPath: 'import {ResponseStructure, llmRequest as request} from \'@/services/request\';',
+      schemaPath: 'http://localhost:12008/documentation/json',
+      projectName: 'llm-base',
+      mock: true,
+      namespace: 'LLMAPI'
+    },
   ],
   mfsu: {
     strategy: 'normal',

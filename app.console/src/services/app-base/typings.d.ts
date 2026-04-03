@@ -16,7 +16,7 @@ declare namespace APPAPI {
     clientType?: 'builtIn' | 'official' | 'thirdParty' | 'selfBuild' | 'community';
     /** 访问端 */
     endpoints?: {
-      endpointType?: 'pc' | 'miniNative' | 'miniH5';
+      endpointType?: 'pc' | 'pcIframe' | 'miniNative' | 'miniH5';
       visitPath?: string;
       status?: -1 | 0 | 1;
     }[];
@@ -29,15 +29,17 @@ declare namespace APPAPI {
     /** 是否需要分配权限才显示 */
     needAuth2Show?: boolean;
     /** 平台类型 */
-    platformType?: 'micro' | 'union';
+    platformType?: 'xxzx' | 'union';
     /** 获得本应用授权的其他应用 */
     toClients?: string[];
+    /** 应用图标 */
+    logoUrl?: string;
   };
 
   type fullDefinitionModels = {
     /** Endpoint */
     Endpoint?: {
-      endpointType?: 'pc' | 'miniNative' | 'miniH5';
+      endpointType?: 'pc' | 'pcIframe' | 'miniNative' | 'miniH5';
       visitPath?: string;
       status?: -1 | 0 | 1;
     };
@@ -59,9 +61,9 @@ declare namespace APPAPI {
       community?: string;
     };
     /** EndpointTypeEnum */
-    EndpointTypeEnum?: { pc?: string; miniNative?: string; miniH5?: string };
+    EndpointTypeEnum?: { pc?: string; pcIframe?: string; miniNative?: string; miniH5?: string };
     /** PlatformTypeEnum */
-    PlatformTypeEnum?: { micro?: string; union?: string };
+    PlatformTypeEnum?: { xxzx?: string; union?: string };
     /** StatusEnum */
     StatusEnum?: { deleted?: number; normal?: number; disabled?: number };
   };
@@ -77,7 +79,7 @@ declare namespace APPAPI {
       tags?: { key?: string; value?: string }[];
       clientType?: 'builtIn' | 'official' | 'thirdParty' | 'selfBuild' | 'community';
       endpoints?: {
-        endpointType?: 'pc' | 'miniNative' | 'miniH5';
+        endpointType?: 'pc' | 'pcIframe' | 'miniNative' | 'miniH5';
         visitPath?: string;
         status?: -1 | 0 | 1;
       }[];
@@ -85,8 +87,9 @@ declare namespace APPAPI {
       upstreams?: { host?: string; weight?: number }[];
       order?: number;
       needAuth2Show?: boolean;
-      platformType?: 'micro' | 'union';
+      platformType?: 'xxzx' | 'union';
       toClients?: string[];
+      logoUrl?: string;
     };
     /** HomeClient */
     HomeClient?: { homeClientCode: string; clientCode: string; order?: number; userCode?: string };
@@ -103,7 +106,7 @@ declare namespace APPAPI {
       tags?: { key?: string; value?: string; _id?: string }[];
       clientType?: 'builtIn' | 'official' | 'thirdParty' | 'selfBuild' | 'community';
       endpoints?: {
-        endpointType?: 'pc' | 'miniNative' | 'miniH5';
+        endpointType?: 'pc' | 'pcIframe' | 'miniNative' | 'miniH5';
         visitPath?: string;
         status?: -1 | 0 | 1;
         _id?: string;
@@ -112,8 +115,9 @@ declare namespace APPAPI {
       upstreams?: { host?: string; weight?: number; _id?: string }[];
       order?: number;
       needAuth2Show?: boolean;
-      platformType?: 'micro' | 'union';
+      platformType?: 'xxzx' | 'union';
       toClients?: string[];
+      logoUrl?: string;
       insertTime?: string;
       updateTime?: string;
       _id?: string;
