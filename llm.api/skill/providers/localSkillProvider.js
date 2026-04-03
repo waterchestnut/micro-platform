@@ -141,7 +141,7 @@ export class LocalSkillProvider {
             await this.initialize()
         }
         const skills = []
-        for (const skillName in skillNames) {
+        for (const skillName of skillNames) {
             const skill = await this.loadSkill(skillName)
             if (skill) {
                 skills.push(skill)
