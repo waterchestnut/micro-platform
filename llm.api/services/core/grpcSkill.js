@@ -165,9 +165,9 @@ export async function addGrpcSkill(curUserInfo, grpcSkillInfo) {
         throw new Error(`无效的频道: ${invalidChannels.join(', ')}，这些频道未在配置中定义`)
     }
 
-    const skillNameRegex = /^[a-zA-Z][a-zA-Z0-9-]*$/
+    const skillNameRegex = /^[a-z][a-z0-9-]*$/
     if (!skillNameRegex.test(grpcSkillInfo.skillName)) {
-        throw new Error('技能名称格式不正确，只能包含英文字母、数字、短横线，且首字符必须是英文字母')
+        throw new Error('技能名称格式不正确，只能包含小写英文字母、数字、短横线，且首字符必须是英文字母')
     }
 
     const existingGrpcSkill = await grpcSkillDac.getOneByFilter({skillName: grpcSkillInfo.skillName, status: {$ne: -1}})
@@ -227,9 +227,9 @@ export async function updateGrpcSkill(curUserInfo, skillCode, newGrpcSkillInfo) 
     }
 
     if (newGrpcSkillInfo.skillName && currentSkill.skillName !== newGrpcSkillInfo.skillName) {
-        const skillNameRegex = /^[a-zA-Z][a-zA-Z0-9-]*$/
+        const skillNameRegex = /^[a-z][a-z0-9-]*$/
         if (!skillNameRegex.test(newGrpcSkillInfo.skillName)) {
-            throw new Error('技能名称格式不正确，只能包含英文字母、数字、短横线，且首字符必须是英文字母')
+            throw new Error('技能名称格式不正确，只能包含小写英文字母、数字、短横线，且首字符必须是英文字母')
         }
 
         const existingGrpcSkill = await grpcSkillDac.getOneByFilter({
