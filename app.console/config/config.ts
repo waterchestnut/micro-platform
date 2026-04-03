@@ -172,5 +172,7 @@ export default defineConfig({
     UPLOAD_FILE_SIZE_LIMIT: process.env.UPLOAD_FILE_SIZE_LIMIT || 500 * 1024 * 1024,
     /*APP管理接口地址*/
     APP_API_BASE: process.env.APP_API_BASE || 'http://localhost:12003',
+    /*大模型服务地址*/
+    LLM_API_BASE: process.env.LLM_API_BASE || 'http://localhost:12008',
   },
 });

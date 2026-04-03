@@ -6,6 +6,7 @@
 
 import grpcSkillDac from '../../daos/core/dac/grpcSkillDac.js'
 import {listSkills} from '../../skill/providers/localSkillProvider.js'
+import {validateChannels} from '../../conf/llmChannel.js'
 import yaml from 'js-yaml'
 
 const tools = llm.tools
@@ -156,7 +157,12 @@ export async function addGrpcSkill(curUserInfo, grpcSkillInfo) {
         throw new Error('需要所属应用标识')
     }
     if (!grpcSkillInfo.channels || !grpcSkillInfo.channels.length) {
-        throw new Error('需要指定聊天通道')
+        throw new Error('需要指定聊天频道')
+    }
+
+    const invalidChannels = validateChannels(grpcSkillInfo.channels)
+    if (invalidChannels.length > 0) {
+        throw new Error(`无效的频道: ${invalidChannels.join(', ')}，这些频道未在配置中定义`)
     }
 
     const skillNameRegex = /^[a-zA-Z][a-zA-Z0-9-]*$/
@@ -243,6 +249,13 @@ export async function updateGrpcSkill(curUserInfo, skillCode, newGrpcSkillInfo) 
 
     if (newGrpcSkillInfo.skillMD) {
         validateSkillMD(newGrpcSkillInfo.skillMD)
+    }
+
+    if (newGrpcSkillInfo.channels) {
+        const invalidChannels = validateChannels(newGrpcSkillInfo.channels)
+        if (invalidChannels.length > 0) {
+            throw new Error(`无效的频道: ${invalidChannels.join(', ')}，这些频道未在配置中定义`)
+        }
     }
 
     let grpcSkillInfo = {

@@ -19,7 +19,7 @@ const tools = llm.tools
  * @property {String} skillMD 技能描述（SKILL.md格式）
  * @property {String} grpcHost 远程主机地址
  * @property {String} clientCode 所属应用标识
- * @property {String[]} channels 哪些聊天通道可以使用
+ * @property {String[]} channels 哪些聊天频道可以使用
  * @property {String} note 备注
  * @property {Schema.Types.Mixed} operator 创建者
  * @property {Number} status 状态：参见StatusEnum
@@ -40,7 +40,7 @@ const grpcSkillSchema = new Schema({
     skillMD: {type: String, description: '技能描述（SKILL.md格式）', required: true},
     grpcHost: {type: String, description: '远程主机地址', required: true},
     clientCode: {type: String, description: '所属应用标识', required: true},
-    channels: {type: [String], description: '哪些聊天通道可以使用', required: true},
+    channels: {type: [String], description: '哪些聊天频道可以使用', required: true},
     note: {type: String, description: '备注'},
     operator: {type: Object, description: '创建者'},
     status: {type: Number, default: 0, description: '状态', enum: StatusEnum.toValues()},

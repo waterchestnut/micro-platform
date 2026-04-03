@@ -25,6 +25,13 @@ const MyClientDetail: React.FC = () => {
     saveGroupPrivs: '/core/client-my/priv/group/save-priv',
     getOtherClientPrivsList: '/core/client-my/priv/other-client/list',
     saveOtherClientPrivs: '/core/client-my/priv/other-client/save-priv',
+    getGrpcSkillList: '/core/grpc-skill-my/list',
+    addGrpcSkill: '/core/grpc-skill/add',
+    updateGrpcSkill: '/core/grpc-skill-my/update',
+    deleteGrpcSkill: '/core/grpc-skill-my/delete',
+    enableGrpcSkill: '/core/grpc-skill-my/enable',
+    disableGrpcSkill: '/core/grpc-skill-my/disable',
+    getGrpcSkill: '/core/grpc-skill-my/detail',
   }
   return (
     <ClientDetail apiRelativeUrls={apiRelativeUrls} toBack={(clientCode: string) => {

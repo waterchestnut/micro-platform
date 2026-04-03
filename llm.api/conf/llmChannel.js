@@ -4,7 +4,7 @@
  * @module
  */
 
-export default {
+const llmChannelDataSet = {
     /** 通用聊天助手 */
     micro_common: {
         /** 系统提示词 */
@@ -67,4 +67,24 @@ export default {
             enableSkillExecution: true,
         }
     },
+}
+
+export default llmChannelDataSet
+
+/**
+ * @description 获取所有已配置的频道列表
+ * @returns {string[]} 频道名称数组
+ */
+export function getConfiguredChannels() {
+    return Object.keys(llmChannelDataSet)
+}
+
+/**
+ * @description 校验频道是否在配置中定义
+ * @param {string[]} channels 频道列表
+ * @returns {string[]} 无效的频道列表
+ */
+export function validateChannels(channels) {
+    const configuredChannels = getConfiguredChannels()
+    return channels.filter(channel => !configuredChannels.includes(channel))
 }

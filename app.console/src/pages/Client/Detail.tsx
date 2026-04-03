@@ -9,6 +9,7 @@ import AuthManage from '@/pages/Client/components/AuthManage'
 import ApiManage from '@/pages/Client/components/ApiManage'
 import GroupManage from '@/pages/Client/components/GroupManage'
 import OtherClientManage from '@/pages/Client/components/OtherClientManage'
+import SkillManage from '@/pages/Client/components/SkillManage'
 
 export type ClientDetailProps = {
   apiRelativeUrls?: any;
@@ -96,6 +97,11 @@ const ClientDetail: React.FC<ClientDetailProps> = (props) => {
         />
       )
     }
+    if (activeKey === 'skill') {
+      return (
+        <SkillManage pClientInfo={clientInfo} apiRelativeUrls={apiRelativeUrls}/>
+      )
+    }
     return null
   }
 
@@ -130,6 +136,10 @@ const ClientDetail: React.FC<ClientDetailProps> = (props) => {
         {
           tab: '其他应用赋权',
           key: 'other-client',
+        },
+        {
+          tab: '技能管理',
+          key: 'skill',
         },
       ]}
       header={{

@@ -430,7 +430,7 @@ declare namespace LLMAPI {
     grpcHost: string;
     /** 所属应用标识 */
     clientCode: string;
-    /** 哪些聊天通道可以使用 */
+    /** 哪些聊天频道可以使用 */
     channels: string[];
     /** 备注 */
     note?: string;
