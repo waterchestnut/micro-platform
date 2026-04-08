@@ -47,6 +47,15 @@ export const waitTime = (time = 100) => {
 };
 
 /**
+ * @description 判断是否为数组
+ * @param {Object} obj 输入对象
+ * @return {Boolean} true or false
+ */
+export function isArray(obj: any) {
+  return Array.isArray ? Array.isArray(obj) : Object.prototype.toString.call(obj) === '[object Array]'
+}
+
+/**
  * @description 拼接文件服务的绝对地址
  */
 export const getDocHttpUrl = (relativeUrl: string): string => {

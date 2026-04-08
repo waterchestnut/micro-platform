@@ -7,7 +7,7 @@
 import mongoose from 'mongoose'
 
 const Schema = mongoose.Schema
-const tools = resource.tools
+const tools = llm.tools
 
 /**
  * @description 定义文件的结构

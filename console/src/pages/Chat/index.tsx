@@ -11,7 +11,7 @@ import {
   Attachments,
   type AttachmentsProps,
   ThoughtChain,
-  type ThoughtChainItemType, FileCardProps, FileCard
+  type ThoughtChainItemType, FileCardProps, FileCard, BubbleProps
 } from '@ant-design/x'
 import {CloudUploadOutlined, CodeOutlined, EditOutlined, CheckCircleOutlined} from '@ant-design/icons'
 import {type ComponentProps, XMarkdown} from '@ant-design/x-markdown'
@@ -23,14 +23,17 @@ import ThinkComponent from '@/pages/Chat/components/ThinkComponent'
 import CodeComponent from '@/pages/Chat/components/CodeComponent'
 import {getSupComponent} from '@/pages/Chat/components/SupComponent'
 import ConversationList, {type Conversation} from '@/pages/Chat/components/ConversationList'
-
-interface Message {
-  key: string;
-  role: 'my' | 'ai' | 'system' | 'user' | 'divider' | 'notice';
-  content: string;
-  attachments?: AttachmentItem[];
-  timestamp?: number;
-}
+import {getAccessToken, getUserCache} from '@/utils/authority'
+import CommonChatProvider, {
+  CommonChatInput,
+  CommonChatMessage,
+  CommonChatOutput
+} from '@/chatProviders/CommonChatProvider'
+import {MessageInfo, useXChat, XRequest} from '@ant-design/x-sdk'
+import {getMessageList} from '@/services/llm/message'
+import {getConversationList} from '@/services/llm/conversation'
+import dayjs from 'dayjs'
+import {isArray, uuidV4} from '@/utils/util'
 
 type AttachmentItem = GetProp<AttachmentsProps, 'items'>[number];
 
@@ -94,29 +97,7 @@ const Index: React.FC = () => {
     {key: '24', label: '微服务链路追踪', icon: <MessageOutlined/>},
     {key: '25', label: '前端错误监控上报', icon: <MessageOutlined/>},
   ])
-  const [activeConv, setActiveConv] = useState<string>('1')
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      key: '1',
-      role: 'notice',
-      content: `# 欢迎使用 AI 助手
-
-我可以帮助你：
-- 解答技术问题
-- 编写代码
-- 解释概念
-- 分析数据
-
-请在下方输入你的问题！`,
-      timestamp: Date.now(),
-    },
-    {
-      key: '2',
-      role: 'divider',
-      content: '如何实现快速排序算法？',
-      timestamp: Date.now(),
-    }
-  ])
+  const [activeConv, setActiveConv] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [inputValue, setInputValue] = useState('')
   const [attachmentsOpen, setAttachmentsOpen] = useState(false)
@@ -124,6 +105,150 @@ const Index: React.FC = () => {
   const [recording, setRecording] = useState(false)
   const listRef = useRef<any>(null)
   const senderRef = useRef<GetRef<typeof Sender>>(null)
+  const [messageHistory, setMessageHistory] = useState<Record<string, any>>({})
+
+  const reloadMessageList = async (conversationCode: string) => {
+    let list = (await getMessageList(1, 20, {conversationCode})).rows || []
+    let msgList: React.SetStateAction<MessageInfo<CommonChatMessage>[]> = []
+    list.forEach((_: any) => {
+      msgList.unshift({
+        message: {
+          role: 'ai',
+          content: `${_.answer}`,
+          messageCode: _.messageCode,
+          attachments: _.answerAttachments,
+          answerFeedback: _.answerFeedback,
+          answerReasoning: _.answerReasoning,
+        },
+        id: `${_.messageCode}-answer`,
+        status: 'success',
+        extraInfo: {},
+      })
+      let queryContent = _.inputs || []
+      queryContent.push({type: 'text', text: _.query})
+      msgList.unshift({
+        message: {
+          role: 'my',
+          content: queryContent,
+          messageCode: _.messageCode,
+          attachments: _.attachments,
+        },
+        id: `${_.messageCode}-query`,
+        status: 'success',
+        extraInfo: {},
+      })
+    })
+
+    setMessageHistory((prev) => ({
+      ...prev,
+      [conversationCode]: msgList,
+    }))
+    return msgList
+  }
+
+  const loadConversationList = async () => {
+    let list = (await getConversationList(1, 20, {
+      channel: 'xxzx_common',
+    })).rows || []
+    if (!list.length) {
+      let newKey = uuidV4()
+      setConversations([{
+        key: newKey,
+        label: '新会话',
+        group: '今天',
+      }])
+      setActiveConv(newKey)
+      return
+    }
+
+    setConversations(list.map((_: any) => {
+      let today = new Date(dayjs().format('YYYY-MM-DD'))
+      let yesterday = dayjs(today).add(-1, 'days').toDate()
+      let group = '更早'
+      let updateTime = new Date(_.updateTime)
+      /*console.log(_, updateTime, today, yesterday)*/
+      if (updateTime >= today) {
+        group = '今天'
+      } else if (updateTime >= yesterday) {
+        group = '昨天'
+      }
+      return {
+        key: _.conversationCode,
+        label: _.title,
+        group,
+      }
+    }))
+    await reloadMessageList(list[0].conversationCode)
+    setActiveConv(list[0].conversationCode)
+  }
+
+  useEffect(() => {
+    loadConversationList()
+  }, [])
+
+  // @ts-ignore
+  const llmChatRequest = XRequest<CommonChatInput, CommonChatOutput>(`${LLM_API_BASE}/core/chat/stream`, {
+    manual: true,
+    fetch: async (baseURL, options = {}) => {
+      let headers: any = {}
+      headers['param-accessToken'] = getAccessToken()
+      if (process.env.NODE_ENV === 'development') {
+        let userStr: string = getUserCache(false)
+        userStr && (headers['user-info'] = userStr)
+      }
+      return await fetch(baseURL, {
+        ...options,
+        headers: {
+          ...headers,
+          ...options.headers // 保留原始 headers
+        },
+      })
+    }
+  })
+
+  const providerCaches = new Map<string, CommonChatProvider>()
+  const providerFactory = (conversationKey: string) => {
+    if (!providerCaches.get(conversationKey)) {
+      providerCaches.set(
+        conversationKey,
+        new CommonChatProvider({
+          request: llmChatRequest,
+        }),
+      )
+    }
+    return providerCaches.get(conversationKey)
+  }
+
+  const getDefaultMessages = (conversationKey: string) => {
+    let messages = messageHistory[conversationKey] || []
+    //console.log(2, conversationKey, messages)
+    return messages
+  }
+
+  const {messages, onRequest, setMessages, isRequesting, abort} = useXChat({
+    conversationKey: activeConv,
+    provider: providerFactory(activeConv),
+    defaultMessages: getDefaultMessages(activeConv),
+    requestFallback: (_, {error, messageInfo}) => {
+      //console.log(error, messageInfo)
+      if (error.name === 'AbortError') {
+        return {
+          content: '请求已取消',
+          role: 'ai',
+        } as CommonChatMessage
+      }
+      return {
+        content: '请求失败 ，请稍后重试!',
+        role: 'ai',
+      } as CommonChatMessage
+    },
+    requestPlaceholder: () => {
+      return {
+        content: '正在处理，请稍后。。。',
+        role: 'ai',
+      } as CommonChatMessage
+    },
+  })
 
   useEffect(() => {
     return () => {
@@ -138,115 +263,78 @@ const Index: React.FC = () => {
   const handleSend = useCallback(async (content: string) => {
     if (!content.trim() && attachmentItems.length === 0) return
 
-    try {
-      const userMessage: Message = {
-        key: Date.now().toString(),
-        role: 'my',
-        content: content || '[附件]',
-        attachments: [...attachmentItems],
-        timestamp: Date.now(),
-      }
-      setMessages((prev) => [...prev, userMessage])
-      setInputValue('')
-      setAttachmentItems([])
-      setAttachmentsOpen(false)
-      setLoading(true)
-
-      await new Promise((resolve) => setTimeout(resolve, 1500))
-
-      const assistantMessage: Message = {
-        key: (Date.now() + 1).toString(),
-        role: 'ai',
-        content: `收到你的消息：${content}
-
-## 代码示例
-
-\`\`\`javascript
-function hello() {
-  console.log("Hello, World!");
-}
-\`\`\`
-
-#### Sequence Diagram
-
-\`\`\` mermaid
-sequenceDiagram
-    participant Client
-    participant Server
-    participant Database
-
-    Client->>Server: POST /api/data
-    Server->>Database: INSERT record
-    Database-->>Server: Success
-    Server-->>Client: 201 Created
-\`\`\`
-
-### 数学公式
-
-行内公式：$E = mc^2$
-
-块级公式：
-$$
-f(x) = \\int_{-\\infty}^{\\infty} \\hat f(\\xi)\\,e^{2 \\pi i \\xi x} \\,d\\xi
-$$
-
-### 参考资料
-
-- [MDN Web Docs](https://developer.mozilla.org)<sup>1</sup>
-- [Stack Overflow](https://stackoverflow.com)<sup>2</sup>
-
-### 思考过程
-
-<think>这是一个技术问题，我将提供代码示例和详细说明。</think>
-
-### 思维链
-
-<thoughtchain>
-1. 分析用户问题，理解需求
-2. 检索相关知识点和代码示例
-3. 组织答案结构，提供详细说明
-4. 验证答案准确性
-</thoughtchain>`,
-        timestamp: Date.now(),
-      }
-      setMessages((prev) => [...prev, assistantMessage])
-      message.success('消息发送成功')
-    } catch (error) {
-      message.error('发送消息失败，请重试')
-      console.error('Send message error:', error)
-    } finally {
-      setLoading(false)
-    }
-  }, [attachmentItems, message])
-
-  const handleConversationSelect = useCallback((key: string, item?: any) => {
-    setActiveConv(key)
-    setMessages([
-      {
-        key: '1',
-        role: 'ai',
-        content: `已切换到会话：${item?.label || '新会话'}\n\n这是会话历史记录的模拟展示。`,
-        timestamp: Date.now(),
+    let messageCode = uuidV4()
+    let inputs: any[] = attachmentItems.map(item => ({
+      type: item.type + '_url',
+      [item.type + '_url']: {url: item.url}
+    }))
+    onRequest({
+      messages: [{content: inputs.concat([{type: 'text', text: content}]), role: 'my', messageCode, answerFeedback: 0}],
+      conversationCode: activeConv,
+      query: content,
+      options: {
+        channel: 'xxzx_common',
+        inputs,
+        messageCode,
+        attachments: attachmentItems
       },
-    ])
-  }, [])
+    }, {extraInfo: {}})
+
+    const conversation = conversations.find(_ => _.key === activeConv)
+    if (conversation?.label === '新会话') {
+      conversation.label = content?.slice(0, 20)
+      setConversations([...conversations])
+    }
+
+    setInputValue('')
+    setAttachmentItems([])
+    setAttachmentsOpen(false)
+  }, [attachmentItems, activeConv, conversations])
+
+  const handleConversationSelect = async (key: string, item?: any) => {
+    isRequesting && abort()
+
+    let msgList = messageHistory?.[key]
+    if (!msgList) {
+      msgList = await reloadMessageList(key)
+    }
+    setActiveConv(key)
+  }
+
+  useEffect(() => {
+    // history mock
+    if (messages?.length) {
+      setMessageHistory((prev) => ({
+        ...prev,
+        [activeConv]: messages,
+      }))
+    }
+  }, [messages])
 
   const handleNewConversation = useCallback(() => {
-    const newKey = Date.now().toString()
-    setConversations((prev) => [
-      {key: newKey, label: '新会话', icon: <MessageOutlined/>},
-      ...prev,
-    ])
-    setActiveConv(newKey)
-    setMessages([
-      {
-        key: '1',
-        role: 'ai',
-        content: '你好！我是 AI 助手，有什么可以帮助你的吗？',
-        timestamp: Date.now(),
-      },
-    ])
-  }, [])
+    if (isRequesting) {
+      message.error(
+        '请求正在处理中，请您等待处理完成再创建新的会话；如果想立即创建信息的会话，请先取消当前请求。',
+      )
+      return
+    }
+
+    if (messageHistory[activeConv]?.length) {
+      let newConversation = conversations.find((i) => i.label === '新会话')
+      if (newConversation) {
+        setActiveConv(newConversation.key)
+        return
+      }
+
+      const key = uuidV4()
+      isRequesting && abort()
+      setConversations([{key: key, label: '新会话', group: '今天'}, ...conversations])
+      setMessageHistory(prev => ({...prev, [key]: []}))
+      setActiveConv(key)
+    } else {
+      message.error('当前已是新会话，无需再次创建。')
+    }
+  }, [messageHistory])
 
   const handleAttachmentsChange: AttachmentsProps['onChange'] = ({file, fileList}) => {
     const updatedFileList = fileList.map((item) => {
@@ -322,24 +410,38 @@ $$
 
   const items: BubbleListProps['items'] = useMemo(() =>
       messages.map((item) => ({
-        key: item.key,
-        role: item.role,
-        content: item.content,
-        attachments: item.attachments,
-        loading: item.role === 'ai' && loading && item.key === messages[messages.length - 1]?.key,
+        key: item.id,
+        role: item.message.role,
+        content: item.message.content,
+        loading: item.message.role === 'ai' && loading && item.id === messages[messages.length - 1]?.id,
+        status: item.status,
+        extraInfo: {...item.extraInfo, ...item.message},
       })),
     [messages, loading, token.colorSuccess, token.colorPrimary]
   )
 
-  const memoRole: BubbleListProps['role'] = useMemo(
-    () => ({
-      ai: {
-        typing: true,
-        header: '智能助手',
-        contentRender: (content: React.ReactNode) => {
-          return (
+  const contentRender: BubbleProps['contentRender'] = (content: any, info) => {
+    if (typeof content === 'string') {
+      return (
+        <XMarkdown
+          content={content}
+          components={{
+            think: ThinkComponent,
+            code: CodeComponent,
+            sup: getSupComponent(sourceItems),
+            thoughtchain: renderThoughtChain,
+          }}
+          config={{extensions: Latex()}}
+          paragraphTag='div'
+          protectCustomTagNewlines
+        />
+      )
+    } else if (isArray(content) && content.length) {
+      return content.map((item: any, index: number) => {
+        if (item.type === 'text') {
+          return <div key={index}>
             <XMarkdown
-              content={content as string}
+              content={item.text as string}
               components={{
                 think: ThinkComponent,
                 code: CodeComponent,
@@ -347,59 +449,58 @@ $$
                 thoughtchain: renderThoughtChain,
               }}
               config={{extensions: Latex()}}
+              paragraphTag='div'
+              protectCustomTagNewlines
             />
-          )
-        },
-        loadingRender: () => (
-          <Space>
-            <Spin size='small'/>
-            {'正在生成内容，敬请等待。。。'}
-          </Space>
-        ),
-        avatar: () => <Avatar icon={<RobotOutlined/>} style={{backgroundColor: token.colorPrimary}}/>,
-        footer: ((content, info) => {
-          return <div style={{display: 'flex'}}><label><Typography.Text
-            type='secondary'>以上内容由AI生成，请注意甄别。</Typography.Text></label>
           </div>
-        }),
+        } else if (item.type === 'image_url') {
+          return <div key={index}><img src={item.image_url.url} alt=''/></div>
+        }
+        return null
+      })
+    }
+    return ''
+  }
+
+  const memoRole: BubbleListProps['role'] = useMemo(
+    () => ({
+      ai: (data) => {
+        let answerReasoning = data.extraInfo?.answerReasoning
+        return ({
+          typing: true,
+          header: answerReasoning ?
+            <Think defaultExpanded={!data.content} styles={{content: {maxHeight: '300px', overflow: 'auto'}}}
+                   title={data.content ? '思考过程' : '思考中'}>
+              <XMarkdown
+                content={answerReasoning}
+              />
+            </Think> : null,
+          contentRender,
+          loadingRender: () => (
+            <Space>
+              <Spin size='small'/>
+              {'正在生成内容，敬请等待。。。'}
+            </Space>
+          ),
+          avatar: () => <Avatar icon={<RobotOutlined/>} style={{backgroundColor: token.colorPrimary}}/>,
+          footer: ((content, info) => {
+            return <div style={{display: 'flex'}}><label><Typography.Text
+              type='secondary'>以上内容由AI生成，请注意甄别。</Typography.Text></label>
+            </div>
+          }),
+        })
       },
       user: (data) => ({
         typing: false,
         header: `User-${data.key}`,
-        contentRender: (content: React.ReactNode) => {
-          return (
-            <XMarkdown
-              content={content as string}
-              components={{
-                think: ThinkComponent,
-                code: CodeComponent,
-                sup: getSupComponent(sourceItems),
-                thoughtchain: renderThoughtChain,
-              }}
-              config={{extensions: Latex()}}
-            />
-          )
-        },
+        contentRender,
         avatar: () => <Avatar icon={<UserOutlined/>} style={{backgroundColor: token.colorSuccess}}/>,
       }),
       my: (data) => ({
         placement: 'end',
         typing: false,
         header: `我自己`,
-        contentRender: (content: React.ReactNode) => {
-          return (
-            <XMarkdown
-              content={content as string}
-              components={{
-                think: ThinkComponent,
-                code: CodeComponent,
-                sup: getSupComponent(sourceItems),
-                thoughtchain: renderThoughtChain,
-              }}
-              config={{extensions: Latex()}}
-            />
-          )
-        },
+        contentRender,
         avatar: () => <Avatar icon={<UserOutlined/>} style={{backgroundColor: token.colorSuccess}}/>,
       }),
       notice: {
@@ -467,6 +568,9 @@ $$
               value={inputValue}
               onChange={setInputValue}
               onSubmit={handleSend}
+              onCancel={async () => {
+                isRequesting && abort()
+              }}
               placeholder='请输入您的问题...'
               header={senderHeader}
               prefix={

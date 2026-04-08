@@ -9,6 +9,7 @@ export interface Conversation {
   key: string;
   label: string;
   icon?: React.ReactNode;
+  group?: string;
 }
 
 interface ConversationListProps {
