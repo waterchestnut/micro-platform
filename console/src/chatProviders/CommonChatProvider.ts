@@ -11,6 +11,7 @@ export type CommonChatInput = {
     channelCacheKey?: string;
     messageCode?: string;
     attachments?: any[];
+    enableThinking?: number;
   };
   messages?: CommonChatMessage[];
 };
@@ -65,6 +66,7 @@ class CommonChatProvider<
     let currentContent = ''
     let currentThink = ''
     let messageCode = ''
+    let tool_call_id = ''
     try {
       if (chunk.event === 'error') {
         return {
@@ -78,16 +80,17 @@ class CommonChatProvider<
         messageCode = message.messageCode
         currentThink = message?.reasoning_content || ''
         currentContent = message?.content || ''
+        tool_call_id = message?.tool_call_id || ''
       }
     } catch (error) {
       console.error(error)
     }
     /*console.log(messageCode)*/
     return {
-      content: `${originMessage?.content || ''}${currentContent}`,
+      content: tool_call_id === 'clear_answer_content' ? '' : `${originMessage?.content || ''}${currentContent}`,
       role: 'ai',
       messageCode,
-      answerReasoning:`${originMessage?.answerReasoning || ''}${currentThink}`
+      answerReasoning: `${originMessage?.answerReasoning || ''}${currentThink}`
     } as ChatMessage
   }
 }

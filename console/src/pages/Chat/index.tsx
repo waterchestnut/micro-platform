@@ -1,4 +1,4 @@
-import {useState, useRef, useMemo, useEffect, useCallback} from 'react'
+import {useState, useRef, useMemo, useEffect, useCallback, createRef} from 'react'
 import {
   Flex,
   Avatar,
@@ -42,7 +42,7 @@ import zhCN_X from '@ant-design/x/locale/zh_CN'
 import ThinkComponent from '@/pages/Chat/components/ThinkComponent'
 import CodeComponent from '@/pages/Chat/components/CodeComponent'
 import {getSupComponent} from '@/pages/Chat/components/SupComponent'
-import ConversationList, {type Conversation} from '@/pages/Chat/components/ConversationList'
+import ConversationList, {type Conversation, ConversationListAction} from '@/pages/Chat/components/ConversationList'
 import {getAccessToken, getUserCache} from '@/utils/authority'
 import CommonChatProvider, {
   CommonChatInput,
@@ -51,8 +51,6 @@ import CommonChatProvider, {
 } from '@/chatProviders/CommonChatProvider'
 import {MessageInfo, useXChat, XRequest} from '@ant-design/x-sdk'
 import {getMessageList} from '@/services/llm/message'
-import {getConversationList} from '@/services/llm/conversation'
-import dayjs from 'dayjs'
 import {isArray, uuidV4} from '@/utils/util'
 
 type AttachmentItem = GetProp<AttachmentsProps, 'items'>[number];
@@ -90,7 +88,6 @@ const useStyles = createStyles(({token, css}) => ({
 const Index: React.FC = () => {
   const {token} = theme.useToken()
   const {styles} = useStyles()
-  const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeConv, setActiveConv] = useState<string>('')
   const [inputValue, setInputValue] = useState('')
   const [attachmentsOpen, setAttachmentsOpen] = useState(false)
@@ -98,6 +95,7 @@ const Index: React.FC = () => {
   const [recording, setRecording] = useState(false)
   const listRef = useRef<any>(null)
   const senderRef = useRef<GetRef<typeof Sender>>(null)
+  const conversationListRef = createRef<ConversationListAction>()
   const [messageHistory, setMessageHistory] = useState<Record<string, any>>({})
 
   const reloadMessageList = async (conversationCode: string) => {
@@ -138,53 +136,6 @@ const Index: React.FC = () => {
     }))
     return msgList
   }
-
-  const loadConversationList = async () => {
-    let list =
-      (
-        await getConversationList(1, 20, {
-          channel: 'xxzx_common',
-        })
-      ).rows || []
-    if (!list.length) {
-      let newKey = uuidV4()
-      setConversations([
-        {
-          key: newKey,
-          label: '新会话',
-          group: '今天',
-        },
-      ])
-      setActiveConv(newKey)
-      return
-    }
-
-    setConversations(
-      list.map((_: any) => {
-        let today = new Date(dayjs().format('YYYY-MM-DD'))
-        let yesterday = dayjs(today).add(-1, 'days').toDate()
-        let group = '更早'
-        let updateTime = new Date(_.updateTime)
-        /*console.log(_, updateTime, today, yesterday)*/
-        if (updateTime >= today) {
-          group = '今天'
-        } else if (updateTime >= yesterday) {
-          group = '昨天'
-        }
-        return {
-          key: _.conversationCode,
-          label: _.title,
-          group,
-        }
-      }),
-    )
-    await reloadMessageList(list[0].conversationCode)
-    setActiveConv(list[0].conversationCode)
-  }
-
-  useEffect(() => {
-    loadConversationList()
-  }, [])
 
   const llmChatRequest = XRequest<CommonChatInput, CommonChatOutput>(
     // @ts-ignore
@@ -289,22 +240,19 @@ const Index: React.FC = () => {
             inputs,
             messageCode,
             attachments: attachmentItems,
+            enableThinking: 0
           },
         },
         {extraInfo: {}},
       )
 
-      const conversation = conversations.find((_) => _.key === activeConv)
-      if (conversation?.label === '新会话') {
-        conversation.label = content?.slice(0, 20)
-        setConversations([...conversations])
-      }
+      conversationListRef?.current?.modifyInitLabel(activeConv, content?.slice(0, 20))
 
       setInputValue('')
       setAttachmentItems([])
       setAttachmentsOpen(false)
     },
-    [attachmentItems, activeConv, conversations],
+    [attachmentItems, activeConv],
   )
 
   const handleConversationSelect = async (key: string, item?: any) => {
@@ -332,23 +280,24 @@ const Index: React.FC = () => {
       message.error(
         '请求正在处理中，请您等待处理完成再创建新的会话；如果想立即创建信息的会话，请先取消当前请求。',
       )
-      return
+      return false
     }
 
     if (messageHistory[activeConv]?.length) {
-      let newConversation = conversations.find((i) => i.label === '新会话')
+      let newConversation = conversationListRef?.current?.getConvByLabel('新会话')
       if (newConversation) {
         setActiveConv(newConversation.key)
-        return
+        return false
       }
 
       const key = uuidV4()
       isRequesting && abort()
-      setConversations([{key: key, label: '新会话', group: '今天'}, ...conversations])
       setMessageHistory((prev) => ({...prev, [key]: []}))
       setActiveConv(key)
+      return {key: key, label: '新会话', group: '今天'}
     } else {
       message.error('当前已是新会话，无需再次创建。')
+      return false
     }
   }, [messageHistory])
 
@@ -431,7 +380,7 @@ const Index: React.FC = () => {
         role: item.message.role,
         content: item.message.content,
         loading:
-          item.message.role === 'ai' &&
+          item.status === 'loading' &&
           isRequesting &&
           item.id === messages[messages.length - 1]?.id,
         status: item.status,
@@ -587,7 +536,7 @@ const Index: React.FC = () => {
     <XProvider locale={{...zhCN_X, ...zhCN}}>
       <Flex className={styles.container}>
         <ConversationList
-          conversations={conversations}
+          ref={conversationListRef}
           activeKey={activeConv}
           onConversationSelect={handleConversationSelect}
           onNewConversation={handleNewConversation}

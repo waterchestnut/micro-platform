@@ -1,9 +1,20 @@
-import {useState, useMemo, useCallback} from 'react'
+import {
+  forwardRef,
+  ForwardRefRenderFunction,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState
+} from 'react'
 import {Button, Input, Pagination, theme} from 'antd'
 import {Conversations} from '@ant-design/x'
 import {createStyles} from 'antd-style'
 import {SearchOutlined, PlusOutlined} from '@ant-design/icons'
 import Footer from '@/components/Footer'
+import {getConversationList} from '@/services/llm/conversation'
+import {uuidV4} from '@/utils/util'
+import dayjs from 'dayjs'
 
 export interface Conversation {
   key: string;
@@ -13,10 +24,15 @@ export interface Conversation {
 }
 
 interface ConversationListProps {
-  conversations: Conversation[];
+  conversations?: Conversation[];
   activeKey: string;
   onConversationSelect: (key: string, item?: any) => void;
-  onNewConversation: () => void;
+  onNewConversation: () => any;
+}
+
+export type ConversationListAction = {
+  modifyInitLabel: (conversationCode: string, label: string) => void;
+  getConvByLabel: (label: string) => Conversation | undefined;
 }
 
 const useStyles = createStyles(({token, css}) => ({
@@ -52,86 +68,146 @@ const useStyles = createStyles(({token, css}) => ({
   `,
 }))
 
-const ConversationList: React.FC<ConversationListProps> = ({
-                                                             conversations,
-                                                             activeKey,
-                                                             onConversationSelect,
-                                                             onNewConversation,
-                                                           }) => {
-  const {token} = theme.useToken()
-  const {styles} = useStyles()
-  const [searchText, setSearchText] = useState('')
-  const [currentPage, setCurrentPage] = useState(1)
-  const [pageSize, setPageSize] = useState(10)
+const ConversationList: ForwardRefRenderFunction<ConversationListAction, ConversationListProps> =
+  ({
+     activeKey,
+     onConversationSelect,
+     onNewConversation,
+   }, ref) => {
+    const [conversations, setConversations] = useState<Conversation[]>([])
+    const {token} = theme.useToken()
+    const {styles} = useStyles()
+    const [searchText, setSearchText] = useState('')
+    const [currentPage, setCurrentPage] = useState(1)
+    const [pageSize, setPageSize] = useState(10)
+    const [total, setTotal] = useState(0)
 
-  const filteredConversations = useMemo(() => {
-    if (!searchText.trim()) return conversations
-    return conversations.filter((conv) =>
-      conv.label.toLowerCase().includes(searchText.toLowerCase())
-    )
-  }, [conversations, searchText])
+    useImperativeHandle(ref, () => ({
+      modifyInitLabel: (conversationCode: string, label: string) => {
+        const conversation = conversations.find((_) => _.key === conversationCode)
+        if (conversation?.label === '新会话') {
+          conversation.label = label
+          setConversations([...conversations])
+        }
+      },
+      getConvByLabel: (label: string) => {
+        return conversations.find((i) => i.label === label)
+      }
+    }))
 
-  const paginatedConversations = useMemo(() => {
-    const start = (currentPage - 1) * pageSize
-    const end = start + pageSize
-    return filteredConversations.slice(start, end)
-  }, [filteredConversations, currentPage, pageSize])
+    const loadConversationList = async (index = 1, size = 10, keywords: string = '') => {
+      let ret = await getConversationList(index || currentPage, size || pageSize, {
+        channel: 'xxzx_common',
+        keywords
+      })
+      let list = ret.rows || []
+      if (!list.length) {
+        let newKey = uuidV4()
+        setConversations([
+          {
+            key: newKey,
+            label: '新会话',
+            group: '今天',
+          },
+        ])
+        setTotal(1)
+        onConversationSelect(newKey)
+        return
+      } else {
+        setTotal(ret.total)
+      }
 
-  const handlePageChange = useCallback((page: number, pageSize?: number) => {
-    setCurrentPage(page)
-    if (pageSize) setPageSize(pageSize)
-  }, [])
+      setConversations(
+        list.map((_: any) => {
+          let today = new Date(dayjs().format('YYYY-MM-DD'))
+          let yesterday = dayjs(today).add(-1, 'days').toDate()
+          let group = '更早'
+          let updateTime = new Date(_.updateTime)
+          /*console.log(_, updateTime, today, yesterday)*/
+          if (updateTime >= today) {
+            group = '今天'
+          } else if (updateTime >= yesterday) {
+            group = '昨天'
+          }
+          return {
+            key: _.conversationCode,
+            label: _.title,
+            group,
+          }
+        }),
+      )
+      onConversationSelect(list[0].conversationCode)
+    }
 
-  const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    setSearchText(e.target.value)
-    setCurrentPage(1)
-  }, [])
+    useEffect(() => {
+      loadConversationList()
+    }, [])
 
-  return (
-    <div className={styles.container}>
-      <div className={styles.header}>
-        <Button
-          type='dashed'
-          onClick={onNewConversation}
-          block
-          icon={<PlusOutlined/>}
-        >
-          新建会话
-        </Button>
-      </div>
-      <div className={styles.content}>
-        <Conversations
-          items={paginatedConversations}
-          activeKey={activeKey}
-          onActiveChange={onConversationSelect}
-        />
-      </div>
-      <div className={styles.footer}>
-        {filteredConversations.length > pageSize && (
-          <Pagination
-            simple
-            current={currentPage}
-            total={filteredConversations.length}
-            pageSize={pageSize}
-            onChange={handlePageChange}
-            size='small'
-            style={{justifyContent: 'center', marginTop: 8}}
-          />
-        )}
-        <div className={styles.search}>
-          <Input
-            placeholder='搜索会话'
-            prefix={<SearchOutlined/>}
-            value={searchText}
-            onChange={handleSearchChange}
-            allowClear
-            size='small'
+    const handlePageChange = useCallback((page: number, pageSize?: number) => {
+      setCurrentPage(page)
+      if (pageSize) setPageSize(pageSize)
+      loadConversationList(page, pageSize, searchText)
+    }, [searchText, pageSize])
+
+    const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+      setSearchText(e.target.value)
+    }, [])
+    const handleSearch = useCallback(() => {
+      setCurrentPage(1)
+      loadConversationList(1, pageSize, searchText)
+    }, [searchText, pageSize])
+
+    return (
+      <div className={styles.container}>
+        <div className={styles.header}>
+          <Button
+            type='dashed'
+            onClick={() => {
+              let newConv = onNewConversation()
+              if (newConv) {
+                setConversations([newConv, ...conversations])
+              }
+            }}
+            block
+            icon={<PlusOutlined/>}
+          >
+            新建会话
+          </Button>
+        </div>
+        <div className={styles.content}>
+          <Conversations
+            items={conversations}
+            activeKey={activeKey}
+            onActiveChange={onConversationSelect}
           />
         </div>
-        <Footer style={{borderTop: `1px solid ${token.colorBorder}`}} prefixCls='sidebar-footer'/>
+        <div className={styles.footer}>
+          {total > pageSize && (
+            <Pagination
+              simple
+              current={currentPage}
+              total={total}
+              pageSize={pageSize}
+              onChange={handlePageChange}
+              size='small'
+              style={{justifyContent: 'center', marginTop: 8}}
+            />
+          )}
+          <div className={styles.search}>
+            <Input
+              placeholder='搜索会话'
+              prefix={<SearchOutlined/>}
+              value={searchText}
+              onChange={handleSearchChange}
+              allowClear
+              size='small'
+              onPressEnter={handleSearch}
+            />
+          </div>
+          <Footer style={{borderTop: `1px solid ${token.colorBorder}`}} prefixCls='sidebar-footer'/>
+        </div>
       </div>
-    </div>
-  )
-}
+    )
+  }
 
-export default ConversationList
+export default forwardRef(ConversationList)
