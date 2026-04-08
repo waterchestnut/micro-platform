@@ -1,5 +1,17 @@
 import {useState, useRef, useMemo, useEffect, useCallback} from 'react'
-import {Flex, Avatar, Button, theme, message, Badge, type GetProp, type GetRef, Typography, Spin, Space} from 'antd'
+import {
+  Flex,
+  Avatar,
+  Button,
+  theme,
+  message,
+  Badge,
+  type GetProp,
+  type GetRef,
+  Typography,
+  Spin,
+  Space,
+} from 'antd'
 import {createStyles} from 'antd-style'
 import {
   Bubble,
@@ -11,9 +23,17 @@ import {
   Attachments,
   type AttachmentsProps,
   ThoughtChain,
-  type ThoughtChainItemType, FileCardProps, FileCard, BubbleProps
+  type ThoughtChainItemType,
+  FileCardProps,
+  FileCard,
+  BubbleProps,
 } from '@ant-design/x'
-import {CloudUploadOutlined, CodeOutlined, EditOutlined, CheckCircleOutlined} from '@ant-design/icons'
+import {
+  CloudUploadOutlined,
+  CodeOutlined,
+  EditOutlined,
+  CheckCircleOutlined,
+} from '@ant-design/icons'
 import {type ComponentProps, XMarkdown} from '@ant-design/x-markdown'
 import Latex from '@ant-design/x-markdown/plugins/Latex'
 import {UserOutlined, RobotOutlined, MessageOutlined, LinkOutlined} from '@ant-design/icons'
@@ -27,7 +47,7 @@ import {getAccessToken, getUserCache} from '@/utils/authority'
 import CommonChatProvider, {
   CommonChatInput,
   CommonChatMessage,
-  CommonChatOutput
+  CommonChatOutput,
 } from '@/chatProviders/CommonChatProvider'
 import {MessageInfo, useXChat, XRequest} from '@ant-design/x-sdk'
 import {getMessageList} from '@/services/llm/message'
@@ -70,35 +90,8 @@ const useStyles = createStyles(({token, css}) => ({
 const Index: React.FC = () => {
   const {token} = theme.useToken()
   const {styles} = useStyles()
-  const [conversations, setConversations] = useState<Conversation[]>([
-    {key: '1', label: '如何实现快速排序算法？', icon: <MessageOutlined/>},
-    {key: '2', label: '解释一下什么是微服务架构', icon: <MessageOutlined/>},
-    {key: '3', label: '帮我写一个 Python 脚本', icon: <MessageOutlined/>},
-    {key: '4', label: 'React Hooks 最佳实践', icon: <MessageOutlined/>},
-    {key: '5', label: 'Docker 容器化部署指南', icon: <MessageOutlined/>},
-    {key: '6', label: 'TypeScript 泛型详解', icon: <MessageOutlined/>},
-    {key: '7', label: 'MySQL 索引优化策略', icon: <MessageOutlined/>},
-    {key: '8', label: 'Redis 缓存穿透解决方案', icon: <MessageOutlined/>},
-    {key: '9', label: 'Kubernetes 集群搭建教程', icon: <MessageOutlined/>},
-    {key: '10', label: 'Webpack 打包优化技巧', icon: <MessageOutlined/>},
-    {key: '11', label: 'GraphQL vs REST API 对比', icon: <MessageOutlined/>},
-    {key: '12', label: 'JWT 认证机制实现', icon: <MessageOutlined/>},
-    {key: '13', label: '消息队列 RabbitMQ 使用指南', icon: <MessageOutlined/>},
-    {key: '14', label: 'Elasticsearch 全文检索实践', icon: <MessageOutlined/>},
-    {key: '15', label: 'CI/CD 流水线配置', icon: <MessageOutlined/>},
-    {key: '16', label: 'Nginx 反向代理配置', icon: <MessageOutlined/>},
-    {key: '17', label: 'HTTPS 证书部署流程', icon: <MessageOutlined/>},
-    {key: '18', label: 'Git 分支管理策略', icon: <MessageOutlined/>},
-    {key: '19', label: '代码审查 Checklist', icon: <MessageOutlined/>},
-    {key: '20', label: '性能监控方案对比', icon: <MessageOutlined/>},
-    {key: '21', label: '分布式锁实现方案', icon: <MessageOutlined/>},
-    {key: '22', label: '限流熔断降级策略', icon: <MessageOutlined/>},
-    {key: '23', label: '数据库读写分离实践', icon: <MessageOutlined/>},
-    {key: '24', label: '微服务链路追踪', icon: <MessageOutlined/>},
-    {key: '25', label: '前端错误监控上报', icon: <MessageOutlined/>},
-  ])
+  const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeConv, setActiveConv] = useState<string>('')
-  const [loading, setLoading] = useState(false)
   const [inputValue, setInputValue] = useState('')
   const [attachmentsOpen, setAttachmentsOpen] = useState(false)
   const [attachmentItems, setAttachmentItems] = useState<AttachmentItem[]>([])
@@ -147,37 +140,44 @@ const Index: React.FC = () => {
   }
 
   const loadConversationList = async () => {
-    let list = (await getConversationList(1, 20, {
-      channel: 'xxzx_common',
-    })).rows || []
+    let list =
+      (
+        await getConversationList(1, 20, {
+          channel: 'xxzx_common',
+        })
+      ).rows || []
     if (!list.length) {
       let newKey = uuidV4()
-      setConversations([{
-        key: newKey,
-        label: '新会话',
-        group: '今天',
-      }])
+      setConversations([
+        {
+          key: newKey,
+          label: '新会话',
+          group: '今天',
+        },
+      ])
       setActiveConv(newKey)
       return
     }
 
-    setConversations(list.map((_: any) => {
-      let today = new Date(dayjs().format('YYYY-MM-DD'))
-      let yesterday = dayjs(today).add(-1, 'days').toDate()
-      let group = '更早'
-      let updateTime = new Date(_.updateTime)
-      /*console.log(_, updateTime, today, yesterday)*/
-      if (updateTime >= today) {
-        group = '今天'
-      } else if (updateTime >= yesterday) {
-        group = '昨天'
-      }
-      return {
-        key: _.conversationCode,
-        label: _.title,
-        group,
-      }
-    }))
+    setConversations(
+      list.map((_: any) => {
+        let today = new Date(dayjs().format('YYYY-MM-DD'))
+        let yesterday = dayjs(today).add(-1, 'days').toDate()
+        let group = '更早'
+        let updateTime = new Date(_.updateTime)
+        /*console.log(_, updateTime, today, yesterday)*/
+        if (updateTime >= today) {
+          group = '今天'
+        } else if (updateTime >= yesterday) {
+          group = '昨天'
+        }
+        return {
+          key: _.conversationCode,
+          label: _.title,
+          group,
+        }
+      }),
+    )
     await reloadMessageList(list[0].conversationCode)
     setActiveConv(list[0].conversationCode)
   }
@@ -186,25 +186,28 @@ const Index: React.FC = () => {
     loadConversationList()
   }, [])
 
-  // @ts-ignore
-  const llmChatRequest = XRequest<CommonChatInput, CommonChatOutput>(`${LLM_API_BASE}/core/chat/stream`, {
-    manual: true,
-    fetch: async (baseURL, options = {}) => {
-      let headers: any = {}
-      headers['param-accessToken'] = getAccessToken()
-      if (process.env.NODE_ENV === 'development') {
-        let userStr: string = getUserCache(false)
-        userStr && (headers['user-info'] = userStr)
-      }
-      return await fetch(baseURL, {
-        ...options,
-        headers: {
-          ...headers,
-          ...options.headers // 保留原始 headers
-        },
-      })
-    }
-  })
+  const llmChatRequest = XRequest<CommonChatInput, CommonChatOutput>(
+    // @ts-ignore
+    `${LLM_API_BASE}/core/chat/stream`,
+    {
+      manual: true,
+      fetch: async (baseURL, options = {}) => {
+        let headers: any = {}
+        headers['param-accessToken'] = getAccessToken()
+        if (process.env.NODE_ENV === 'development') {
+          let userStr: string = getUserCache(false)
+          userStr && (headers['user-info'] = userStr)
+        }
+        return await fetch(baseURL, {
+          ...options,
+          headers: {
+            ...headers,
+            ...options.headers, // 保留原始 headers
+          },
+        })
+      },
+    },
+  )
 
   const providerCaches = new Map<string, CommonChatProvider>()
   const providerFactory = (conversationKey: string) => {
@@ -260,36 +263,49 @@ const Index: React.FC = () => {
     }
   }, [attachmentItems])
 
-  const handleSend = useCallback(async (content: string) => {
-    if (!content.trim() && attachmentItems.length === 0) return
+  const handleSend = useCallback(
+    async (content: string) => {
+      if (!content.trim() && attachmentItems.length === 0) return
 
-    let messageCode = uuidV4()
-    let inputs: any[] = attachmentItems.map(item => ({
-      type: item.type + '_url',
-      [item.type + '_url']: {url: item.url}
-    }))
-    onRequest({
-      messages: [{content: inputs.concat([{type: 'text', text: content}]), role: 'my', messageCode, answerFeedback: 0}],
-      conversationCode: activeConv,
-      query: content,
-      options: {
-        channel: 'xxzx_common',
-        inputs,
-        messageCode,
-        attachments: attachmentItems
-      },
-    }, {extraInfo: {}})
+      let messageCode = uuidV4()
+      let inputs: any[] = attachmentItems.map((item) => ({
+        type: item.type + '_url',
+        [item.type + '_url']: {url: item.url},
+      }))
+      onRequest(
+        {
+          messages: [
+            {
+              content: inputs.concat([{type: 'text', text: content}]),
+              role: 'my',
+              messageCode,
+              answerFeedback: 0,
+            },
+          ],
+          conversationCode: activeConv,
+          query: content,
+          options: {
+            channel: 'xxzx_common',
+            inputs,
+            messageCode,
+            attachments: attachmentItems,
+          },
+        },
+        {extraInfo: {}},
+      )
 
-    const conversation = conversations.find(_ => _.key === activeConv)
-    if (conversation?.label === '新会话') {
-      conversation.label = content?.slice(0, 20)
-      setConversations([...conversations])
-    }
+      const conversation = conversations.find((_) => _.key === activeConv)
+      if (conversation?.label === '新会话') {
+        conversation.label = content?.slice(0, 20)
+        setConversations([...conversations])
+      }
 
-    setInputValue('')
-    setAttachmentItems([])
-    setAttachmentsOpen(false)
-  }, [attachmentItems, activeConv, conversations])
+      setInputValue('')
+      setAttachmentItems([])
+      setAttachmentsOpen(false)
+    },
+    [attachmentItems, activeConv, conversations],
+  )
 
   const handleConversationSelect = async (key: string, item?: any) => {
     isRequesting && abort()
@@ -329,7 +345,7 @@ const Index: React.FC = () => {
       const key = uuidV4()
       isRequesting && abort()
       setConversations([{key: key, label: '新会话', group: '今天'}, ...conversations])
-      setMessageHistory(prev => ({...prev, [key]: []}))
+      setMessageHistory((prev) => ({...prev, [key]: []}))
       setActiveConv(key)
     } else {
       message.error('当前已是新会话，无需再次创建。')
@@ -408,16 +424,20 @@ const Index: React.FC = () => {
     },
   ]
 
-  const items: BubbleListProps['items'] = useMemo(() =>
+  const items: BubbleListProps['items'] = useMemo(
+    () =>
       messages.map((item) => ({
         key: item.id,
         role: item.message.role,
         content: item.message.content,
-        loading: item.message.role === 'ai' && loading && item.id === messages[messages.length - 1]?.id,
+        loading:
+          item.message.role === 'ai' &&
+          isRequesting &&
+          item.id === messages[messages.length - 1]?.id,
         status: item.status,
         extraInfo: {...item.extraInfo, ...item.message},
       })),
-    [messages, loading, token.colorSuccess, token.colorPrimary]
+    [messages, isRequesting, token.colorSuccess, token.colorPrimary],
   )
 
   const contentRender: BubbleProps['contentRender'] = (content: any, info) => {
@@ -439,22 +459,28 @@ const Index: React.FC = () => {
     } else if (isArray(content) && content.length) {
       return content.map((item: any, index: number) => {
         if (item.type === 'text') {
-          return <div key={index}>
-            <XMarkdown
-              content={item.text as string}
-              components={{
-                think: ThinkComponent,
-                code: CodeComponent,
-                sup: getSupComponent(sourceItems),
-                thoughtchain: renderThoughtChain,
-              }}
-              config={{extensions: Latex()}}
-              paragraphTag='div'
-              protectCustomTagNewlines
-            />
-          </div>
+          return (
+            <div key={index}>
+              <XMarkdown
+                content={item.text as string}
+                components={{
+                  think: ThinkComponent,
+                  code: CodeComponent,
+                  sup: getSupComponent(sourceItems),
+                  thoughtchain: renderThoughtChain,
+                }}
+                config={{extensions: Latex()}}
+                paragraphTag='div'
+                protectCustomTagNewlines
+              />
+            </div>
+          )
         } else if (item.type === 'image_url') {
-          return <div key={index}><img src={item.image_url.url} alt=''/></div>
+          return (
+            <div key={index}>
+              <img src={item.image_url.url} alt=''/>
+            </div>
+          )
         }
         return null
       })
@@ -466,15 +492,17 @@ const Index: React.FC = () => {
     () => ({
       ai: (data) => {
         let answerReasoning = data.extraInfo?.answerReasoning
-        return ({
+        return {
           typing: true,
-          header: answerReasoning ?
-            <Think defaultExpanded={!data.content} styles={{content: {maxHeight: '300px', overflow: 'auto'}}}
-                   title={data.content ? '思考过程' : '思考中'}>
-              <XMarkdown
-                content={answerReasoning}
-              />
-            </Think> : null,
+          header: answerReasoning ? (
+            <Think
+              defaultExpanded={!data.content}
+              styles={{content: {maxHeight: '300px', overflow: 'auto'}}}
+              title={data.content ? '思考过程' : '思考中'}
+            >
+              <XMarkdown content={answerReasoning}/>
+            </Think>
+          ) : null,
           contentRender,
           loadingRender: () => (
             <Space>
@@ -482,30 +510,43 @@ const Index: React.FC = () => {
               {'正在生成内容，敬请等待。。。'}
             </Space>
           ),
-          avatar: () => <Avatar icon={<RobotOutlined/>} style={{backgroundColor: token.colorPrimary}}/>,
-          footer: ((content, info) => {
-            return <div style={{display: 'flex'}}><label><Typography.Text
-              type='secondary'>以上内容由AI生成，请注意甄别。</Typography.Text></label>
-            </div>
-          }),
-        })
+          avatar: () => (
+            <Avatar icon={<RobotOutlined/>} style={{backgroundColor: token.colorPrimary}}/>
+          ),
+          footer: (content, info) => {
+            return (
+              <div style={{display: 'flex'}}>
+                <label>
+                  <Typography.Text type='secondary'>以上内容由AI生成，请注意甄别。</Typography.Text>
+                </label>
+              </div>
+            )
+          },
+        }
       },
       user: (data) => ({
         typing: false,
         header: `User-${data.key}`,
         contentRender,
-        avatar: () => <Avatar icon={<UserOutlined/>} style={{backgroundColor: token.colorSuccess}}/>,
+        avatar: () => (
+          <Avatar icon={<UserOutlined/>} style={{backgroundColor: token.colorSuccess}}/>
+        ),
       }),
       my: (data) => ({
         placement: 'end',
         typing: false,
         header: `我自己`,
         contentRender,
-        avatar: () => <Avatar icon={<UserOutlined/>} style={{backgroundColor: token.colorSuccess}}/>,
+        avatar: () => (
+          <Avatar icon={<UserOutlined/>} style={{backgroundColor: token.colorSuccess}}/>
+        ),
       }),
       notice: {
         variant: 'filled',
-        styles: {root: {padding: 0}, content: {display: 'flex', justifyContent: 'center', alignItems: 'center'}},
+        styles: {
+          root: {padding: 0},
+          content: {display: 'flex', justifyContent: 'center', alignItems: 'center'},
+        },
       },
     }),
     [],
@@ -565,6 +606,7 @@ const Index: React.FC = () => {
           <div className={styles.inputArea}>
             <Sender
               ref={senderRef}
+              loading={isRequesting}
               value={inputValue}
               onChange={setInputValue}
               onSubmit={handleSend}
@@ -575,7 +617,10 @@ const Index: React.FC = () => {
               header={senderHeader}
               prefix={
                 <Badge dot={attachmentItems.length > 0 && !attachmentsOpen}>
-                  <Button onClick={() => setAttachmentsOpen(!attachmentsOpen)} icon={<LinkOutlined/>}/>
+                  <Button
+                    onClick={() => setAttachmentsOpen(!attachmentsOpen)}
+                    icon={<LinkOutlined/>}
+                  />
                 </Badge>
               }
               allowSpeech={{
