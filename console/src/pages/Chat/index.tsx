@@ -55,7 +55,6 @@ import CommonChatProvider, {
 } from '@/chatProviders/CommonChatProvider'
 import {MessageInfo, useXChat, XRequest} from '@ant-design/x-sdk'
 import {getMessageList} from '@/services/llm/message'
-import {simpleUploadFile} from '@/services/doc/fileInfo'
 import {formatUploadFile, isArray, uuidV4} from '@/utils/util'
 
 type AttachmentItem = GetProp<AttachmentsProps, 'items'>[number];
@@ -611,55 +610,62 @@ const Index: React.FC = () => {
                 onRecordingChange: async (nextRecording) => {
                   if (nextRecording) {
                     try {
-                      const stream = await navigator.mediaDevices.getUserMedia({audio: true})
-                      const mediaRecorder = new MediaRecorder(stream)
-                      mediaRecorderRef.current = mediaRecorder
-                      audioChunksRef.current = []
+                      const SpeechRecognition =
+                        (window as any).SpeechRecognition ||
+                        (window as any).webkitSpeechRecognition
+                      if (!SpeechRecognition) {
+                        message.error('当前浏览器不支持语音识别功能')
+                        return
+                      }
+                      const recognition = new SpeechRecognition()
+                      recognition.lang = 'zh-CN'
+                      recognition.continuous = true
+                      recognition.interimResults = true
 
-                      mediaRecorder.ondataavailable = (event) => {
-                        if (event.data.size > 0) {
-                          audioChunksRef.current.push(event.data)
+                      let finalTranscript = ''
+
+                      recognition.onresult = (event: any) => {
+                        let interimTranscript = ''
+                        for (let i = event.resultIndex; i < event.results.length; i++) {
+                          const transcript = event.results[i][0].transcript
+                          if (event.results[i].isFinal) {
+                            finalTranscript += transcript
+                          } else {
+                            interimTranscript += transcript
+                          }
                         }
+                        console.log(finalTranscript, interimTranscript)
+                        setInputValue(finalTranscript + interimTranscript)
                       }
 
-                      mediaRecorder.onstop = async () => {
-                        const audioBlob = new Blob(audioChunksRef.current, {type: 'audio/webm'})
-                        const audioFile = new File([audioBlob], `recording_${Date.now()}.webm`, {
-                          type: 'audio/webm',
-                        })
-                        try {
-                          const res = await simpleUploadFile(audioFile)
-                          if (res?.code) {
-                            message.error(res.msg || '上传失败')
-                          }
-                          const newAttachment: AttachmentItem = {
-                            uid: `recording_${Date.now()}`,
-                            name: audioFile.name,
-                            status: res.data.code ? 'error' : 'done',
-                            type: 'audio',
-                            response: res
-                          }
-                          setAttachmentItems((prev) => [...prev, newAttachment])
-                          message.success('录音已上传')
-                        } catch (error) {
-                          message.error('录音上传失败')
+                      recognition.onerror = (event: any) => {
+                        console.error('语音识别错误:', event.error)
+                        if (event.error === 'no-speech') {
+                          message.warning('未检测到语音')
+                        } else if (event.error === 'not-allowed') {
+                          message.error('麦克风权限被拒绝')
+                        } else {
+                          message.error('语音识别出错')
                         }
-                        stream.getTracks().forEach((track) => track.stop())
+                        setRecording(false)
                       }
 
-                      mediaRecorder.start()
+                      recognition.onend = () => {
+                        console.log(finalTranscript, 'end')
+                        setRecording(false)
+                      }
+
+                      recognition.start()
+                      mediaRecorderRef.current = recognition as any
                       setRecording(true)
                     } catch (error) {
                       message.error('无法访问麦克风，请检查权限')
                     }
                   } else {
-                    if (
-                      mediaRecorderRef.current &&
-                      mediaRecorderRef.current.state === 'recording'
-                    ) {
+                    if (mediaRecorderRef.current) {
                       mediaRecorderRef.current.stop()
+                      setRecording(false)
                     }
-                    setRecording(false)
                   }
                 },
               }}
