@@ -414,6 +414,25 @@ const Index: React.FC = () => {
           item.id === messages[messages.length - 1]?.id,
         status: item.status,
         extraInfo: {...item.extraInfo, ...item.message},
+        footer: (content, info) => {
+          //console.log(info)
+          return (
+            <div>
+              {
+                info.extraInfo?.attachments?.length ?
+                  <FileCard.List items={info.extraInfo.attachments}/> : null
+              }
+              {
+                info.extraInfo?.role === 'ai' ?
+                  <div style={{display: 'flex'}}>
+                    <label>
+                      <Typography.Text type='secondary'>以上内容由AI生成，请注意甄别。</Typography.Text>
+                    </label>
+                  </div> : null
+              }
+            </div>
+          )
+        },
       })),
     [messages, isRequesting, token.colorSuccess, token.colorPrimary],
   )
@@ -491,15 +510,6 @@ const Index: React.FC = () => {
           avatar: () => (
             <Avatar icon={<RobotOutlined/>} style={{backgroundColor: token.colorPrimary}}/>
           ),
-          footer: (content, info) => {
-            return (
-              <div style={{display: 'flex'}}>
-                <label>
-                  <Typography.Text type='secondary'>以上内容由AI生成，请注意甄别。</Typography.Text>
-                </label>
-              </div>
-            )
-          },
         }
       },
       user: (data) => ({
