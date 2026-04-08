@@ -10,7 +10,8 @@ import {
   type GetRef,
   Typography,
   Spin,
-  Space, Upload,
+  Space,
+  Upload,
 } from 'antd'
 import {createStyles} from 'antd-style'
 import {
@@ -100,6 +101,8 @@ const Index: React.FC = () => {
   const listRef = useRef<any>(null)
   const senderRef = useRef<GetRef<typeof Sender>>(null)
   const conversationListRef = createRef<ConversationListAction>()
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
   const [messageHistory, setMessageHistory] = useState<Record<string, any>>({})
 
   const reloadMessageList = async (conversationCode: string) => {
@@ -230,7 +233,7 @@ const Index: React.FC = () => {
             channel: 'xxzx_common',
             inputs,
             messageCode,
-            attachments: formatUploadFile(attachmentItems).filter(_ => _.status === 'done'),
+            attachments: formatUploadFile(attachmentItems).filter((_) => _.status === 'done'),
             enableThinking: 0,
           },
         },
@@ -605,9 +608,59 @@ const Index: React.FC = () => {
               }
               allowSpeech={{
                 recording,
-                onRecordingChange: (nextRecording) => {
-                  message.info(`语音输入：${nextRecording ? '开始录音' : '停止录音'}`)
-                  setRecording(nextRecording)
+                onRecordingChange: async (nextRecording) => {
+                  if (nextRecording) {
+                    try {
+                      const stream = await navigator.mediaDevices.getUserMedia({audio: true})
+                      const mediaRecorder = new MediaRecorder(stream)
+                      mediaRecorderRef.current = mediaRecorder
+                      audioChunksRef.current = []
+
+                      mediaRecorder.ondataavailable = (event) => {
+                        if (event.data.size > 0) {
+                          audioChunksRef.current.push(event.data)
+                        }
+                      }
+
+                      mediaRecorder.onstop = async () => {
+                        const audioBlob = new Blob(audioChunksRef.current, {type: 'audio/webm'})
+                        const audioFile = new File([audioBlob], `recording_${Date.now()}.webm`, {
+                          type: 'audio/webm',
+                        })
+                        try {
+                          const res = await simpleUploadFile(audioFile)
+                          if (res?.code) {
+                            message.error(res.msg || '上传失败')
+                          }
+                          const newAttachment: AttachmentItem = {
+                            uid: `recording_${Date.now()}`,
+                            name: audioFile.name,
+                            status: res.data.code ? 'error' : 'done',
+                            type: 'audio',
+                            response: res
+                          }
+                          setAttachmentItems((prev) => [...prev, newAttachment])
+                          message.success('录音已上传')
+                        } catch (error) {
+                          message.error('录音上传失败')
+                        }
+                        stream.getTracks().forEach((track) => track.stop())
+                      }
+
+                      mediaRecorder.start()
+                      setRecording(true)
+                    } catch (error) {
+                      message.error('无法访问麦克风，请检查权限')
+                    }
+                  } else {
+                    if (
+                      mediaRecorderRef.current &&
+                      mediaRecorderRef.current.state === 'recording'
+                    ) {
+                      mediaRecorderRef.current.stop()
+                    }
+                    setRecording(false)
+                  }
                 },
               }}
               className={styles.messageContainer}
