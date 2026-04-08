@@ -10,7 +10,7 @@ import {
   type GetRef,
   Typography,
   Spin,
-  Space,
+  Space, Upload,
 } from 'antd'
 import {createStyles} from 'antd-style'
 import {
@@ -42,7 +42,10 @@ import zhCN_X from '@ant-design/x/locale/zh_CN'
 import ThinkComponent from '@/pages/Chat/components/ThinkComponent'
 import CodeComponent from '@/pages/Chat/components/CodeComponent'
 import {getSupComponent} from '@/pages/Chat/components/SupComponent'
-import ConversationList, {type Conversation, ConversationListAction} from '@/pages/Chat/components/ConversationList'
+import ConversationList, {
+  type Conversation,
+  ConversationListAction,
+} from '@/pages/Chat/components/ConversationList'
 import {getAccessToken, getUserCache} from '@/utils/authority'
 import CommonChatProvider, {
   CommonChatInput,
@@ -51,7 +54,8 @@ import CommonChatProvider, {
 } from '@/chatProviders/CommonChatProvider'
 import {MessageInfo, useXChat, XRequest} from '@ant-design/x-sdk'
 import {getMessageList} from '@/services/llm/message'
-import {isArray, uuidV4} from '@/utils/util'
+import {simpleUploadFile} from '@/services/doc/fileInfo'
+import {formatUploadFile, isArray, uuidV4} from '@/utils/util'
 
 type AttachmentItem = GetProp<AttachmentsProps, 'items'>[number];
 
@@ -204,25 +208,12 @@ const Index: React.FC = () => {
     },
   })
 
-  useEffect(() => {
-    return () => {
-      attachmentItems.forEach((item) => {
-        if (item.url?.startsWith('blob:')) {
-          URL.revokeObjectURL(item.url)
-        }
-      })
-    }
-  }, [attachmentItems])
-
   const handleSend = useCallback(
     async (content: string) => {
       if (!content.trim() && attachmentItems.length === 0) return
 
       let messageCode = uuidV4()
-      let inputs: any[] = attachmentItems.map((item) => ({
-        type: item.type + '_url',
-        [item.type + '_url']: {url: item.url},
-      }))
+      let inputs: any[] = []
       onRequest(
         {
           messages: [
@@ -239,8 +230,8 @@ const Index: React.FC = () => {
             channel: 'xxzx_common',
             inputs,
             messageCode,
-            attachments: attachmentItems,
-            enableThinking: 0
+            attachments: formatUploadFile(attachmentItems).filter(_ => _.status === 'done'),
+            enableThinking: 0,
           },
         },
         {extraInfo: {}},
@@ -301,17 +292,53 @@ const Index: React.FC = () => {
     }
   }, [messageHistory])
 
-  const handleAttachmentsChange: AttachmentsProps['onChange'] = ({file, fileList}) => {
+  const MAX_FILE_SIZE = 500 * 1024 * 1024 // 500M
+
+  const validateFile = (file: File): boolean => {
+    const allowedExtensions = [
+      '.pdf',
+      '.doc',
+      '.docx',
+      '.xls',
+      '.xlsx',
+      '.html',
+      '.htm',
+      '.md',
+      '.txt',
+      '.jpg',
+      '.jpeg',
+      '.png',
+      '.gif',
+      '.bmp',
+      '.webp',
+      '.mp3',
+      '.wav',
+      '.ogg',
+      '.aac',
+      '.mp4',
+      '.avi',
+      '.mov',
+      '.wmv',
+    ]
+    const ext = file.name.toLowerCase().substring(file.name.lastIndexOf('.'))
+    if (!allowedExtensions.includes(ext)) {
+      message.error('不支持的文件格式')
+      return false
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      message.error('文件大小不能超过500M')
+      return false
+    }
+    return true
+  }
+
+  const handleAttachmentsChange: AttachmentsProps['onChange'] = async ({file, fileList}) => {
+    //console.log(file, fileList)
+    if (file.response?.code) {
+      message.error(file.response.msg || '上传失败')
+      file.status = 'error'
+    }
     const updatedFileList = fileList.map((item) => {
-      if (item.uid === file.uid && file.status !== 'removed' && item.originFileObj) {
-        if (item.url?.startsWith('blob:')) {
-          URL.revokeObjectURL(item.url)
-        }
-        return {
-          ...item,
-          url: URL.createObjectURL(item.originFileObj),
-        }
-      }
       return item
     })
     setAttachmentItems(updatedFileList)
@@ -513,7 +540,11 @@ const Index: React.FC = () => {
       }}
     >
       <Attachments
-        beforeUpload={() => false}
+        accept='.pdf,.doc,.docx,.xls,.xlsx,.html,.htm,.md,.txt,.jpg,.jpeg,.png,.gif,.bmp,.webp,.mp3,.wav,.ogg,.aac,.mp4,.avi,.mov,.wmv'
+        beforeUpload={(file) => validateFile(file) || Upload.LIST_IGNORE}
+        // @ts-ignore
+        action={DOC_API_BASE + '/file/upload/simple'}
+        headers={{'param-accessToken': getAccessToken()}}
         items={attachmentItems}
         onChange={handleAttachmentsChange}
         placeholder={(type) =>

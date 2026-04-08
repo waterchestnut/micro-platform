@@ -26,3 +26,9 @@ export async function llmRequest<T>(relativeUrl: string, options?: { [key: strin
   const url = LLM_API_BASE + relativeUrl
   return request<ResponseStructure & T>(url, {...options})
 }
+
+export async function docRequest<T>(relativeUrl: string, options?: { [key: string]: any }) {
+  // @ts-ignore
+  const url = DOC_API_BASE + relativeUrl
+  return request<ResponseStructure & T>(url, {...options})
+}
