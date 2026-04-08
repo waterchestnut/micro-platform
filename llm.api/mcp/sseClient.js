@@ -152,7 +152,7 @@ export class SseMcpClient {
         }
 
         try {
-            logger.info(`调用 MCP 工具: ${toolName}`)
+            logger.info(`调用 MCP 工具: ${toolName} ${JSON.stringify(args)}`)
             const result = await this.client.callTool({
                 name: toolName,
                 arguments: args

@@ -171,7 +171,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         temperature: llmConfig.temperature,
         stream: true, // 启用流式输出
         // 深度思考
-        ...options.enableThinking && llmConfig.enableThinking ? llmConfig.enableThinking : {},
+        ...(options.enableThinking && llmConfig.enableThinking ? llmConfig.enableThinking : {enable_thinking: false})
     }
 
     // 合并所有可用工具（MCP工具 + Skill工具）
@@ -206,7 +206,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
 
     while (iterationCount < maxIterations) {
         iterationCount++
-        //console.log(`Iteration ${iterationCount}`)
+        //console.log(`createBody ${JSON.stringify(createBody)}`)
         let chatStream = await openai.chat.completions.create(createBody)
 
         let toolCalls = []      // 用于收集工具调用
@@ -310,14 +310,14 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                     messages.push(toolResult)
 
                     // 发送工具调用结果作为流式数据
-                    if (options.streamCallback) {
+                    /*if (options.streamCallback) {
                         options.streamCallback(JSON.stringify({
                             role: 'tool',
                             content: toolResult.content,
                             tool_call_id: toolResult.tool_call_id,
                             messageCode
                         }))
-                    }
+                    }*/
                 }
 
                 // 重置内容变量为下一次迭代做准备
