@@ -400,7 +400,9 @@ async function saveMessage(query, messageCode, messages, conversationCode, chann
             skills: options.skills
         },
         messageTokens: options.messageTokens,
-        answerTokens: options.answerTokens
+        answerTokens: options.answerTokens,
+        attachments: options.attachments,
+        answerAttachments: options.answerAttachments,
     })
 }
 
