@@ -417,7 +417,7 @@ export class SkillManager {
         sections.push('1. 首先分析用户需求，判断需要使用哪个技能')
         sections.push('2. 如果需要使用某个技能，请回复："我将使用技能：[技能名称]"')
         sections.push('3. 系统会自动加载该技能的详细说明和可用指令')
-        sections.push('4. 请严格遵守技能使用的约定，不能使用技能名称作为tool_calls回复')
+        sections.push('4. 请严格遵守技能使用的约定，执行技能的指令只能使用tool_calls的方式')
         sections.push('')
         sections.push('---')
         sections.push('')
