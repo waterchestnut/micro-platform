@@ -58,5 +58,5 @@ tags:
 带筛选条件的检索：
 
 ```
-@searchResMetas[keywords:人工智能, resType:期刊, maxCount:20]
+@searchResMetas[keywords:人工智能, resType:journal, maxCount:20]
 ```
