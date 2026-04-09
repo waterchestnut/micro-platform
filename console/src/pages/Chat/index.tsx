@@ -103,8 +103,38 @@ const Index: React.FC = () => {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
   const [messageHistory, setMessageHistory] = useState<Record<string, any>>({})
-  const speechSupported = useMemo(() => {
-    return !!(window as any).SpeechRecognition || !!(window as any).webkitSpeechRecognition
+  const [speechSupported, setSpeechSupported] = useState(false)
+  const [speechNetworkError, setSpeechNetworkError] = useState(false)
+
+  useEffect(() => {
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SpeechRecognition) {
+      setSpeechSupported(false)
+      return
+    }
+    setSpeechSupported(true)
+
+    const testRecognition = new SpeechRecognition()
+    testRecognition.lang = 'zh-CN'
+    testRecognition.continuous = true
+    testRecognition.interimResults = true
+
+    testRecognition.onerror = (event: any) => {
+      if (event.error === 'network') {
+        setSpeechNetworkError(true)
+      }
+    }
+
+    testRecognition.onend = () => {
+    }
+
+    try {
+      testRecognition.start()
+      setTimeout(() => testRecognition.stop(), 1000)
+    } catch (e) {
+      setSpeechNetworkError(true)
+    }
   }, [])
 
   const reloadMessageList = async (conversationCode: string) => {
@@ -619,7 +649,7 @@ const Index: React.FC = () => {
                 </Badge>
               }
               allowSpeech={
-                speechSupported
+                speechSupported && !speechNetworkError
                   ? {
                     recording,
                     onRecordingChange: async (nextRecording) => {
@@ -659,6 +689,9 @@ const Index: React.FC = () => {
                               message.warning('未检测到语音')
                             } else if (event.error === 'not-allowed') {
                               message.error('麦克风权限被拒绝')
+                            } else if (event.error === 'network') {
+                              message.error('网络连接失败，请检查网络后重试')
+                              setSpeechNetworkError(true)
                             } else {
                               message.error('语音识别出错')
                             }
