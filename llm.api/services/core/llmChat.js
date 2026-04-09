@@ -171,7 +171,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         temperature: llmConfig.temperature,
         stream: true, // 启用流式输出
         // 深度思考
-        ...(options.enableThinking && llmConfig.enableThinking ? llmConfig.enableThinking : {enable_thinking: false})
+        ...(options.enableThinking && llmConfig.enableThinking ? llmConfig.enableThinking : {enable_thinking: false}),
     }
 
     // 合并所有可用工具（MCP工具 + Skill工具）
@@ -205,9 +205,13 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     const maxIterations = 6
 
     while (iterationCount < maxIterations) {
+        if (options.signal?.aborted) {
+            return 'aborted'
+        }
+
         iterationCount++
         //console.log(`createBody ${JSON.stringify(createBody)}`)
-        let chatStream = await openai.chat.completions.create(createBody)
+        let chatStream = await openai.chat.completions.create(createBody, {signal: options.signal})
 
         let toolCalls = []      // 用于收集工具调用
         let currentToolCall = null
@@ -336,6 +340,10 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
 
         // 如果没有工具调用或者没有更多工具需要调用，退出循环
         break
+    }
+
+    if (options.signal?.aborted) {
+        return 'aborted'
     }
 
     let messageTokens = calcTextTokenCount(messages.map(_ => _.content).join('\n'))

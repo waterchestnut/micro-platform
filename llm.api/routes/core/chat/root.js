@@ -1,7 +1,7 @@
-import {getListResSwaggerSchema, getResSwaggerSchema} from '../../../daos/swaggerSchema/responseHandler.js'
-import {getDefaultResponseSchema} from '../../../plugins/format-reply.js'
 import {execChat} from '../../../services/core/llmChat.js'
 import {serializeSSEEvent} from '../../../tools/sse.js'
+
+const logger = llm.logger
 
 export default async function (fastify, opts) {
 
@@ -45,6 +45,15 @@ export default async function (fastify, opts) {
             tags: ['llm']
         },
     }, async function (request, reply) {
+        const controller = new AbortController()
+        const {signal} = controller
+        request.raw.socket.on('close', () => {
+            logger.info(`request closed execChat request.raw.aborted:${request.raw.aborted} request.raw.aborted:${request.raw.destroyed}`)
+            if (request.raw.destroyed) {
+                controller.abort()
+            }
+        })
+
         const stream = reply.raw
         const headers = {
             'Content-Type': 'text/event-stream; charset=utf-8',
@@ -56,7 +65,7 @@ export default async function (fastify, opts) {
         stream.writeHead(200, headers)
         try {
             await execChat(request.userInfo, request.reqParams.query, request.reqParams.conversationCode, {
-                ...request.reqParams.options, streamCallback: (content) => {
+                ...request.reqParams.options, signal, streamCallback: (content) => {
                     stream.write(serializeSSEEvent({
                         event: 'delta',
                         data: content

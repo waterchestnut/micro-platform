@@ -225,7 +225,8 @@ const Index: React.FC = () => {
       //console.log(error, messageInfo)
       if (error.name === 'AbortError') {
         return {
-          content: '请求已取消',
+          ...messageInfo.message,
+          content: messageInfo.message.content + '\n\n请求已取消',
           role: 'ai',
         } as CommonChatMessage
       }
