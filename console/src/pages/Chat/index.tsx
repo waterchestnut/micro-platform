@@ -103,6 +103,9 @@ const Index: React.FC = () => {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
   const [messageHistory, setMessageHistory] = useState<Record<string, any>>({})
+  const speechSupported = useMemo(() => {
+    return !!(window as any).SpeechRecognition || !!(window as any).webkitSpeechRecognition
+  }, [])
 
   const reloadMessageList = async (conversationCode: string) => {
     let list = (await getMessageList(1, 20, {conversationCode})).rows || []
@@ -418,18 +421,18 @@ const Index: React.FC = () => {
           //console.log(info)
           return (
             <div>
-              {
-                info.extraInfo?.attachments?.length ?
-                  <FileCard.List items={info.extraInfo.attachments}/> : null
-              }
-              {
-                info.extraInfo?.role === 'ai' ?
-                  <div style={{display: 'flex'}}>
-                    <label>
-                      <Typography.Text type='secondary'>以上内容由AI生成，请注意甄别。</Typography.Text>
-                    </label>
-                  </div> : null
-              }
+              {info.extraInfo?.attachments?.length ? (
+                <FileCard.List items={info.extraInfo.attachments}/>
+              ) : null}
+              {info.extraInfo?.role === 'ai' ? (
+                <div style={{display: 'flex'}}>
+                  <label>
+                    <Typography.Text type='secondary'>
+                      以上内容由AI生成，请注意甄别。
+                    </Typography.Text>
+                  </label>
+                </div>
+              ) : null}
             </div>
           )
         },
@@ -615,70 +618,74 @@ const Index: React.FC = () => {
                   />
                 </Badge>
               }
-              allowSpeech={{
-                recording,
-                onRecordingChange: async (nextRecording) => {
-                  if (nextRecording) {
-                    try {
-                      const SpeechRecognition =
-                        (window as any).SpeechRecognition ||
-                        (window as any).webkitSpeechRecognition
-                      if (!SpeechRecognition) {
-                        message.error('当前浏览器不支持语音识别功能')
-                        return
-                      }
-                      const recognition = new SpeechRecognition()
-                      recognition.lang = 'zh-CN'
-                      recognition.continuous = true
-                      recognition.interimResults = true
-
-                      let finalTranscript = ''
-
-                      recognition.onresult = (event: any) => {
-                        let interimTranscript = ''
-                        for (let i = event.resultIndex; i < event.results.length; i++) {
-                          const transcript = event.results[i][0].transcript
-                          if (event.results[i].isFinal) {
-                            finalTranscript += transcript
-                          } else {
-                            interimTranscript += transcript
+              allowSpeech={
+                speechSupported
+                  ? {
+                    recording,
+                    onRecordingChange: async (nextRecording) => {
+                      if (nextRecording) {
+                        try {
+                          const SpeechRecognition =
+                            (window as any).SpeechRecognition ||
+                            (window as any).webkitSpeechRecognition
+                          if (!SpeechRecognition) {
+                            message.error('当前浏览器不支持语音识别功能')
+                            return
                           }
+                          const recognition = new SpeechRecognition()
+                          recognition.lang = 'zh-CN'
+                          recognition.continuous = true
+                          recognition.interimResults = true
+
+                          let finalTranscript = ''
+
+                          recognition.onresult = (event: any) => {
+                            let interimTranscript = ''
+                            for (let i = event.resultIndex; i < event.results.length; i++) {
+                              const transcript = event.results[i][0].transcript
+                              if (event.results[i].isFinal) {
+                                finalTranscript += transcript
+                              } else {
+                                interimTranscript += transcript
+                              }
+                            }
+                            //console.log(finalTranscript, interimTranscript)
+                            setInputValue(finalTranscript + interimTranscript)
+                          }
+
+                          recognition.onerror = (event: any) => {
+                            console.error('语音识别错误:', event.error)
+                            if (event.error === 'no-speech') {
+                              message.warning('未检测到语音')
+                            } else if (event.error === 'not-allowed') {
+                              message.error('麦克风权限被拒绝')
+                            } else {
+                              message.error('语音识别出错')
+                            }
+                            setRecording(false)
+                          }
+
+                          recognition.onend = () => {
+                            //console.log(finalTranscript, 'end')
+                            setRecording(false)
+                          }
+
+                          recognition.start()
+                          mediaRecorderRef.current = recognition as any
+                          setRecording(true)
+                        } catch (error) {
+                          message.error('无法访问麦克风，请检查权限')
                         }
-                        console.log(finalTranscript, interimTranscript)
-                        setInputValue(finalTranscript + interimTranscript)
-                      }
-
-                      recognition.onerror = (event: any) => {
-                        console.error('语音识别错误:', event.error)
-                        if (event.error === 'no-speech') {
-                          message.warning('未检测到语音')
-                        } else if (event.error === 'not-allowed') {
-                          message.error('麦克风权限被拒绝')
-                        } else {
-                          message.error('语音识别出错')
+                      } else {
+                        if (mediaRecorderRef.current) {
+                          mediaRecorderRef.current.stop()
+                          setRecording(false)
                         }
-                        setRecording(false)
                       }
-
-                      recognition.onend = () => {
-                        console.log(finalTranscript, 'end')
-                        setRecording(false)
-                      }
-
-                      recognition.start()
-                      mediaRecorderRef.current = recognition as any
-                      setRecording(true)
-                    } catch (error) {
-                      message.error('无法访问麦克风，请检查权限')
-                    }
-                  } else {
-                    if (mediaRecorderRef.current) {
-                      mediaRecorderRef.current.stop()
-                      setRecording(false)
-                    }
+                    },
                   }
-                },
-              }}
+                  : false
+              }
               className={styles.messageContainer}
             />
           </div>
