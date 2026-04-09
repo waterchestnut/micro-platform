@@ -1,10 +1,12 @@
 import {AbstractChatProvider, TransformMessage, XRequestOptions} from '@ant-design/x-sdk'
 
+export const CHANNEL_COMMON = 'xxzx_common'
+
 export type CommonChatInput = {
   query: string;
   conversationCode: string;
   options?: {
-    channel?: 'xxzx_common',
+    channel?: typeof CHANNEL_COMMON;
     channelGroup?: string;
     inputs?: any[];
     cache?: number;
@@ -48,10 +50,12 @@ class CommonChatProvider<
   }
 
   transformLocalMessage(requestParams: Partial<Input>): ChatMessage[] {
-    return (requestParams.messages || [{
-      content: requestParams.query,
-      role: 'my',
-    }]) as ChatMessage[]
+    return (requestParams.messages || [
+      {
+        content: requestParams.query,
+        role: 'my',
+      },
+    ]) as ChatMessage[]
   }
 
   transformMessage(info: TransformMessage<ChatMessage, Output>): ChatMessage {
@@ -87,10 +91,13 @@ class CommonChatProvider<
     }
     /*console.log(messageCode)*/
     return {
-      content: tool_call_id === 'clear_answer_content' ? '' : `${originMessage?.content || ''}${currentContent}`,
+      content:
+        tool_call_id === 'clear_answer_content'
+          ? ''
+          : `${originMessage?.content || ''}${currentContent}`,
       role: 'ai',
       messageCode,
-      answerReasoning: `${originMessage?.answerReasoning || ''}${currentThink}`
+      answerReasoning: `${originMessage?.answerReasoning || ''}${currentThink}`,
     } as ChatMessage
   }
 }

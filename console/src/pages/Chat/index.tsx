@@ -49,9 +49,10 @@ import ConversationList, {
 } from '@/pages/Chat/components/ConversationList'
 import {getAccessToken, getUserCache} from '@/utils/authority'
 import CommonChatProvider, {
-  CommonChatInput,
-  CommonChatMessage,
-  CommonChatOutput,
+  CHANNEL_COMMON,
+  type CommonChatInput,
+  type CommonChatMessage,
+  type CommonChatOutput,
 } from '@/chatProviders/CommonChatProvider'
 import {MessageInfo, useXChat, XRequest} from '@ant-design/x-sdk'
 import {getMessageList} from '@/services/llm/message'
@@ -262,7 +263,7 @@ const Index: React.FC = () => {
           conversationCode: activeConv,
           query: content,
           options: {
-            channel: 'xxzx_common',
+            channel: CHANNEL_COMMON,
             inputs,
             messageCode,
             attachments: formatUploadFile(attachmentItems).filter((_) => _.status === 'done'),
