@@ -56,7 +56,7 @@ import CommonChatProvider, {
 } from '@/chatProviders/CommonChatProvider'
 import {MessageInfo, useXChat, XRequest} from '@ant-design/x-sdk'
 import {getMessageList} from '@/services/llm/message'
-import {formatUploadFile, isArray, uuidV4} from '@/utils/util'
+import {formatUploadFile, getDocHttpUrl, isArray, uuidV4} from '@/utils/util'
 
 type AttachmentItem = GetProp<AttachmentsProps, 'items'>[number];
 
@@ -436,6 +436,14 @@ const Index: React.FC = () => {
     },
   ]
 
+  const getFileCardType = (file: any) => {
+    let type = (file.type || '').split('/')[0]
+    if (['image', 'audio', 'video'].includes(type)) {
+      return type
+    }
+    return 'file'
+  }
+
   const items: BubbleListProps['items'] = useMemo(
     () =>
       messages.map((item) => ({
@@ -453,7 +461,11 @@ const Index: React.FC = () => {
           return (
             <div>
               {info.extraInfo?.attachments?.length ? (
-                <FileCard.List items={info.extraInfo.attachments}/>
+                <FileCard.List items={info.extraInfo.attachments.map((_: any) => ({
+                  ..._,
+                  type: getFileCardType(_),
+                  src: getDocHttpUrl(_.url)
+                }))}/>
               ) : null}
               {info.extraInfo?.role === 'ai' ? (
                 <div style={{display: 'flex'}}>
