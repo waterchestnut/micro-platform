@@ -90,6 +90,40 @@ const useStyles = createStyles(({token, css}) => ({
   `,
 }))
 
+const providerCaches = new Map<string, CommonChatProvider>()
+const providerFactory = (conversationKey: string) => {
+  if (!providerCaches.get(conversationKey)) {
+    providerCaches.set(
+      conversationKey,
+      new CommonChatProvider({
+        request: XRequest<CommonChatInput, CommonChatOutput>(
+          // @ts-ignore
+          `${LLM_API_BASE}/core/chat/stream`,
+          {
+            manual: true,
+            fetch: async (baseURL, options = {}) => {
+              let headers: any = {}
+              headers['param-accessToken'] = getAccessToken()
+              if (process.env.NODE_ENV === 'development') {
+                let userStr: string = getUserCache(false)
+                userStr && (headers['user-info'] = userStr)
+              }
+              return await fetch(baseURL, {
+                ...options,
+                headers: {
+                  ...headers,
+                  ...options.headers, // 保留原始 headers
+                },
+              })
+            },
+          },
+        ),
+      }),
+    )
+  }
+  return providerCaches.get(conversationKey)
+}
+
 const Index: React.FC = () => {
   const {token} = theme.useToken()
   const {styles} = useStyles()
@@ -175,42 +209,6 @@ const Index: React.FC = () => {
       [conversationCode]: msgList,
     }))
     return msgList
-  }
-
-  const llmChatRequest = XRequest<CommonChatInput, CommonChatOutput>(
-    // @ts-ignore
-    `${LLM_API_BASE}/core/chat/stream`,
-    {
-      manual: true,
-      fetch: async (baseURL, options = {}) => {
-        let headers: any = {}
-        headers['param-accessToken'] = getAccessToken()
-        if (process.env.NODE_ENV === 'development') {
-          let userStr: string = getUserCache(false)
-          userStr && (headers['user-info'] = userStr)
-        }
-        return await fetch(baseURL, {
-          ...options,
-          headers: {
-            ...headers,
-            ...options.headers, // 保留原始 headers
-          },
-        })
-      },
-    },
-  )
-
-  const providerCaches = new Map<string, CommonChatProvider>()
-  const providerFactory = (conversationKey: string) => {
-    if (!providerCaches.get(conversationKey)) {
-      providerCaches.set(
-        conversationKey,
-        new CommonChatProvider({
-          request: llmChatRequest,
-        }),
-      )
-    }
-    return providerCaches.get(conversationKey)
   }
 
   const getDefaultMessages = (conversationKey: string) => {

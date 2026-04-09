@@ -142,6 +142,7 @@ const TransComponent: ForwardRefRenderFunction<TransComponentAction, TransCompon
         <ProCard
           title='原文'
           ghost
+          variant='borderless'
         >
           {
             waitImgUrl ?
@@ -176,6 +177,7 @@ const TransComponent: ForwardRefRenderFunction<TransComponentAction, TransCompon
         <ProCard
           title='译文'
           ghost
+          variant='borderless'
         >
           <TextArea
             value={transText}

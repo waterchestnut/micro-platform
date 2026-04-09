@@ -227,6 +227,37 @@ const getInitData = () => {
   }
 }
 
+const providerCaches = new Map<string, LiteratureChatProvider>()
+const providerFactory = (conversationKey: string) => {
+  if (!providerCaches.get(conversationKey)) {
+    providerCaches.set(
+      conversationKey,
+      new LiteratureChatProvider({
+        //@ts-ignore
+        request: XRequest<LiteratureChatInput, LiteratureChatOutput>(`${LLM_API_BASE}/core/chat/stream`, {
+          manual: true,
+          fetch: async (baseURL, options = {}) => {
+            let headers: any = {}
+            headers['param-accessToken'] = getAccessToken()
+            if (process.env.NODE_ENV === 'development') {
+              let userStr: string = getUserCache(false)
+              userStr && (headers['user-info'] = userStr)
+            }
+            return await fetch(baseURL, {
+              ...options,
+              headers: {
+                ...headers,
+                ...options.headers // 保留原始 headers
+              },
+            })
+          }
+        }),
+      }),
+    )
+  }
+  return providerCaches.get(conversationKey)
+}
+
 const AIAnalysisComponent: ForwardRefRenderFunction<AIAnalysisComponentAction, AIAnalysisComponentProps> = (props, ref) => {
   const {sourceText, literatureInfo} = props
   const {styles} = useCopilotStyle()
@@ -388,41 +419,6 @@ const AIAnalysisComponent: ForwardRefRenderFunction<AIAnalysisComponentAction, A
       handleUserSubmit(query, inputs)
     }
   }))
-
-  // ==================== Runtime ====================
-
-  // @ts-ignore
-  const llmChatRequest = XRequest<LiteratureChatInput, LiteratureChatOutput>(`${LLM_API_BASE}/core/chat/stream`, {
-    manual: true,
-    fetch: async (baseURL, options = {}) => {
-      let headers: any = {}
-      headers['param-accessToken'] = getAccessToken()
-      if (process.env.NODE_ENV === 'development') {
-        let userStr: string = getUserCache(false)
-        userStr && (headers['user-info'] = userStr)
-      }
-      return await fetch(baseURL, {
-        ...options,
-        headers: {
-          ...headers,
-          ...options.headers // 保留原始 headers
-        },
-      })
-    }
-  })
-
-  const providerCaches = new Map<string, LiteratureChatProvider>()
-  const providerFactory = (conversationKey: string) => {
-    if (!providerCaches.get(conversationKey)) {
-      providerCaches.set(
-        conversationKey,
-        new LiteratureChatProvider({
-          request: llmChatRequest,
-        }),
-      )
-    }
-    return providerCaches.get(conversationKey)
-  }
 
   const getDefaultMessages = (conversationKey: string) => {
     let messages = messageHistory[conversationKey] || []
@@ -816,7 +812,7 @@ const AIAnalysisComponent: ForwardRefRenderFunction<AIAnalysisComponentAction, A
 
   if ([0, 1].includes(ragStatus)) {
     return (
-      <Spin tip='处理中。。。'>
+      <Spin description='处理中。。。'>
         <Alert
           style={{margin: '50px'}}
           title='文献资料正在解析，稍后解读'

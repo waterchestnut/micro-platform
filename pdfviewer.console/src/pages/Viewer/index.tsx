@@ -243,7 +243,7 @@ const Viewer: React.FC = () => {
         localFileLoading ?
           <Spin
             fullscreen
-            tip={localFileTip}
+            description={localFileTip}
           /> : null
       }
       <Splitter
