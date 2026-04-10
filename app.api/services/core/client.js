@@ -88,7 +88,9 @@ export async function addClient(curUserInfo, client) {
         clientCode: client.clientCode,
         clientName: client.clientName,
         status: 0,
-        description: client.description
+        description: client.description,
+        retUrls: client.retUrls || [],
+        clientSecret: client.clientSecret || '',
     })
     let ret = await clientDac.add(newClientInfo)
 
