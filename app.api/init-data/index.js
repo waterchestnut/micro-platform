@@ -5,7 +5,7 @@
  */
 
 import '../init.js'
-import {addClient} from '../services/core/client.js'
+import {addClient, updateClient} from '../services/core/client.js'
 
 const tools = app.tools
 
@@ -14,7 +14,7 @@ let userInfo = {
     realName: '超级管理员',
 }
 
-await addClient(userInfo, {
+/*await addClient(userInfo, {
     clientCode: 'micro',
     clientName: '主平台',
     clientSecret: tools.getUUID(),
@@ -30,7 +30,7 @@ await addClient(userInfo, {
     retUrls: ['localhost:11002', 'auth.lc.jtxuexi.com'],
     needAuthProxy: true,
     order: 2,
-    upstreams: [{host: 'micro-ucenter-api-http:12001', weight: 1}]
+    upstreams: [{host: 'micro-ucenter-api-http:80', weight: 1}]
 })
 
 await addClient(userInfo, {
@@ -40,7 +40,11 @@ await addClient(userInfo, {
     retUrls: ['localhost:11003', 'app.lc.jtxuexi.com'],
     needAuthProxy: true,
     order: 3,
-    upstreams: [{host: 'micro-app-api-http:12003', weight: 1}]
+    upstreams: [{host: 'micro-app-api-http:80', weight: 1}]
+})*/
+
+await updateClient(userInfo, 'app', {
+    upstreams: [{host: 'micro-app-api-http:80', weight: 1}]
 })
 
 console.log('done')

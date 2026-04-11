@@ -15,4 +15,4 @@ RUN ls -la && \
 COPY . /app/
 RUN uv sync
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "80", "--log-level", "warning"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80", "--log-level", "warning"]
