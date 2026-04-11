@@ -155,8 +155,8 @@ export async function checkAuth(params) {
     let data = {}
     await assignUserInfo(params, data)
     await assignClientInfo(params, data)
-console.log(JSON.stringify(data, null, 2))
-    console.log(JSON.stringify(pageConfig, null, 2))
+    logger.error(JSON.stringify(data, null, 2))
+    logger.error(JSON.stringify(pageConfig, null, 2))
     if ((pageConfig.auth && !data.userInfo) || (pageConfig.clientAuth && !data.clientInfo)) {
         // token失效
         return {...(params['no-redirect'] ? retSchema.FAIL_TOKEN_NO_REDIRECT : retSchema.FAIL_TOKEN_INVALID)}
