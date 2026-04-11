@@ -4,8 +4,13 @@ WORKDIR /app
 
 ENV PATH="/app/.venv/bin:$PATH"
 
+# 复制依赖文件到容器中
+COPY uv.lock pyproject.toml /app/
+RUN uv sync --frozen --no-install-project
+
 # 复制项目文件到容器中
 COPY . /app/
+RUN uv sync --frozen
 
 ENV PYTHONPATH=.
 
