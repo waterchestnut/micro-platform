@@ -136,20 +136,20 @@ export async function checkAuth(params) {
 
     let pageConfig = await matchPageConfig(params.path, params.method)
     if (!pageConfig) {
-        // 页面未配置时，禁止访问
-        return {...retSchema.FAIL_USER_NOAUTHORITY}
+        /*// 页面未配置时，禁止访问
+        return {...retSchema.FAIL_USER_NOAUTHORITY}*/
 
-        /*// 未配置页面时，默认登录用户即可访问
+        // 未配置页面时，允许超级管理员访问
         pageConfig = {
             path: params.path,
             method: params.method,
             prefix: '',
             auth: true,
-            clientAuth: false,
-            privs: ['all'],
+            clientAuth: true,
+            privs: [],
             clientPrivs: [],
             tags: []
-        }*/
+        }
     }
 
     let data = {}
