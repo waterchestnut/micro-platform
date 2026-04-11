@@ -145,7 +145,7 @@ export async function checkAuth(params) {
             method: params.method,
             prefix: '',
             auth: true,
-            clientAuth: true,
+            clientAuth: false,
             privs: [],
             clientPrivs: [],
             tags: []
