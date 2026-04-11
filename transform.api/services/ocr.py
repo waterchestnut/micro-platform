@@ -1,7 +1,7 @@
 import os
 from openai import OpenAI
 from configs import openai_ocr_base_url, openai_ocr_api_key, openai_ocr_model, xinference_base_url, xinference_ocr_model
-from xinference_client import RESTfulClient, Client
+from xinference_client import RESTfulClient
 
 
 def image_ocr_openai(image_url):
