@@ -163,5 +163,7 @@ export default defineConfig({
     /*文件服务地址*/
     DOC_API_BASE: process.env.DOC_API_BASE || 'http://localhost:12004',
     UPLOAD_FILE_SIZE_LIMIT: process.env.UPLOAD_FILE_SIZE_LIMIT || 500 * 1024 * 1024,
+    /*总控制台地址*/
+    PLATFORM_BASE: process.env.PLATFORM_BASE || 'http://localhost:11001',
   },
 })

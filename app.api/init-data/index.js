@@ -6,6 +6,7 @@
 
 import '../init.js'
 import {addClient, updateClient} from '../services/core/client.js'
+import {saveClientPageConfig} from '../services/core/clientPageConfig.js'
 
 const tools = app.tools
 
@@ -14,7 +15,7 @@ let userInfo = {
     realName: '超级管理员',
 }
 
-/*await addClient(userInfo, {
+await addClient(userInfo, {
     clientCode: 'micro',
     clientName: '主平台',
     clientSecret: tools.getUUID(),
@@ -33,6 +34,45 @@ await addClient(userInfo, {
     upstreams: [{host: 'micro-ucenter-api-http:80', weight: 1}]
 })
 
+await saveClientPageConfig(userInfo, 'ucenter', [
+    {
+        'name': '验证码相关接口',
+        'path': '/core/captcha*',
+        'auth': false,
+        'clientAuth': false,
+        'privs': [],
+        'clientPrivs': []
+    },
+    {
+        'name': '获取用户列表',
+        'path': '/core/user/list',
+        'auth': true,
+        'clientAuth': false,
+        'privs': [
+            'all'
+        ],
+        'clientPrivs': []
+    },
+    {
+        'name': '获取当前登录用户信息',
+        'path': '/core/user/cur*',
+        'auth': true,
+        'clientAuth': false,
+        'privs': [
+            'all'
+        ],
+        'clientPrivs': []
+    },
+    {
+        'name': '登录相关接口',
+        'path': '/core/user/auth/*',
+        'auth': false,
+        'clientAuth': false,
+        'privs': [],
+        'clientPrivs': []
+    },
+])
+
 await addClient(userInfo, {
     clientCode: 'app',
     clientName: '应用管理',
@@ -40,10 +80,6 @@ await addClient(userInfo, {
     retUrls: ['localhost:11003', 'app.lc.jtxuexi.com'],
     needAuthProxy: true,
     order: 3,
-    upstreams: [{host: 'micro-app-api-http:80', weight: 1}]
-})*/
-
-await updateClient(userInfo, 'app', {
     upstreams: [{host: 'micro-app-api-http:80', weight: 1}]
 })
 

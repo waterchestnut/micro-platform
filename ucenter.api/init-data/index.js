@@ -36,6 +36,13 @@ await addGroup({
     schemaCodes: [schemaCode],
     modulePrivCodes: ['all']
 })
+await addGroup({
+    groupName: '普通注册用户',
+    groupCode: 'general-user',
+    description: '普通注册用户用户组',
+    schemaCodes: [schemaCode],
+    modulePrivCodes: []
+})
 
 /*超级管理员账号*/
 await addUserInfo(userInfo, userInfo, schemaCode, false)

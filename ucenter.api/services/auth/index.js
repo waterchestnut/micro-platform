@@ -90,24 +90,25 @@ export async function assignClientInfo(reqParams, data) {
  * @returns {Boolean} 是否有权限操作
  */
 export function hasPriv(needPrivs, assignedPrivs) {
-    if (!needPrivs || !needPrivs.length) {
-        /*功能没有配置权限*/
-        return false
+
+    if (assignedPrivs?.includes('all')) {
+        /*超级权限访问*/
+        return true
     }
 
-    if (needPrivs.includes('all')) {
+    if (needPrivs?.includes('all')) {
         /*授权用户均能访问*/
         return true
     }
 
-    if (!assignedPrivs || !assignedPrivs.length) {
-        /*用户没有配置权限*/
+    if (!needPrivs?.length) {
+        /*功能没有配置权限*/
         return false
     }
 
-    if (assignedPrivs.includes('all')) {
-        /*超级权限访问*/
-        return true
+    if (!assignedPrivs?.length) {
+        /*用户没有配置权限*/
+        return false
     }
 
     for (let i = 0; i < needPrivs.length; i++) {

@@ -146,7 +146,8 @@ const Login: React.FC = () => {
 
         const urlParams = new URL(window.location.href).searchParams
         // 跳转逻辑保持不变 (虽然建议用 history.push)
-        location.href = urlParams.get('retUrl') || '/'
+        // @ts-ignore
+        location.href = urlParams.get('retUrl') || PLATFORM_BASE || '/'
         return
       }
       //console.log(res) // 保留 console.log
