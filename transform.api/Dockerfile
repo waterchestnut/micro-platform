@@ -8,7 +8,7 @@ ENV PYTHONPATH=.
 
 # 复制依赖文件到容器中
 COPY uv.lock pyproject.toml /app/
-RUN uv init --virtual && \
+RUN ls -la && \
     uv sync --frozen --no-install-project
 
 # 复制项目文件到容器中
