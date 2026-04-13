@@ -93,4 +93,88 @@ await addClient(userInfo, {
     }]
 })
 
+await addClient(userInfo, {
+    clientCode: 'doc',
+    clientName: '文档管理',
+    clientSecret: tools.getUUID(),
+    retUrls: ['localhost:11004', 'doc.lc.jtxuexi.com'],
+    needAuthProxy: true,
+    order: 3,
+    upstreams: [{host: 'micro-doc-api-http:80', weight: 1}],
+})
+
+await addClient(userInfo, {
+    clientCode: 'llm',
+    clientName: '大模型网关',
+    clientSecret: tools.getUUID(),
+    retUrls: ['localhost:11008', 'llm.lc.jtxuexi.com'],
+    needAuthProxy: true,
+    order: 3,
+    upstreams: [{host: 'micro-llm-api-http:80', weight: 1}],
+})
+
+await addClient(userInfo, {
+    clientCode: 'pdfviewer',
+    clientName: '文献解读器',
+    clientSecret: tools.getUUID(),
+    retUrls: ['localhost:11016', 'pdfviewer.lc.jtxuexi.com'],
+    needAuthProxy: true,
+    order: 3,
+    endpoints: [{
+        'endpointType': 'pc',
+        'visitPath': 'https://pdfviewer.lc.jtxuexi.com',
+        'status': 0,
+    }]
+})
+
+await addClient(userInfo, {
+    clientCode: 'rag',
+    clientName: '知识库',
+    clientSecret: tools.getUUID(),
+    retUrls: ['localhost:11013', 'rag.lc.jtxuexi.com'],
+    needAuthProxy: true,
+    order: 3,
+    upstreams: [{host: 'micro-rag-api-http:80', weight: 1}],
+    endpoints: [{
+        'endpointType': 'pc',
+        'visitPath': 'https://rag.lc.jtxuexi.com',
+        'status': 0,
+    }]
+})
+
+await addClient(userInfo, {
+    clientCode: 'resource',
+    clientName: '资源服务',
+    clientSecret: tools.getUUID(),
+    retUrls: ['localhost:11007', 'resource.lc.jtxuexi.com'],
+    needAuthProxy: true,
+    order: 3,
+    upstreams: [{host: 'micro-resource-api-http:80', weight: 1}],
+})
+
+await addClient(userInfo, {
+    clientCode: 'statistic',
+    clientName: '日志',
+    clientSecret: tools.getUUID(),
+    retUrls: ['localhost:11010', 'statistic.lc.jtxuexi.com'],
+    needAuthProxy: true,
+    order: 3,
+    upstreams: [{host: 'micro-statistic-api-http:80', weight: 1}],
+    endpoints: [{
+        'endpointType': 'pc',
+        'visitPath': 'https://statistic.lc.jtxuexi.com',
+        'status': 0,
+    }]
+})
+
+await addClient(userInfo, {
+    clientCode: 'transform',
+    clientName: '转换服务',
+    clientSecret: tools.getUUID(),
+    retUrls: ['localhost:11020', 'transform.lc.jtxuexi.com'],
+    needAuthProxy: true,
+    order: 3,
+    upstreams: [{host: 'micro-transform-api-http:80', weight: 1}],
+})
+
 console.log('done')
