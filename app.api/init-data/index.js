@@ -99,9 +99,30 @@ await addClient(userInfo, {
     clientSecret: tools.getUUID(),
     retUrls: ['localhost:11004', 'doc.lc.jtxuexi.com'],
     needAuthProxy: true,
-    order: 3,
+    order: 4,
     upstreams: [{host: 'micro-doc-api-http:80', weight: 1}],
 })
+
+await saveClientPageConfig(userInfo, 'doc', [
+    {
+        "name": "文件上传",
+        "path": "/file/upload/*",
+        "auth": true,
+        "clientAuth": false,
+        "privs": [
+            "all"
+        ],
+        "clientPrivs": []
+    },
+    {
+        "name": "文件下载",
+        "path": "/file/download/*",
+        "auth": false,
+        "clientAuth": false,
+        "privs": [],
+        "clientPrivs": []
+    }
+])
 
 await addClient(userInfo, {
     clientCode: 'llm',
@@ -109,7 +130,7 @@ await addClient(userInfo, {
     clientSecret: tools.getUUID(),
     retUrls: ['localhost:11008', 'llm.lc.jtxuexi.com'],
     needAuthProxy: true,
-    order: 3,
+    order: 5,
     upstreams: [{host: 'micro-llm-api-http:80', weight: 1}],
 })
 
@@ -119,7 +140,7 @@ await addClient(userInfo, {
     clientSecret: tools.getUUID(),
     retUrls: ['localhost:11016', 'pdfviewer.lc.jtxuexi.com'],
     needAuthProxy: true,
-    order: 3,
+    order: 6,
     endpoints: [{
         'endpointType': 'pc',
         'visitPath': 'https://pdfviewer.lc.jtxuexi.com',
@@ -133,7 +154,7 @@ await addClient(userInfo, {
     clientSecret: tools.getUUID(),
     retUrls: ['localhost:11013', 'rag.lc.jtxuexi.com'],
     needAuthProxy: true,
-    order: 3,
+    order: 7,
     upstreams: [{host: 'micro-rag-api-http:80', weight: 1}],
     endpoints: [{
         'endpointType': 'pc',
@@ -148,7 +169,7 @@ await addClient(userInfo, {
     clientSecret: tools.getUUID(),
     retUrls: ['localhost:11007', 'resource.lc.jtxuexi.com'],
     needAuthProxy: true,
-    order: 3,
+    order: 8,
     upstreams: [{host: 'micro-resource-api-http:80', weight: 1}],
 })
 
@@ -158,7 +179,7 @@ await addClient(userInfo, {
     clientSecret: tools.getUUID(),
     retUrls: ['localhost:11010', 'statistic.lc.jtxuexi.com'],
     needAuthProxy: true,
-    order: 3,
+    order: 9,
     upstreams: [{host: 'micro-statistic-api-http:80', weight: 1}],
     endpoints: [{
         'endpointType': 'pc',
@@ -173,7 +194,7 @@ await addClient(userInfo, {
     clientSecret: tools.getUUID(),
     retUrls: ['localhost:11020', 'transform.lc.jtxuexi.com'],
     needAuthProxy: true,
-    order: 3,
+    order: 10,
     upstreams: [{host: 'micro-transform-api-http:80', weight: 1}],
 })
 
