@@ -59,10 +59,9 @@ const History: React.FC = () => {
           ghost: true,
         }}
         pagination={{
-          defaultPageSize: 8,
+          defaultPageSize: 10,
           showSizeChanger: false,
         }}
-        showActions='always'
         rowSelection={false}
         itemLayout='vertical'
         onItem={(record: any) => {
@@ -75,10 +74,11 @@ const History: React.FC = () => {
             },
           }
         }}
-        metas={{
-          title: {
+        columns={[
+          {
+            dataIndex: 'keyword',
+            listSlot: 'title',
             key: 'keyword',
-            // @ts-ignore
             colSize: 3,
             fieldProps: {placeholder: '请输入资源的名称、作者、关键词查询'},
             render: (doc, record) => {
@@ -93,7 +93,8 @@ const History: React.FC = () => {
               </div>
             }
           },
-          content: {
+          {
+            listSlot: 'content',
             render: (dom, record) => {
               let publish = []
               if (record.publishDate) {
@@ -126,13 +127,15 @@ const History: React.FC = () => {
             },
             search: false
           },
-          description: {
+          {
+            listSlot: 'description',
             search: false,
             render: (dom, record) => (
               record.keywords?.map((_: string) => (<Tag key={_}>{_}</Tag>))
             ),
           },
-          actions: {
+          {
+            listSlot: 'actions',
             render: (dom, record) => {
               let stat = stats.find((item: any) => item.channel === 'pdfviewer_literature' && item.channelGroup === record.resCode)
               /*console.log(stats, stat)*/
@@ -182,7 +185,7 @@ const History: React.FC = () => {
               )
             },
           },
-        }}
+        ]}
         search={{}}
         rowKey='resCode'
         headerTitle=''

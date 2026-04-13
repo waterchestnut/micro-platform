@@ -9,9 +9,6 @@ import {createStyles} from 'antd-style'
 const useStyles = createStyles(({token}) => {
   return {
     container: {
-      '.ant-pro-list-row-card': {
-        marginBottom: 0,
-      }
     },
   }
 })
@@ -29,12 +26,11 @@ const Home: React.FC = () => {
           ghost: true,
         }}
         pagination={{
-          defaultPageSize: 8,
+          defaultPageSize: 10,
           showSizeChanger: false,
         }}
-        showActions='always'
         rowSelection={false}
-        grid={{gutter: 16, column: 4}}
+        itemLayout='vertical'
         onItem={(record: any) => {
           return {
             onMouseEnter: () => {
@@ -45,25 +41,27 @@ const Home: React.FC = () => {
             },
           }
         }}
-        metas={{
-          title: {
+        columns={[
+          {
+            dataIndex: 'keyword',
+            listSlot: 'title',
             key: 'keyword',
-            // @ts-ignore
             colSize: 3,
             fieldProps: {placeholder: '请输入资源的名称、作者、关键词查询'},
             render: (doc, record) => {
-              return <div><Tooltip placement='leftBottom' title={record.title}><span>{record.title}</span></Tooltip></div>
+              return <div>
+                <Tag color='#5BD8A6'
+                     style={{marginRight: '8px'}}>{ResTypeEnum.toLabel(record.resType)}</Tag>
+                <a
+                  onClick={() => {
+                    history.push(`/viewer/${record.resCode}`)
+                  }}
+                >{record.title}</a>
+              </div>
             }
           },
-          avatar: {
-            search: false,
-            render: (doc, record) => {
-              return (
-                <Tag color='#5BD8A6' style={{marginRight: '8px'}}>{ResTypeEnum.toLabel(record.resType)}</Tag>
-              )
-            }
-          },
-          content: {
+          {
+            listSlot: 'content',
             render: (dom, record) => {
               let publish = []
               if (record.publishDate) {
@@ -99,18 +97,7 @@ const Home: React.FC = () => {
             },
             search: false
           },
-          actions: {
-            cardActionProps: 'actions',
-            render: (dom, record) => (
-              [<a
-                key='read'
-                onClick={() => {
-                  history.push(`/viewer/${record.resCode}`)
-                }}
-              >全文解读</a>]
-            ),
-          },
-        }}
+        ]}
         search={{}}
         rowKey='resCode'
         headerTitle=''
