@@ -31,7 +31,12 @@ await addClient(userInfo, {
     retUrls: ['localhost:11002', 'auth.lc.jtxuexi.com'],
     needAuthProxy: true,
     order: 2,
-    upstreams: [{host: 'micro-ucenter-api-http:80', weight: 1}]
+    upstreams: [{host: 'micro-ucenter-api-http:80', weight: 1}],
+    endpoints: [{
+        'endpointType': 'pc',
+        'visitPath': 'https://auth.lc.jtxuexi.com',
+        'status': 0,
+    }]
 })
 
 await saveClientPageConfig(userInfo, 'ucenter', [
@@ -80,7 +85,12 @@ await addClient(userInfo, {
     retUrls: ['localhost:11003', 'app.lc.jtxuexi.com'],
     needAuthProxy: true,
     order: 3,
-    upstreams: [{host: 'micro-app-api-http:80', weight: 1}]
+    upstreams: [{host: 'micro-app-api-http:80', weight: 1}],
+    endpoints: [{
+        'endpointType': 'pc',
+        'visitPath': 'https://app.lc.jtxuexi.com',
+        'status': 0,
+    }]
 })
 
 console.log('done')
