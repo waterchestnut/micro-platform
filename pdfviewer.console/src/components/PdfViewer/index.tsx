@@ -69,7 +69,7 @@ export default function PDFViewer(props: PDFViewerProps) {
           type: 'container',
           target: containerRef.current!,
           worker: true,
-          wasmUrl: `${viewerBaseUrl}/pdfium.wasm`,
+          wasmUrl: `${viewerBaseUrl}/pdfium.wasm?v=2-14-0-1`,
           annotations: {annotationAuthor: currentUser?.realName || '匿名用户'},
           documentManager: {
             maxDocuments: 5,
