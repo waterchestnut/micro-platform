@@ -21,7 +21,7 @@ export default [
       {
         path: '/home',
         name: 'home',
-        icon: 'home',
+        icon: 'dashboard',
         access: 'normalRouteFilter',
         authority: ['all'],
         component: './Home',
