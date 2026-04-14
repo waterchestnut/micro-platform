@@ -206,6 +206,11 @@ await addClient(userInfo, {
     needAuthProxy: true,
     order: 4,
     upstreams: [{host: 'micro-pptonline-api-http:80', weight: 1}],
+    endpoints: [{
+        'endpointType': 'pc',
+        'visitPath': 'https://pptonline-m.lc.jtxuexi.com',
+        'status': 0,
+    }]
 })
 
 await saveClientPageConfig(userInfo, 'pptonline', [
