@@ -58,7 +58,7 @@
     "antd-style": "^4.1.0",
     "classnames": "^2.5.1",
     "dayjs": "^1.11.20",
-    "embedpdf-snippet-i18n": "^2.4.1-1",
+    "embedpdf-snippet-i18n": "^2.14.0-1",
     "lodash": "^4.17.23",
     "mime": "^4.1.0",
     "moment": "^2.30.1",
