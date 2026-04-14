@@ -105,22 +105,22 @@ await addClient(userInfo, {
 
 await saveClientPageConfig(userInfo, 'doc', [
     {
-        "name": "文件上传",
-        "path": "/file/upload/*",
-        "auth": true,
-        "clientAuth": false,
-        "privs": [
-            "all"
+        'name': '文件上传',
+        'path': '/file/upload/!*',
+        'auth': true,
+        'clientAuth': false,
+        'privs': [
+            'all'
         ],
-        "clientPrivs": []
+        'clientPrivs': []
     },
     {
-        "name": "文件下载",
-        "path": "/file/download/*",
-        "auth": false,
-        "clientAuth": false,
-        "privs": [],
-        "clientPrivs": []
+        'name': '文件下载',
+        'path': '/file/download/!*',
+        'auth': false,
+        'clientAuth': false,
+        'privs': [],
+        'clientPrivs': []
     }
 ])
 
@@ -197,5 +197,48 @@ await addClient(userInfo, {
     order: 10,
     upstreams: [{host: 'micro-transform-api-http:80', weight: 1}],
 })
+
+await addClient(userInfo, {
+    clientCode: 'pptonline',
+    clientName: '在线课件',
+    clientSecret: tools.getUUID(),
+    retUrls: ['localhost:11005', 'pptonline-m.lc.jtxuexi.com', 'localhost:15173', 'pptonline.lc.jtxuexi.com'],
+    needAuthProxy: true,
+    order: 4,
+    upstreams: [{host: 'micro-pptonline-api-http:80', weight: 1}],
+})
+
+await saveClientPageConfig(userInfo, 'pptonline', [
+    {
+        'name': '课件llm接口',
+        'path': '/llm/*',
+        'auth': true,
+        'clientAuth': false,
+        'privs': [
+            'all'
+        ],
+        'clientPrivs': []
+    },
+    {
+        'name': '课件接口',
+        'path': '/ppt*',
+        'auth': true,
+        'clientAuth': false,
+        'privs': [
+            'all'
+        ],
+        'clientPrivs': []
+    },
+    {
+        'name': 'AI工具接口',
+        'path': '/tools/*',
+        'auth': true,
+        'clientAuth': false,
+        'privs': [
+            'all'
+        ],
+        'clientPrivs': []
+    }
+])
 
 console.log('done')
