@@ -51,7 +51,8 @@ export default {
             password: process.env['KAFKA_SASL_PASSWORD']
         },
         retry: {
-            retries: 8
+            retries: true,
+            retryDelay: 3000
         },
         autocreateTopics: true,
         /** 消息组相关配置 */
