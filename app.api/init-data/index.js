@@ -102,6 +102,64 @@ await addClient(userInfo, {
     }]
 })
 
+await addPriv(userInfo, {
+    modulePrivCode: 'app-ipmiclient-browse',
+    modulePrivName: '全部的应用管理',
+    clientCode: 'app',
+    moduleCode: 'app-main',
+    privVerb: 'browse'
+})
+
+await addPriv(userInfo, {
+    modulePrivCode: 'app-myclient-browse',
+    modulePrivName: '我的应用',
+    clientCode: 'app',
+    moduleCode: 'app-main',
+    privVerb: 'browse'
+})
+
+await saveClientPageConfig(userInfo, 'app', [
+    {
+        "name": "公开接口",
+        "path": "/public-bin/*",
+        "auth": false,
+        "clientAuth": false,
+        "privs": [],
+        "clientPrivs": []
+    },
+    {
+        "name": "创建应用",
+        "path": "/core/client/add",
+        "auth": true,
+        "clientAuth": false,
+        "privs": [
+            "app-ipmiclient-browse",
+            "app-myclient-browse"
+        ],
+        "clientPrivs": []
+    },
+    {
+        "name": "我的应用管理",
+        "path": "/core/client-my/*",
+        "auth": true,
+        "clientAuth": false,
+        "privs": [
+            "app-myclient-browse"
+        ],
+        "clientPrivs": []
+    },
+    {
+        "name": "全部应用管理",
+        "path": "/core/client/ipmi*",
+        "auth": true,
+        "clientAuth": false,
+        "privs": [
+            "app-ipmiclient-browse"
+        ],
+        "clientPrivs": []
+    }
+])
+
 await addClient(userInfo, {
     clientCode: 'doc',
     clientName: '文档管理',
