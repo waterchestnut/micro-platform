@@ -434,44 +434,87 @@ await addClient(userInfo, {
     }]
 })
 
+await addPriv(userInfo, {
+    modulePrivCode: 'pptonline-ppt-ipmi',
+    modulePrivName: '课件管理',
+    clientCode: 'pptonline',
+    moduleCode: 'pptonline-main',
+    privVerb: 'browse'
+})
+
+await addPriv(userInfo, {
+    modulePrivCode: 'pptonline-ppt-my',
+    modulePrivName: '我的课件',
+    clientCode: 'pptonline',
+    moduleCode: 'pptonline-main',
+    privVerb: 'browse'
+})
+
+await addPriv(userInfo, {
+    modulePrivCode: 'pptonline-tmpl-ipmi',
+    modulePrivName: '模板管理',
+    clientCode: 'pptonline',
+    moduleCode: 'pptonline-main',
+    privVerb: 'browse'
+})
+
+await addPriv(userInfo, {
+    modulePrivCode: 'pptonline-tmpl-my',
+    modulePrivName: '我的模板',
+    clientCode: 'pptonline',
+    moduleCode: 'pptonline-main',
+    privVerb: 'browse'
+})
+
 await saveClientPageConfig(userInfo, 'pptonline', [
     {
-        'name': '公开接口',
-        'path': '/public-bin/*',
-        'auth': false,
-        'clientAuth': false,
-        'privs': [],
-        'clientPrivs': []
+        "name": "公开接口",
+        "path": "/public-bin/*",
+        "auth": false,
+        "clientAuth": false,
+        "privs": [],
+        "clientPrivs": []
     },
     {
-        'name': '课件llm接口',
-        'path': '/llm/*',
-        'auth': true,
-        'clientAuth': false,
-        'privs': [
-            'all'
+        "name": "课件llm接口",
+        "path": "/llm/*",
+        "auth": true,
+        "clientAuth": false,
+        "privs": [
+            "all"
         ],
-        'clientPrivs': []
+        "clientPrivs": []
     },
     {
-        'name': '课件接口',
-        'path': '/ppt*',
-        'auth': true,
-        'clientAuth': false,
-        'privs': [
-            'all'
+        "name": "课件管理接口",
+        "path": "/ppt/ipmi*",
+        "auth": true,
+        "clientAuth": false,
+        "privs": [
+            "pptonline-tmpl-ipmi",
+            "pptonline-ppt-ipmi"
         ],
-        'clientPrivs': []
+        "clientPrivs": []
     },
     {
-        'name': 'AI工具接口',
-        'path': '/tools/*',
-        'auth': true,
-        'clientAuth': false,
-        'privs': [
-            'all'
+        "name": "课件通用接口",
+        "path": "/ppt*",
+        "auth": true,
+        "clientAuth": false,
+        "privs": [
+            "all"
         ],
-        'clientPrivs': []
+        "clientPrivs": []
+    },
+    {
+        "name": "AI工具接口",
+        "path": "/tools/*",
+        "auth": true,
+        "clientAuth": false,
+        "privs": [
+            "all"
+        ],
+        "clientPrivs": []
     }
 ])
 
