@@ -151,6 +151,45 @@ await addClient(userInfo, {
     upstreams: [{host: 'micro-llm-api-http:80', weight: 1}],
 })
 
+await addPriv(userInfo, {
+    modulePrivCode: 'llm-skill-ipmi',
+    modulePrivName: '技能管理',
+    clientCode: 'llm',
+    moduleCode: 'llm-main',
+    privVerb: 'browse'
+})
+
+await saveClientPageConfig(userInfo, 'llm', [
+    {
+        "name": "公开接口",
+        "path": "/public-bin/*",
+        "auth": false,
+        "clientAuth": false,
+        "privs": [],
+        "clientPrivs": []
+    },
+    {
+        "name": "大模型远程技能管理",
+        "path": "/core/grpc-skill/ipmi/*",
+        "auth": true,
+        "clientAuth": false,
+        "privs": [
+            "llm-skill-ipmi"
+        ],
+        "clientPrivs": []
+    },
+    {
+        "name": "基础服务",
+        "path": "/core/*",
+        "auth": true,
+        "clientAuth": false,
+        "privs": [
+            "all"
+        ],
+        "clientPrivs": []
+    }
+])
+
 await addClient(userInfo, {
     clientCode: 'pdfviewer',
     clientName: '文献解读器',
@@ -228,7 +267,6 @@ await saveClientPageConfig(userInfo, 'resource', [
         'clientPrivs': []
     }
 ])
-
 
 await addClient(userInfo, {
     clientCode: 'statistic',
