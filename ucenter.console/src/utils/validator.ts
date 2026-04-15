@@ -16,7 +16,7 @@ export const socialCreditCodePattern = /[0-9A-HJ-NPQRTUWXY]{2}\d{6}[0-9A-HJ-NPQR
 
 export const urlPattern=/^(https?|ftp|file):\/\/[-A-Za-z0-9+&@#/%?=~_|!:,.;]+[-A-Za-z0-9+&@#/%=~_|]$/
 
-export const domainPattern=/^([a-zA-Z0-9-]+\.)*[a-z]+(:[0-9]+)?$/
+export const domainPattern=/^([a-zA-Z0-9-]+\.)*[a-z0-9-]+(:[0-9]+)?$/
 
 export const checkPasswordComplexity = (password: string) => {
   const userPwdRuleConfig = {
@@ -80,7 +80,7 @@ export const checkPasswordComplexity = (password: string) => {
     }
   }
   res.level = level >= userPwdRuleConfig.minRequireLevel;
-  
+
   // 返回结果，包含 success 和 message
   const success = res.lengthRegex && !res.invalidRegex && res.level && res.requiredIsValid;
   let message = '';
@@ -93,6 +93,6 @@ export const checkPasswordComplexity = (password: string) => {
   } else if (!res.requiredIsValid) {
     message = '密码不符合规则要求';
   }
-  
+
   return { ...res, success, message };
 };

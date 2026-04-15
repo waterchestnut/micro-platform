@@ -16,7 +16,7 @@ export const socialCreditCodePattern = /[0-9A-HJ-NPQRTUWXY]{2}\d{6}[0-9A-HJ-NPQR
 
 export const urlPattern=/^(https?|ftp|file):\/\/[-A-Za-z0-9+&@#/%?=~_|!:,.;]+[-A-Za-z0-9+&@#/%=~_|]$/
 
-export const domainPattern=/^([a-zA-Z0-9-]+\.)*[a-z]+(:[0-9]+)?$/
+export const domainPattern=/^([a-zA-Z0-9-]+\.)*[a-z0-9-]+(:[0-9]+)?$/
 
 export const checkPasswordComplexity = (password: string) => {
   const userPwdRuleConfig = {
