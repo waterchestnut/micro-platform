@@ -277,6 +277,74 @@ await addClient(userInfo, {
     }]
 })
 
+await addPriv(userInfo, {
+    modulePrivCode: 'rag-ipmirag-browse',
+    modulePrivName: '知识库管理',
+    clientCode: 'rag',
+    moduleCode: 'rag-main',
+    privVerb: 'browse'
+})
+
+await addPriv(userInfo, {
+    modulePrivCode: 'rag-myrag',
+    modulePrivName: '我的知识库',
+    clientCode: 'rag',
+    moduleCode: 'rag-main',
+    privVerb: 'browse'
+})
+
+await saveClientPageConfig(userInfo, 'rag', [
+    {
+        "name": "公开接口",
+        "path": "/public-bin/*",
+        "auth": false,
+        "clientAuth": false,
+        "privs": [],
+        "clientPrivs": []
+    },
+    {
+        "name": "添加知识库",
+        "path": "/core/rag-info/add",
+        "auth": true,
+        "clientAuth": false,
+        "privs": [
+            "rag-myrag",
+            "rag-ipmirag-browse"
+        ],
+        "clientPrivs": []
+    },
+    {
+        "name": "知识库管理接口",
+        "path": "/core/rag-info/ipmi*",
+        "auth": true,
+        "clientAuth": false,
+        "privs": [
+            "rag-ipmirag-browse"
+        ],
+        "clientPrivs": []
+    },
+    {
+        "name": "我的知识库接口",
+        "path": "/core/rag-my/*",
+        "auth": true,
+        "clientAuth": false,
+        "privs": [
+            "rag-myrag"
+        ],
+        "clientPrivs": []
+    },
+    {
+        "name": "知识库召回检索",
+        "path": "/core/rag-search/*",
+        "auth": true,
+        "clientAuth": false,
+        "privs": [
+            "all"
+        ],
+        "clientPrivs": []
+    }
+])
+
 await addClient(userInfo, {
     clientCode: 'resource',
     clientName: '资源服务',
