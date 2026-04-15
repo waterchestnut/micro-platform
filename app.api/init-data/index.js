@@ -42,6 +42,14 @@ await addClient(userInfo, {
 
 await saveClientPageConfig(userInfo, 'ucenter', [
     {
+        'name': '公开接口',
+        'path': '/public-bin/*',
+        'auth': false,
+        'clientAuth': false,
+        'privs': [],
+        'clientPrivs': []
+    },
+    {
         'name': '验证码相关接口',
         'path': '/core/captcha*',
         'auth': false,
@@ -105,6 +113,14 @@ await addClient(userInfo, {
 })
 
 await saveClientPageConfig(userInfo, 'doc', [
+    {
+        'name': '公开接口',
+        'path': '/public-bin/*',
+        'auth': false,
+        'clientAuth': false,
+        'privs': [],
+        'clientPrivs': []
+    },
     {
         'name': '文件上传',
         'path': '/file/upload/!*',
@@ -184,6 +200,14 @@ await addPriv(userInfo, {
 
 await saveClientPageConfig(userInfo, 'resource', [
     {
+        'name': '公开接口',
+        'path': '/public-bin/*',
+        'auth': false,
+        'clientAuth': false,
+        'privs': [],
+        'clientPrivs': []
+    },
+    {
         'name': '资源管理',
         'path': '/core/res-info/ipmi/*',
         'auth': true,
@@ -247,6 +271,14 @@ await addClient(userInfo, {
 })
 
 await saveClientPageConfig(userInfo, 'pptonline', [
+    {
+        'name': '公开接口',
+        'path': '/public-bin/*',
+        'auth': false,
+        'clientAuth': false,
+        'privs': [],
+        'clientPrivs': []
+    },
     {
         'name': '课件llm接口',
         'path': '/llm/*',
