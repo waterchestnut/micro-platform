@@ -8,7 +8,7 @@ import {resourceRequest} from '@/services/request'
 
 /** 获取待阅读的资源文献列表 */
 export async function getToReadResList(pageIndex = 1, pageSize = 10, filter = {}, options: API.ListOptions = {}) {
-  let ret = await resourceRequest('/core/res-info/ipmi/list', {
+  let ret = await resourceRequest('/core/res-info/list', {
     method: 'POST',
     data: {filter: {manageType: 'platform', ...filter}, pageIndex, pageSize, options}
   })

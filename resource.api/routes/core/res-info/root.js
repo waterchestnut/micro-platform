@@ -32,4 +32,36 @@ export default async function (fastify, opts) {
     }, async function (request, reply) {
         return await resInfoService.addResInfo(request.userInfo, request.reqParams)
     })
+
+    fastify.post('/list', {
+        schema: {
+            description: '获取资源列表',
+            summary: '通用获取资源列表',
+            body: {
+                type: 'object',
+                properties: {
+                    filter: {type: 'object'},
+                    pageIndex: {type: 'number'},
+                    pageSize: {type: 'number'},
+                    options: {
+                        type: 'object',
+                        properties: {
+                            total: {type: 'number', description: '已知总数'},
+                            sort: {
+                                type: 'object',
+                                description: '1:正序，-1：倒序',
+                                additionalProperties: {type: 'number', enum: [1, -1]}
+                            },
+                        }
+                    }
+                }
+            },
+            tags: ['res-ipmi'],
+            response: {
+                default: {...getPageListResSwaggerSchema(resInfoSchema)}
+            }
+        }
+    }, async function (request, reply) {
+        return await resInfoService.getResInfos(request.reqParams.filter, request.reqParams.pageIndex, request.reqParams.pageSize, request.reqParams.options)
+    })
 }
