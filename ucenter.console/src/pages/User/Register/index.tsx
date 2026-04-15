@@ -101,7 +101,7 @@ const Register: React.FC = () => {
         successMessage('注册成功！请登录')
         // 跳转到登录页
         setTimeout(() => {
-          history.push('/user/login')
+          history.replace(`/user/login${history.location.search}`)
         }, 1500)
         return
       }
@@ -497,7 +497,7 @@ const Register: React.FC = () => {
             >
               <a
                 onClick={() => {
-                  history.push('/user/login')
+                  history.replace(`/user/login${history.location.search}`)
                 }}
               >
                 已有账号？去登录

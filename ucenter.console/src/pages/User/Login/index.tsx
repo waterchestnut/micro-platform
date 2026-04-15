@@ -635,7 +635,7 @@ const Login: React.FC = () => {
             </ProFormCheckbox>*/}
               <a
                 onClick={() => {
-                  history.push('/user/register')
+                  history.replace(`/user/register${history.location.search}`)
                 }}
               >
                 <FormattedMessage id='pages.login.registerAccount' defaultMessage='注册账号'/>
