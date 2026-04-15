@@ -5,7 +5,7 @@
  */
 
 import * as resInfoService from '../../../services/core/resInfo.js'
-import {getResSwaggerSchema} from '../../../daos/swaggerSchema/responseHandler.js'
+import {getPageListResSwaggerSchema, getResSwaggerSchema} from '../../../daos/swaggerSchema/responseHandler.js'
 
 export const autoPrefix = '/core/res-info'
 
