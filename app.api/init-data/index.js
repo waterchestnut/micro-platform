@@ -7,6 +7,7 @@
 import '../init.js'
 import {addClient, updateClient} from '../services/core/client.js'
 import {saveClientPageConfig} from '../services/core/clientPageConfig.js'
+import {addPriv} from '../grpc/clients/priv.js'
 
 const tools = app.tools
 
@@ -172,6 +173,38 @@ await addClient(userInfo, {
     order: 8,
     upstreams: [{host: 'micro-resource-api-http:80', weight: 1}],
 })
+
+await addPriv(userInfo, {
+    modulePrivCode: 'resource-ipmi',
+    modulePrivName: '资源管理',
+    clientCode: 'resource',
+    moduleCode: 'resource-main',
+    privVerb: 'browse'
+})
+
+await saveClientPageConfig(userInfo, 'resource', [
+    {
+        'name': '资源管理',
+        'path': '/core/res-info/ipmi/*',
+        'auth': true,
+        'clientAuth': false,
+        'privs': [
+            'resource-ipmi'
+        ],
+        'clientPrivs': []
+    },
+    {
+        'name': '通用资源服务',
+        'path': '/core/*',
+        'auth': true,
+        'clientAuth': false,
+        'privs': [
+            'all'
+        ],
+        'clientPrivs': []
+    }
+])
+
 
 await addClient(userInfo, {
     clientCode: 'statistic',
