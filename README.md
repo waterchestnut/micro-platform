@@ -2,6 +2,8 @@
 
 基于腾讯无界、Ant Design Pro、Node.js Fastify 和 Python FastAPI 的微服务架构平台。
 
+**在线体验地址👉：[https://micro.lc.jtxuexi.com/](https://micro.lc.jtxuexi.com/)**
+
 ## 项目结构
 
 ```
