@@ -24,7 +24,7 @@ export async function getInitialState(): Promise<{
   fetchUserInfo?: () => Promise<UCENTERAPI.UserInfoWithToken | undefined>;
 }> {
   // @ts-ignore
-  console.log(window.$wujie?.props?.getUserCache())
+  //console.log(window.$wujie?.props?.getUserCache())
   const fetchUserInfo = async (redirect = true) => {
     try {
       const msg = await queryCurrentUser()
