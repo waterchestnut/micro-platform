@@ -181,7 +181,7 @@ await saveClientPageConfig(userInfo, 'doc', [
     },
     {
         'name': '文件上传',
-        'path': '/file/upload/!*',
+        'path': '/file/upload*',
         'auth': true,
         'clientAuth': false,
         'privs': [
@@ -191,7 +191,7 @@ await saveClientPageConfig(userInfo, 'doc', [
     },
     {
         'name': '文件下载',
-        'path': '/file/download/!*',
+        'path': '/file/download*',
         'auth': false,
         'clientAuth': false,
         'privs': [],
