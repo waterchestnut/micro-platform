@@ -16,7 +16,7 @@ const llmChannelDataSet = {
         mcpServers: {
             searxng: {
                 transport: 'sse',
-                url: process.env['KAFKA_STATISTIC_TOPIC']
+                url: process.env['MCP_SEARXNG_URI']
             }
         },
         /** 是否启用MCP调用 */
