@@ -54,7 +54,7 @@ export const waitTime = (time = 100) => {
  */
 export const getFileUrl = (fileInfo: any): string => {
   // @ts-ignore
-  return `${DOC_API_BASE}/file/download/${fileInfo.fileName || ''}?fileCode=${fileInfo.fileCode}`
+  return `${DOC_API_BASE}/file/download/${encodeURIComponent(fileInfo.fileName || '')}?fileCode=${fileInfo.fileCode}`
 }
 
 /**
