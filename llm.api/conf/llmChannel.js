@@ -16,7 +16,7 @@ const llmChannelDataSet = {
         mcpServers: {
             searxng: {
                 transport: 'sse',
-                url: 'http://localhost:32769/sse'
+                url: process.env['KAFKA_STATISTIC_TOPIC']
             }
         },
         /** 是否启用MCP调用 */
@@ -26,7 +26,7 @@ const llmChannelDataSet = {
             /** 是否启用 Skills */
             enabled: true,
             /** 该频道专用的 Skills 列表 */
-            skillNames: ['code-reviewer', 'refactoring-expert', 'api-tester', 'document-extractor'],
+            skillNames: ['document-extractor'],
             /** 最大匹配 Skills 数量 */
             maxSkills: 4,
             /** 匹配阈值 */
