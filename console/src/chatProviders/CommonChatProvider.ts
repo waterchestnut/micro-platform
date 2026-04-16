@@ -1,6 +1,6 @@
 import {AbstractChatProvider, TransformMessage, XRequestOptions} from '@ant-design/x-sdk'
 
-export const CHANNEL_COMMON = 'xxzx_common'
+export const CHANNEL_COMMON = 'micro_common'
 
 export type CommonChatInput = {
   query: string;
