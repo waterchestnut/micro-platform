@@ -278,7 +278,7 @@ const Index: React.FC = () => {
       setAttachmentItems([])
       setAttachmentsOpen(false)
     },
-    [attachmentItems, activeConv],
+    [attachmentItems, activeConv, conversationListRef],
   )
 
   const handleConversationSelect = async (key: string, item?: any) => {
