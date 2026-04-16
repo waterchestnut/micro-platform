@@ -146,7 +146,7 @@ export default {
             /** openai兼容的接口key */
             apiKey: process.env['LLM_QWENPLUS_APIKEY'],
             model: process.env['LLM_QWENPLUS_MODEL'],
-            maxTokens: 32768,
+            maxTokens: 60000,
             temperature: 0.7,
             stream: false,
             enableThinking: {enable_thinking: true}
@@ -158,7 +158,7 @@ export default {
             /** openai兼容的接口key */
             apiKey: process.env['LLM_QWENVLPLUS_APIKEY'],
             model: process.env['LLM_QWENVLPLUS_MODEL'],
-            maxTokens: 32768,
+            maxTokens: 60000,
             temperature: 0.7,
             stream: false,
             enableThinking: {enable_thinking: true}
