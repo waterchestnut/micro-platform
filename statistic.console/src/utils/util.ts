@@ -67,7 +67,7 @@ export function getDownloadUrl(fileCode: string, fileName: string = ''): string 
   if (isNull(fileCode)) {
     return ''
   }
-  return `/file/download/${fileName}?fileCode=${fileCode}`
+  return `/file/download/${encodeURIComponent(fileName)}?fileCode=${fileCode}`
 }
 
 /**
