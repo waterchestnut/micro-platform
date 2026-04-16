@@ -21,7 +21,7 @@ import {SkillChat} from '../../skill/skillChat.js'
 const tools = llm.tools
 const logger = llm.logger
 const config = llm.config
-const defaultLlmConfigKey = 'deepseek31'
+const defaultLlmConfigKey = 'qwenPlus'
 const defaultLlmVLConfigKey = 'qwenVLPlus'
 const defaultChannel = 'micro_common'
 const defaultChannelGroup = 'none'
