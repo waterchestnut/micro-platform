@@ -6,6 +6,7 @@
 import BaseHandler from './base.js'
 import {OpenAI} from 'openai'
 import {addAgentLog} from '../../core/agentLog.js'
+import {updateAgentTaskWithLock} from '../../core/agentTask.js'
 
 const tools = llm.tools
 const logger = llm.logger
@@ -33,11 +34,28 @@ class LlmChat extends BaseHandler {
         }
         let ret = await openai.chat.completions.create(createBody)
         let handleRet = []
+        const updateDuringStream = !!agentTaskInfo?.params?.updateHandleRetDuringStream
+        let rawReasoning = ''
+        let rawContent = ''
+        let lastUpdateAt = 0
+        const maybeUpdate = async () => {
+            if (Date.now() - lastUpdateAt < 800) return
+            lastUpdateAt = Date.now()
+            await updateAgentTaskWithLock(agentTaskInfo.agentCode, {
+                handleStatus: 1,
+                handleRet: {reasoning: rawReasoning, content: rawContent, done: false}
+            })
+        }
         if (createBody.stream) {
             let buffer = ''
 
             for await (const chunk of ret) {
+                const reasoning = chunk.choices[0]?.delta?.reasoning_content || ''
                 const content = chunk.choices[0]?.delta?.content || ''
+                if (reasoning) {
+                    rawReasoning += reasoning
+                }
+
                 buffer += content
 
                 let newlineIndex
@@ -49,6 +67,11 @@ class LlmChat extends BaseHandler {
                         handleRet.push(`${line}`)
                         addAgentLog(agentTaskInfo, `${line}\n`, 'llmChunk', chunk)
                     }
+                }
+
+                if (updateDuringStream) {
+                    rawContent += content
+                    await maybeUpdate()
                 }
             }
 
@@ -67,7 +90,9 @@ class LlmChat extends BaseHandler {
         }
         return {
             handleStatus: 2,
-            handleRet: handleRet.join(`\n`),
+            handleRet: updateDuringStream
+                ? {reasoning: rawReasoning, content: handleRet.join('\n'), done: true}
+                : handleRet.join('\n'),
             errorMsg: '',
             subsequentMode: '',
             subsequents: []
