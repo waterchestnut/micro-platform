@@ -72,6 +72,7 @@ export async function addWidget(curUserInfo, widget) {
         miniApiUrl: widget.miniApiUrl,
         description: widget.description,
         order: widget.order || 0,
+        default2Home: widget.default2Home !== undefined ? widget.default2Home : true,
         operator: {userCode: curUserInfo.userCode, realName: curUserInfo.realName},
         status: 0,
         tags: widget.tags
@@ -105,6 +106,7 @@ export async function updateWidget(curUserInfo, widgetCode, newWidget) {
         miniApiUrl: newWidget.miniApiUrl,
         description: newWidget.description,
         order: newWidget.order,
+        default2Home: newWidget.default2Home,
         tags: newWidget.tags,
     }
 

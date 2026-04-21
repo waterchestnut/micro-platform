@@ -23,6 +23,7 @@ const tools = app.tools
  * @property {String} miniApiUrl 获取小组件内容的接口地址（小程序使用的代理后的地址），该地址只允许相对地址
  * @property {String} description 小组件描述
  * @property {Number} order 小组件在平台展示的顺序（值越小排序越靠前）
+ * @property {Boolean} default2Home 是否默认显示在首页
  * @property {Number} status 状态：参见StatusEnum
  * @property {Schema.Types.Mixed} operator 小组件创建者
  * @property {Schema.Types.Mixed[]} tags 标签，参见Tag
@@ -45,6 +46,7 @@ const widgetSchema = new Schema({
     miniApiUrl: {type: String, description: '获取小组件内容的接口地址（小程序使用的代理后的地址），该地址只允许相对地址'},
     description: {type: String, description: '小组件描述'},
     order: {type: Number, default: 0, description: '排序'},
+    default2Home: {type: Boolean, default: true, description: '是否默认显示在首页'},
     status: {type: Number, default: 0, description: '状态', enum: StatusEnum.toValues()},
     operator: {type: Operator, description: '小组件创建者'},
     tags: {type: [Tag], description: '标签'},

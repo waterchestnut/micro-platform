@@ -34,6 +34,7 @@ const tools = app.tools
  * @property {String} platformType 平台类型，参见PlatformTypeEnum
  * @property {String[]} toClients 获得本应用授权的其他应用标识列表
  * @property {String} logoUrl 应用的图标地址
+ * @property {Boolean} default2Home 是否默认显示在首页
  * @property {Date} insertTime 创建时间
  * @property {Date} updateTime 最近更新时间
  */
@@ -60,6 +61,7 @@ const clientSchema = new Schema({
     platformType: {type: String, default: 'micro', description: '平台类型', enum: PlatformTypeEnum.toValues()},
     toClients: {type: [String], description: '获得本应用授权的其他应用'},
     logoUrl: {type: String, description: '应用图标'},
+    default2Home: {type: Boolean, default: true, description: '是否默认显示在首页'},
     insertTime: {
         type: Date, default: function () {
             return new Date()

@@ -80,6 +80,7 @@ export async function addClient(curUserInfo, client) {
         clientCode: client.clientCode,
         clientName: client.clientName,
         description: client.description,
+        default2Home: client.default2Home !== undefined ? client.default2Home : true,
         operator: {userCode: curUserInfo.userCode, realName: curUserInfo.realName},
         status: 0,
         tags: client.tags
@@ -155,7 +156,8 @@ export async function updateClient(curUserInfo, clientCode, newClient) {
         needAuth2Show: newClient.needAuth2Show,
         toClients: newClient.toClients,
         order: newClient.order,
-        logoUrl: newClient.logoUrl
+        logoUrl: newClient.logoUrl,
+        default2Home: newClient.default2Home
     }
 
     await saveUcenterClient(curUserInfo, {
