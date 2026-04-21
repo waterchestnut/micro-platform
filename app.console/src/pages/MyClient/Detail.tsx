@@ -32,6 +32,13 @@ const MyClientDetail: React.FC = () => {
     enableGrpcSkill: '/core/grpc-skill-my/enable',
     disableGrpcSkill: '/core/grpc-skill-my/disable',
     getGrpcSkill: '/core/grpc-skill-my/detail',
+    getWidgetList: '/core/widget-my/list',
+    addWidget: '/core/widget/add',
+    updateWidget: '/core/widget-my/update',
+    deleteWidget: '/core/widget-my/delete',
+    enableWidget: '/core/widget-my/enable',
+    disableWidget: '/core/widget-my/disable',
+    getWidget: '/core/widget-my/detail',
   }
   return (
     <ClientDetail apiRelativeUrls={apiRelativeUrls} toBack={(clientCode: string) => {

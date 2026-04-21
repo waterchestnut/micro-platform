@@ -232,8 +232,14 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
       <ProFormSwitch
         name='needAuthProxy'
         label='代理权限验证'
-        tooltip='开启后，结合应用配置中的“API路由”管理，委托授权中心验证接口权限'
+        tooltip='开启后，结合应用配置中的"API路由"管理，委托授权中心验证接口权限'
         initialValue={true}
+      />
+      <ProFormSwitch
+        name='default2Home'
+        label='默认展示到首页'
+        tooltip='开启后，应用将默认展示到用户首页'
+        initialValue={false}
       />
       <ProFormList
         name='endpoints'

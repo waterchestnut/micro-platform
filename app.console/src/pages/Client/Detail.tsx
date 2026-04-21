@@ -10,6 +10,7 @@ import ApiManage from '@/pages/Client/components/ApiManage'
 import GroupManage from '@/pages/Client/components/GroupManage'
 import OtherClientManage from '@/pages/Client/components/OtherClientManage'
 import SkillManage from '@/pages/Client/components/SkillManage'
+import WidgetManage from '@/pages/Client/components/WidgetManage'
 
 export type ClientDetailProps = {
   apiRelativeUrls?: any;
@@ -102,6 +103,11 @@ const ClientDetail: React.FC<ClientDetailProps> = (props) => {
         <SkillManage pClientInfo={clientInfo} apiRelativeUrls={apiRelativeUrls}/>
       )
     }
+    if (activeKey === 'widget') {
+      return (
+        <WidgetManage pClientInfo={clientInfo} apiRelativeUrls={apiRelativeUrls}/>
+      )
+    }
     return null
   }
 
@@ -140,6 +146,10 @@ const ClientDetail: React.FC<ClientDetailProps> = (props) => {
         {
           tab: '技能管理',
           key: 'skill',
+        },
+        {
+          tab: '小组件',
+          key: 'widget',
         },
       ]}
       header={{
