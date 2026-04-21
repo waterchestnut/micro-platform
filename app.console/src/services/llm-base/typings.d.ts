@@ -112,6 +112,21 @@ declare namespace LLMAPI {
   };
 
   type fullDefinitionModels = {
+    /** FileInfo */
+    FileInfo?: {
+      uid?: string;
+      lastModified?: number;
+      lastModifiedDate?: string;
+      name?: string;
+      size?: number;
+      type?: string;
+      percent?: number;
+      status?: string;
+      fileCode?: string;
+      fileHashCode?: string;
+      fileExt?: string;
+      url?: string;
+    };
     /** SubAgent */
     SubAgent?: { agentCode?: string; handleStatus?: -1 | 0 | 1 | 2 | 3 };
     /** Tag */
@@ -275,6 +290,34 @@ declare namespace LLMAPI {
         children?: Record<string, any>[];
         tags?: { key?: string; value?: string }[];
       }[];
+      attachments?: {
+        uid?: string;
+        lastModified?: number;
+        lastModifiedDate?: string;
+        name?: string;
+        size?: number;
+        type?: string;
+        percent?: number;
+        status?: string;
+        fileCode?: string;
+        fileHashCode?: string;
+        fileExt?: string;
+        url?: string;
+      }[];
+      answerAttachments?: {
+        uid?: string;
+        lastModified?: number;
+        lastModifiedDate?: string;
+        name?: string;
+        size?: number;
+        type?: string;
+        percent?: number;
+        status?: string;
+        fileCode?: string;
+        fileHashCode?: string;
+        fileExt?: string;
+        url?: string;
+      }[];
     };
   };
 
@@ -405,6 +448,34 @@ declare namespace LLMAPI {
         children?: Record<string, any>[];
         tags?: { key?: string; value?: string }[];
       }[];
+      attachments?: {
+        uid?: string;
+        lastModified?: number;
+        lastModifiedDate?: string;
+        name?: string;
+        size?: number;
+        type?: string;
+        percent?: number;
+        status?: string;
+        fileCode?: string;
+        fileHashCode?: string;
+        fileExt?: string;
+        url?: string;
+      }[];
+      answerAttachments?: {
+        uid?: string;
+        lastModified?: number;
+        lastModifiedDate?: string;
+        name?: string;
+        size?: number;
+        type?: string;
+        percent?: number;
+        status?: string;
+        fileCode?: string;
+        fileHashCode?: string;
+        fileExt?: string;
+        url?: string;
+      }[];
       insertTime?: string;
       updateTime?: string;
       _id?: string;
@@ -503,6 +574,36 @@ declare namespace LLMAPI {
       description?: string;
       children?: Record<string, any>[];
       tags?: { key?: string; value?: string }[];
+    }[];
+    /** 用户上传的文件材料 */
+    attachments?: {
+      uid?: string;
+      lastModified?: number;
+      lastModifiedDate?: string;
+      name?: string;
+      size?: number;
+      type?: string;
+      percent?: number;
+      status?: string;
+      fileCode?: string;
+      fileHashCode?: string;
+      fileExt?: string;
+      url?: string;
+    }[];
+    /** 大模型回答的文件材料 */
+    answerAttachments?: {
+      uid?: string;
+      lastModified?: number;
+      lastModifiedDate?: string;
+      name?: string;
+      size?: number;
+      type?: string;
+      percent?: number;
+      status?: string;
+      fileCode?: string;
+      fileHashCode?: string;
+      fileExt?: string;
+      url?: string;
     }[];
   };
 }

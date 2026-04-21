@@ -29,11 +29,13 @@ declare namespace APPAPI {
     /** 是否需要分配权限才显示 */
     needAuth2Show?: boolean;
     /** 平台类型 */
-    platformType?: 'micro' | 'union';
+    platformType?: 'xxzx' | 'union';
     /** 获得本应用授权的其他应用 */
     toClients?: string[];
     /** 应用图标 */
     logoUrl?: string;
+    /** 是否默认显示在首页 */
+    default2Home?: boolean;
   };
 
   type fullDefinitionModels = {
@@ -62,8 +64,12 @@ declare namespace APPAPI {
     };
     /** EndpointTypeEnum */
     EndpointTypeEnum?: { pc?: string; pcIframe?: string; miniNative?: string; miniH5?: string };
+    /** HomeEndpointEnum */
+    HomeEndpointEnum?: { pc?: string; mobile?: string };
+    /** HomeTypeEnum */
+    HomeTypeEnum?: { remove?: number; add?: number };
     /** PlatformTypeEnum */
-    PlatformTypeEnum?: { micro?: string; union?: string };
+    PlatformTypeEnum?: { xxzx?: string; union?: string };
     /** StatusEnum */
     StatusEnum?: { deleted?: number; normal?: number; disabled?: number };
   };
@@ -87,12 +93,44 @@ declare namespace APPAPI {
       upstreams?: { host?: string; weight?: number }[];
       order?: number;
       needAuth2Show?: boolean;
-      platformType?: 'micro' | 'union';
+      platformType?: 'xxzx' | 'union';
       toClients?: string[];
       logoUrl?: string;
+      default2Home?: boolean;
     };
     /** HomeClient */
-    HomeClient?: { homeClientCode: string; clientCode: string; order?: number; userCode?: string };
+    HomeClient?: {
+      homeClientCode: string;
+      clientCode: string;
+      order?: number;
+      userCode?: string;
+      homeEndpoint?: string;
+      homeType?: string;
+    };
+    /** HomeWidget */
+    HomeWidget?: {
+      homeWidgetCode: string;
+      widgetCode: string;
+      order?: number;
+      userCode?: string;
+      homeEndpoint?: string;
+      homeType?: string;
+    };
+    /** Widget */
+    Widget?: {
+      widgetCode: string;
+      clientCode: string;
+      widgetName?: string;
+      logoUrl?: string;
+      apiUrl?: string;
+      miniApiUrl?: string;
+      description?: string;
+      order?: number;
+      default2Home?: boolean;
+      status?: -1 | 0 | 1;
+      operator?: { userCode?: string; realName?: string };
+      tags?: { key?: string; value?: string }[];
+    };
   };
 
   type fullStoreModels = {
@@ -102,22 +140,22 @@ declare namespace APPAPI {
       clientName?: string;
       status?: -1 | 0 | 1;
       description?: string;
-      operator?: { userCode?: string; realName?: string; _id?: string };
-      tags?: { key?: string; value?: string; _id?: string }[];
+      operator?: { userCode?: string; realName?: string };
+      tags?: { key?: string; value?: string }[];
       clientType?: 'builtIn' | 'official' | 'thirdParty' | 'selfBuild' | 'community';
       endpoints?: {
         endpointType?: 'pc' | 'pcIframe' | 'miniNative' | 'miniH5';
         visitPath?: string;
         status?: -1 | 0 | 1;
-        _id?: string;
       }[];
       needAuthProxy?: boolean;
-      upstreams?: { host?: string; weight?: number; _id?: string }[];
+      upstreams?: { host?: string; weight?: number }[];
       order?: number;
       needAuth2Show?: boolean;
-      platformType?: 'micro' | 'union';
+      platformType?: 'xxzx' | 'union';
       toClients?: string[];
       logoUrl?: string;
+      default2Home?: boolean;
       insertTime?: string;
       updateTime?: string;
       _id?: string;
@@ -128,6 +166,38 @@ declare namespace APPAPI {
       clientCode: string;
       order?: number;
       userCode?: string;
+      homeEndpoint?: string;
+      homeType?: string;
+      insertTime?: string;
+      updateTime?: string;
+      _id?: string;
+    };
+    /** HomeWidget */
+    HomeWidget?: {
+      homeWidgetCode: string;
+      widgetCode: string;
+      order?: number;
+      userCode?: string;
+      homeEndpoint?: string;
+      homeType?: string;
+      insertTime?: string;
+      updateTime?: string;
+      _id?: string;
+    };
+    /** Widget */
+    Widget?: {
+      widgetCode: string;
+      clientCode: string;
+      widgetName?: string;
+      logoUrl?: string;
+      apiUrl?: string;
+      miniApiUrl?: string;
+      description?: string;
+      order?: number;
+      default2Home?: boolean;
+      status?: -1 | 0 | 1;
+      operator?: { userCode?: string; realName?: string };
+      tags?: { key?: string; value?: string }[];
       insertTime?: string;
       updateTime?: string;
       _id?: string;
@@ -182,6 +252,30 @@ declare namespace APPAPI {
     clientCode: string;
   };
 
+  type getCoreHomeClientListParams = {
+    homeEndpoint?: string;
+  };
+
+  type getCoreHomeWidgetListParams = {
+    homeEndpoint?: string;
+  };
+
+  type getCoreWidgetIpmiDetailParams = {
+    widgetCode: string;
+  };
+
+  type getCoreWidgetMyDetailParams = {
+    widgetCode: string;
+  };
+
+  type getPublicBinWidgetShowMiniParams = {
+    clientCode?: string;
+  };
+
+  type getPublicBinWidgetShowPcParams = {
+    clientCode?: string;
+  };
+
   type HomeClient = {
     /** 排布标识 */
     homeClientCode: string;
@@ -191,6 +285,25 @@ declare namespace APPAPI {
     order?: number;
     /** 排布的用户 */
     userCode?: string;
+    /** 首页排布访问端 */
+    homeEndpoint?: string;
+    /** 首页排布类型 */
+    homeType?: string;
+  };
+
+  type HomeWidget = {
+    /** 排布标识 */
+    homeWidgetCode: string;
+    /** 小组件标识 */
+    widgetCode: string;
+    /** 排序 */
+    order?: number;
+    /** 排布的用户 */
+    userCode?: string;
+    /** 首页排布访问端 */
+    homeEndpoint?: string;
+    /** 首页排布类型 */
+    homeType?: string;
   };
 
   type postCoreClientIpmiModule_openAPI_deleteParams = {
@@ -255,5 +368,32 @@ declare namespace APPAPI {
 
   type postCoreClientMyPrivOtherClientSavePrivParams = {
     clientCode: string;
+  };
+
+  type Widget = {
+    /** 小组件标识 */
+    widgetCode: string;
+    /** 所属应用标识 */
+    clientCode: string;
+    /** 小组件名称 */
+    widgetName?: string;
+    /** 小组件图标 */
+    logoUrl?: string;
+    /** 获取小组件内容的接口地址 */
+    apiUrl?: string;
+    /** 获取小组件内容的接口地址（小程序使用的代理后的地址），该地址只允许相对地址 */
+    miniApiUrl?: string;
+    /** 小组件描述 */
+    description?: string;
+    /** 排序 */
+    order?: number;
+    /** 是否默认显示在首页 */
+    default2Home?: boolean;
+    /** 状态 */
+    status?: -1 | 0 | 1;
+    /** 小组件创建者 */
+    operator?: { userCode?: string; realName?: string };
+    /** 标签 */
+    tags?: { key?: string; value?: string }[];
   };
 }

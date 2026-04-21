@@ -8,7 +8,6 @@ import * as grpcSkillIpmi from './grpcSkillIpmi';
 import * as grpcSkill from './grpcSkill';
 import * as grpcSkillMy from './grpcSkillMy';
 import * as trans from './trans';
-import * as coursePlanning from './coursePlanning';
 export default {
   api0,
   llm,
@@ -16,5 +15,4 @@ export default {
   grpcSkill,
   grpcSkillMy,
   trans,
-  coursePlanning,
 };
