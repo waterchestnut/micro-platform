@@ -7,6 +7,7 @@
 import mongoose from 'mongoose'
 import clientSchema from './clientSchema.js'
 import homeClientSchema from './homeClientSchema.js'
+import widgetSchema from './widgetSchema.js'
 
 const mongodbConfig = app.config.mongodbConfig
 
@@ -30,3 +31,4 @@ const conn = await getConnection(mongodbConfig)
 
 export const Client = conn.model('Client', clientSchema, 'client')
 export const HomeClient = conn.model('HomeClient', homeClientSchema, 'homeClient')
+export const Widget = conn.model('Widget', widgetSchema, 'widget')
