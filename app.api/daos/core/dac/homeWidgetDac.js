@@ -1,25 +1,25 @@
 /**
- * @fileOverview 操作mongodb库中的homeClient
+ * @fileOverview 操作mongodb库中的homeWidget
  * @author xianyang
  * @module
  */
 
-import {HomeClient} from '../schema/index.js'
+import {HomeWidget} from '../schema/index.js'
 import BaseDac from './BaseDac.js'
 import * as tools from '../../../tools/index.js'
 import {md5} from '../../../tools/security.js'
 
-export class HomeClientDac extends BaseDac {
+export class HomeWidgetDac extends BaseDac {
     constructor(Model) {
-        super(Model, 'homeClientCode')
+        super(Model, 'homeWidgetCode')
     }
 
     assembleParams(options) {
         let params = super.assembleParams(options)
-        if (tools.isArray(options.clientCode)) {
-            params.$and.push({clientCode: {$in: options.clientCode}})
-        } else if (options.clientCode) {
-            params.$and.push({clientCode: options.clientCode})
+        if (tools.isArray(options.widgetCode)) {
+            params.$and.push({widgetCode: {$in: options.widgetCode}})
+        } else if (options.widgetCode) {
+            params.$and.push({widgetCode: options.widgetCode})
         }
         if (tools.isArray(options.userCode)) {
             params.$and.push({userCode: {$in: options.userCode}})
@@ -37,9 +37,9 @@ export class HomeClientDac extends BaseDac {
         return this._Model.find(filter).lean().exec()
     }
 
-    getHomeClientCode(userCode, clientCode, homeEndpoint) {
-        return md5(userCode + clientCode + homeEndpoint)
+    getHomeWidgetCode(userCode, widgetCode, homeEndpoint) {
+        return md5(userCode + widgetCode + homeEndpoint)
     }
 }
 
-export default new HomeClientDac(HomeClient)
+export default new HomeWidgetDac(HomeWidget)
