@@ -50,6 +50,42 @@ export async function getHomeClients(userCode, homeEndpoint) {
 }
 
 /**
+ * @description 批量保存用户首页应用
+ * @param {Object} curUserInfo 当前用户
+ * @param {String[]} clientCodes 应用标识数组
+ * @param {String} homeEndpoint 首页访问端
+ * @returns {Promise<Object[]>} 保存结果
+ */
+export async function saveHomeClients(curUserInfo, clientCodes, homeEndpoint = 'pc') {
+    if (!clientCodes || !clientCodes.length) {
+        return []
+    }
+
+    let clients = await clientDac.getTop(clientCodes.length, {status: 0, clientCode: clientCodes})
+
+    let upsertInfos = []
+    for (let i = 0; i < clientCodes.length; i++) {
+        let clientCode = clientCodes[i]
+        let client = clients.find(c => c.clientCode === clientCode)
+        if (!client) {
+            continue
+        }
+
+        let homeClientInfo = {
+            homeClientCode: homeClientDac.getHomeClientCode(curUserInfo.userCode, clientCode, homeEndpoint),
+            clientCode,
+            userCode: curUserInfo.userCode,
+            homeEndpoint,
+            homeType: HomeTypeEnum.add.value,
+            order: i
+        }
+        upsertInfos.push(homeClientInfo)
+    }
+
+    return homeClientDac.bulkUpdate(upsertInfos)
+}
+
+/**
  * @description 添加应用到用户首页
  * @param {Object} curUserInfo 当前用户
  * @param {String} clientCode 应用标识

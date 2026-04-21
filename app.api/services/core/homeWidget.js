@@ -50,6 +50,42 @@ export async function getHomeWidgets(userCode, homeEndpoint) {
 }
 
 /**
+ * @description 批量保存用户首页小组件
+ * @param {Object} curUserInfo 当前用户
+ * @param {String[]} widgetCodes 小组件标识数组
+ * @param {String} homeEndpoint 首页访问端
+ * @returns {Promise<Object[]>} 保存结果
+ */
+export async function saveHomeWidgets(curUserInfo, widgetCodes, homeEndpoint = 'pc') {
+    if (!widgetCodes || !widgetCodes.length) {
+        return []
+    }
+
+    let widgets = await widgetDac.getTop(widgetCodes.length, {status: 0, widgetCode: widgetCodes})
+
+    let upsertInfos = []
+    for (let i = 0; i < widgetCodes.length; i++) {
+        let widgetCode = widgetCodes[i]
+        let widget = widgets.find(w => w.widgetCode === widgetCode)
+        if (!widget) {
+            continue
+        }
+
+        let homeWidgetInfo = {
+            homeWidgetCode: homeWidgetDac.getHomeWidgetCode(curUserInfo.userCode, widgetCode, homeEndpoint),
+            widgetCode,
+            userCode: curUserInfo.userCode,
+            homeEndpoint,
+            homeType: HomeTypeEnum.add.value,
+            order: i
+        }
+        upsertInfos.push(homeWidgetInfo)
+    }
+
+    return homeWidgetDac.bulkUpdate(upsertInfos)
+}
+
+/**
  * @description 添加小组件到用户首页
  * @param {Object} curUserInfo 当前用户
  * @param {String} widgetCode 小组件标识

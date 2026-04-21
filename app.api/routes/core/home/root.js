@@ -77,6 +77,27 @@ export default async function (fastify, opts) {
         return await homeClientService.removeHomeClient(request.userInfo, request.reqParams.clientCode, request.reqParams.homeEndpoint, request.reqParams.order)
     })
 
+    fastify.post('/client/batch/save', {
+        schema: {
+            description: '批量保存用户首页应用',
+            summary: '批量保存首页应用',
+            body: {
+                type: 'object',
+                properties: {
+                    clientCodes: {type: 'array', items: {type: 'string'}},
+                    homeEndpoint: {type: 'string'}
+                },
+                required: ['clientCodes']
+            },
+            tags: ['home'],
+            response: {
+                default: {...getListResSwaggerSchema(homeClientSchema)}
+            }
+        }
+    }, async function (request, reply) {
+        return await homeClientService.saveHomeClients(request.userInfo, request.reqParams.clientCodes, request.reqParams.homeEndpoint)
+    })
+
     fastify.get('/widget/list', {
         schema: {
             description: '获取用户首页小组件列表',
@@ -138,5 +159,26 @@ export default async function (fastify, opts) {
         }
     }, async function (request, reply) {
         return await homeWidgetService.removeHomeWidget(request.userInfo, request.reqParams.widgetCode, request.reqParams.homeEndpoint, request.reqParams.order)
+    })
+
+    fastify.post('/widget/batch/save', {
+        schema: {
+            description: '批量保存用户首页小组件',
+            summary: '批量保存首页小组件',
+            body: {
+                type: 'object',
+                properties: {
+                    widgetCodes: {type: 'array', items: {type: 'string'}},
+                    homeEndpoint: {type: 'string'}
+                },
+                required: ['widgetCodes']
+            },
+            tags: ['home'],
+            response: {
+                default: {...getListResSwaggerSchema(homeWidgetSchema)}
+            }
+        }
+    }, async function (request, reply) {
+        return await homeWidgetService.saveHomeWidgets(request.userInfo, request.reqParams.widgetCodes, request.reqParams.homeEndpoint)
     })
 }

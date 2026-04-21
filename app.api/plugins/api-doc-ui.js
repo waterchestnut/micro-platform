@@ -25,6 +25,7 @@ export default fp(async (fastify) => {
         {name: 'widget-ipmi', description: '小组件管理相关的API'},
         {name: 'widget-my', description: '当前用户的小组件相关的API'},
         {name: 'public-bin', description: '公开调用的api'},
+        {name: 'home', description: '首页应用相关的API'},
     ]
 
     fastify.register(swagger, {
