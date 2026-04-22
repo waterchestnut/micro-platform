@@ -6,7 +6,7 @@ import {
   ProFormInstance,
   ProFormList, ProFormSelect, ProFormSwitch, ProFormText, ProFormTextArea, ProFormUploadButton
 } from '@ant-design/pro-components'
-import {formatUploadFile, isArray, waitTime} from '@/utils/util'
+import {formatUploadFile, getDocHttpUrl, isArray, waitTime} from '@/utils/util'
 import {errorMessage, successMessage} from '@/utils/msg'
 import {addClient, updateClient} from '@/services/app/client'
 import {Button, Col, Row, Space, Upload} from 'antd'
@@ -48,9 +48,12 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
   const resetForm = (info: any) => {
     waitTime(200).then(() => {
       if (info) {
-        info.logoUrl = isArray(info.logoUrl) ? info.logoUrl : info.logoUrl ? [{
+        info.logoUrl = isArray(info.logoUrl) ? info.logoUrl.map((_: any) => ({
+          ..._,
+          url: getDocHttpUrl(_.url)
+        })) : info.logoUrl ? [{
           uid: '-1',
-          url: info.logoUrl
+          url: getDocHttpUrl(info.logoUrl)
         }] : []
         formRef?.current?.setFieldsValue(info)
       } else {
@@ -182,12 +185,29 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
             const isJpgOrPng = file.type === 'image/jpeg' || file.type === 'image/png'
             if (!isJpgOrPng) {
               errorMessage('仅支持PNG、JPG格式的图片，且文件大小不超过300K。')
+              return Upload.LIST_IGNORE
             }
             const isLt = file.size / 1024 < 300
             if (!isLt) {
               errorMessage('仅支持PNG、JPG格式的图片，且文件大小不超过300K。')
+              return Upload.LIST_IGNORE
             }
-            return (isJpgOrPng && isLt) || Upload.LIST_IGNORE
+            return new Promise((resolve) => {
+              const reader = new FileReader()
+              reader.onload = () => {
+                const img = new Image()
+                img.onload = () => {
+                  if (img.width !== 256 || img.height !== 256) {
+                    errorMessage('图片尺寸必须是256x256像素')
+                    resolve(Upload.LIST_IGNORE)
+                  } else {
+                    resolve(true)
+                  }
+                }
+                img.src = reader.result as string
+              }
+              reader.readAsDataURL(file)
+            })
           },
           headers: {'param-accessToken': getAccessToken()},
           onRemove: (file) => {
@@ -195,7 +215,7 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
           }
         }}  // @ts-ignore
         action={DOC_API_BASE + '/file/upload/simple'}
-        extra='支持PNG、JPG的正方形图片，文件大小不超过300K。'
+        extra='支持PNG、JPG格式，256x256像素，文件大小不超过300K。'
         onChange={({file, fileList}) => {
           if (file.response && file.response.code !== 0) {
             file.status = 'error'
