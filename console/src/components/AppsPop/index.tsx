@@ -1,11 +1,12 @@
 import React from 'react'
-import {Button, Drawer, Typography} from 'antd'
+import {Avatar, Button, Drawer, Input, Segmented, Tabs, Typography} from 'antd'
 import {useModel} from '@@/exports'
-import {CloseOutlined} from '@ant-design/icons'
+import {CloseOutlined, SearchOutlined} from '@ant-design/icons'
 import {ProList} from '@ant-design/pro-components'
 import {createStyles} from 'antd-style'
 import {history} from '@umijs/max'
 import {checkPermissions} from '@/utils/authority'
+import {getDocHttpUrl} from '@/utils/util'
 
 const {Text} = Typography
 
@@ -13,22 +14,26 @@ export type AppsPopProps = {
   style?: React.CSSProperties | undefined;
 }
 
-const useStyles = createStyles(({token}) => {
+const useStyles = createStyles(({token, css}) => {
   return {
-    container: {
-      '& .ant-pro-checkcard .ant-pro-checkcard-body': {
-        padding: '12px !important',
-        color: 'rgba(0, 0, 0, 0.5)'
-      },
-      '& .ant-pro-checkcard .ant-pro-checkcard-content': {
-        paddingBottom: '0 !important'
-      },
-      '& .ant-pro-checkcard': {
-        cursor: 'default',
-        minHeight: '85px',
-        margin: 0
-      }
+    container: {},
+    itemCon: {
+      width: '100%',
+      minWidth: 0,
+      padding: 12,
+      height: '100%',
+      cursor: 'normal',
     },
+    itemDes: {
+      color: token.colorTextSecondary,
+      fontSize: 14,
+      lineHeight: 1.5,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      display: '-webkit-box',
+      WebkitLineClamp: 2,
+      WebkitBoxOrient: 'vertical',
+    }
   }
 })
 
@@ -41,7 +46,19 @@ const AppsPop: React.FC<AppsPopProps> = (props) => {
 
   return (
     <Drawer
-      title='全部应用'
+      title={
+        <div style={{display: 'flex', alignItems: 'center', gap: 12, fontWeight: 500}}>
+          <Segmented
+            defaultValue='all'
+            options={[
+              {label: '全部应用', value: 'all'},
+              {label: '文献服务', value: 'literature'},
+              {label: '教学服务', value: 'teaching'},
+              {label: '工具箱', value: 'tools'}
+            ]}/>
+          <Input placeholder='请输入关键词' variant='underlined' prefix={<SearchOutlined/>}/>
+        </div>
+      }
       placement='left'
       closable={false}
       onClose={() => {
@@ -50,6 +67,14 @@ const AppsPop: React.FC<AppsPopProps> = (props) => {
       open={appsPopOpened}
       rootStyle={{
         top: '64px'
+      }}
+      styles={{
+        header: {
+          padding: '12px 56px 12px 16px',
+        },
+        body: {
+          padding: '0 12px',
+        },
       }}
       size='800'
       extra={
@@ -70,47 +95,63 @@ const AppsPop: React.FC<AppsPopProps> = (props) => {
     >
       <ProList<any>
         className={styles.container}
+        rowSelection={false}
         ghost={true}
         itemCardProps={{
           ghost: true,
         }}
-        rowSelection={false}
         grid={{gutter: 16, column: 2}}
         columns={[
           {
             dataIndex: 'clientName',
             listSlot: 'title',
-            render: (text, record) => {
-              return (
-                <Text
-                  ellipsis={{tooltip: record.clientName}}
-                >
-                  <a onClick={() => {
-                    setAppsPopOpened(false)
-                    history.push(`/sub/${record.clientCode}`)
-                  }}>{record.clientName}</a>
-                </Text>
-              )
-            }
+          },
+          {
+            dataIndex: 'logoUrl',
+            listSlot: 'avatar',
           },
           {
             dataIndex: 'description',
             listSlot: 'content',
-            render: (text, record) => {
-              return (
-                <Text
-                  ellipsis={{tooltip: record.description}}
-                >
-                  {record.description}
-                </Text>
-              )
-            }
           },
         ]}
         dataSource={(initialState?.toShowClients || []).filter((clientInfo) => {
           let authority = clientInfo.needAuth2Show ? [`${clientInfo.clientCode}-browse`] : false
           return checkPermissions(authority, currentUser?.privs)
         })}
+        itemRender={(item) => (
+          <div
+            className={styles.itemCon}
+          >
+            <div style={{display: 'flex', alignItems: 'flex-start', gap: 12}}>
+              <Avatar
+                src={getDocHttpUrl(item.logoUrl)}
+                shape='square'
+                size={48}
+                style={{flexShrink: 0}}
+              />
+              <div style={{flex: 1, minWidth: 0}}>
+                <div
+                  style={{
+                    fontWeight: 500,
+                    fontSize: 16,
+                    marginBottom: 4,
+                  }}
+                >
+                  <a onClick={() => {
+                    setAppsPopOpened(false)
+                    history.push(`/sub/${item.clientCode}`)
+                  }}>{item.clientName}</a>
+                </div>
+                <div
+                  className={styles.itemDes}
+                >
+                  {item.description}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       />
     </Drawer>
   )
