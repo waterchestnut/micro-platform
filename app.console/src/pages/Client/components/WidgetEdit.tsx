@@ -48,6 +48,7 @@ const Edit: ForwardRefRenderFunction<EditAction, EditProps> = (props, ref) => {
           url: getDocHttpUrl(_.url)
         })) : info.logoUrl ? [{
           uid: '-1',
+          status: 'done',
           url: getDocHttpUrl(info.logoUrl)
         }] : []
         formRef?.current?.setFieldsValue(info)

@@ -58,6 +58,7 @@ const Profile: React.FC = () => {
               ? [
                 {
                   uid: '-1',
+                  status: 'done',
                   url: getDocHttpUrl(res.data.avatarUrl),
                 },
               ]

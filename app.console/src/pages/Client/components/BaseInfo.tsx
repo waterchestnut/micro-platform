@@ -53,6 +53,7 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
           url: getDocHttpUrl(_.url)
         })) : info.logoUrl ? [{
           uid: '-1',
+          status: 'done',
           url: getDocHttpUrl(info.logoUrl)
         }] : []
         formRef?.current?.setFieldsValue(info)
