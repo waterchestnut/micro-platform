@@ -1,5 +1,5 @@
 import React from 'react'
-import {Avatar, Button, Drawer, Input, Segmented, Tabs, Typography} from 'antd'
+import {Avatar, Button, Drawer, Input, Segmented, Tabs, Tooltip, Typography} from 'antd'
 import {useModel} from '@@/exports'
 import {CloseOutlined, SearchOutlined} from '@ant-design/icons'
 import {ProList} from '@ant-design/pro-components'
@@ -150,7 +150,9 @@ const AppsPop: React.FC<AppsPopProps> = (props) => {
                 <div
                   className={styles.itemDes}
                 >
-                  {item.description}
+                  <Tooltip title={item.description}>
+                    {item.description}
+                  </Tooltip>
                 </div>
               </div>
             </div>
