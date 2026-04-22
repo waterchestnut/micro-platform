@@ -16,7 +16,11 @@ export type AppsPopProps = {
 
 const useStyles = createStyles(({token, css}) => {
   return {
-    container: {},
+    container: {
+      '.ant-avatar-image': {
+        background: 'var(--ant-color-text-placeholder)',
+      },
+    },
     itemCon: {
       width: '100%',
       minWidth: 0,
@@ -46,6 +50,7 @@ const AppsPop: React.FC<AppsPopProps> = (props) => {
 
   return (
     <Drawer
+      className={styles.container}
       title={
         <div style={{display: 'flex', alignItems: 'center', gap: 12, fontWeight: 500}}>
           <Segmented
@@ -94,7 +99,6 @@ const AppsPop: React.FC<AppsPopProps> = (props) => {
       }
     >
       <ProList<any>
-        className={styles.container}
         rowSelection={false}
         ghost={true}
         itemCardProps={{
