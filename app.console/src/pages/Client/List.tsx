@@ -3,7 +3,7 @@ import {type ActionType, PageContainer, ProColumns} from '@ant-design/pro-compon
 import ProTableWrapper from '@/components/ProTableWrapper'
 import {disableClient, enableClient, getClientList} from '@/services/app/client'
 import Edit, {EditAction} from './components/Edit'
-import {Button, Popconfirm} from 'antd'
+import {Button, Popconfirm, Tag} from 'antd'
 import {deleteClient} from '@/services/app/client'
 import {errorMessage, successMessage} from '@/utils/msg'
 import EndpointTypeEnum from '@/enum/EndpointTypeEnum'
@@ -61,6 +61,18 @@ const ClientList: React.FC<ClientListProps> = (props) => {
           status: 'Default',
         }
       },
+    },
+    {
+      title: '标签',
+      dataIndex: 'tags',
+      render: (text,record) => {
+        if (record.tags?.length > 0) {
+          return record.tags.map((tag: any) => (
+            <Tag key={tag.key} color='blue'>{tag.value}</Tag>
+          ))
+        }
+        return '-'
+      }
     },
     {
       title: '排序(值越小展示越靠前)',

@@ -1,4 +1,4 @@
-import React from 'react'
+import React, {useMemo, useState} from 'react'
 import {Avatar, Button, Drawer, Input, Segmented, Tabs, Tooltip, Typography} from 'antd'
 import {useModel} from '@@/exports'
 import {CloseOutlined, SearchOutlined} from '@ant-design/icons'
@@ -7,6 +7,8 @@ import {createStyles} from 'antd-style'
 import {history} from '@umijs/max'
 import {checkPermissions} from '@/utils/authority'
 import {getDocHttpUrl} from '@/utils/util'
+// @ts-ignore
+import type {APPAPI} from '@/services/app/typings'
 
 const {Text} = Typography
 
@@ -46,7 +48,34 @@ const AppsPop: React.FC<AppsPopProps> = (props) => {
   const {initialState} = useModel('@@initialState')
   const {currentUser} = initialState || {}
 
+  const [filterCategory, setFilterCategory] = useState<string>('all')
+  const [searchKeyword, setSearchKeyword] = useState<string>('')
+
   const {styles} = useStyles()
+
+  const filteredClients = useMemo(() => {
+    let clients = (initialState?.toShowClients || []) as APPAPI.ClientPublic[]
+    clients = clients.filter((clientInfo) => {
+      let authority = clientInfo.needAuth2Show ? [`${clientInfo.clientCode}-browse`] : false
+      return checkPermissions(authority, currentUser?.privs)
+    })
+    if (filterCategory !== 'all') {
+      clients = clients.filter((client) => {
+        const tags = client.tags || []
+        return tags.some((tag: APPAPI.Tag) => tag.key === filterCategory)
+      })
+    }
+    if (searchKeyword.trim()) {
+      const keyword = searchKeyword.trim().toLowerCase()
+      clients = clients.filter((client) => {
+        if (client.clientName?.toLowerCase().includes(keyword)) return true
+        if (client.description?.toLowerCase().includes(keyword)) return true
+        const tags = client.tags || []
+        return tags.some((tag: APPAPI.Tag) => tag.value?.toLowerCase().includes(keyword))
+      })
+    }
+    return clients
+  }, [initialState?.toShowClients, currentUser?.privs, filterCategory, searchKeyword])
 
   return (
     <Drawer
@@ -54,14 +83,20 @@ const AppsPop: React.FC<AppsPopProps> = (props) => {
       title={
         <div style={{display: 'flex', alignItems: 'center', gap: 12, fontWeight: 500}}>
           <Segmented
-            defaultValue='all'
+            value={filterCategory}
+            onChange={(val) => setFilterCategory(val as string)}
             options={[
               {label: '全部应用', value: 'all'},
               {label: '文献服务', value: 'literature'},
               {label: '教学服务', value: 'teaching'},
               {label: '工具箱', value: 'tools'}
             ]}/>
-          <Input placeholder='请输入关键词' variant='underlined' prefix={<SearchOutlined/>}/>
+          <Input
+            value={searchKeyword}
+            onChange={(e) => setSearchKeyword(e.target.value)}
+            placeholder='请输入关键词'
+            variant='underlined'
+            prefix={<SearchOutlined/>}/>
         </div>
       }
       placement='left'
@@ -111,18 +146,11 @@ const AppsPop: React.FC<AppsPopProps> = (props) => {
             listSlot: 'title',
           },
           {
-            dataIndex: 'logoUrl',
-            listSlot: 'avatar',
-          },
-          {
             dataIndex: 'description',
             listSlot: 'content',
           },
         ]}
-        dataSource={(initialState?.toShowClients || []).filter((clientInfo) => {
-          let authority = clientInfo.needAuth2Show ? [`${clientInfo.clientCode}-browse`] : false
-          return checkPermissions(authority, currentUser?.privs)
-        })}
+        dataSource={filteredClients}
         itemRender={(item) => (
           <div
             className={styles.itemCon}
