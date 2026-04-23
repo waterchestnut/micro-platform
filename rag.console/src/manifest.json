@@ -3,7 +3,7 @@
   "short_name": "知识库",
   "display": "standalone",
   "start_url": "./?utm_source=homescreen",
-  "theme_color": "#F5222D",
+  "theme_color": "#08979c",
   "background_color": "#ffffff",
   "icons": [
     {

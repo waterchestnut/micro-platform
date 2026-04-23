@@ -82,10 +82,10 @@ export default function PDFViewer(props: PDFViewerProps) {
             preference: 'light',
             light: {
               accent: {
-                primary: '#F5222D',        // Main brand color
-                primaryHover: '#cf1322',   // Hover state
-                primaryActive: '#a8071a',  // Click state
-                primaryLight: '#f3e8ff',   // Subtle backgrounds (e.g., selection)
+                primary: '#08979c',        // Main brand color
+                primaryHover: '#006d75',   // Hover state
+                primaryActive: '#00474f',  // Click state
+                primaryLight: '#8fcfc8',   // Subtle backgrounds (e.g., selection)
                 primaryForeground: '#fff'  // Text on top of primary color
               }
             },
