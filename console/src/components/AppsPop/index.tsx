@@ -157,7 +157,7 @@ const AppsPop: React.FC<AppsPopProps> = (props) => {
           >
             <div style={{display: 'flex', alignItems: 'flex-start', gap: 12}}>
               <Avatar
-                src={getDocHttpUrl(item.logoUrl)}
+                src={item.logoUrl ? getDocHttpUrl(item.logoUrl) : undefined}
                 shape='square'
                 size={48}
                 style={{flexShrink: 0}}
