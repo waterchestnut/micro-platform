@@ -41,6 +41,9 @@ export default {
   'POST /core/client/ipmi/list': (req: Request, res: Response) => {
     res.status(200).send({});
   },
+  'GET /core/client/ipmi/list/stat-by-tag': (req: Request, res: Response) => {
+    res.status(200).send({});
+  },
   'GET /core/client/ipmi/detail': (req: Request, res: Response) => {
     res.status(200).send({});
   },

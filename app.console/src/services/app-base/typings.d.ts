@@ -208,6 +208,11 @@ declare namespace APPAPI {
     clientCode: string;
   };
 
+  type getCoreClientIpmiListStatByTagParams = {
+    /** 可选，按创建者筛选 */
+    operatorUserCode?: string;
+  };
+
   type getCoreClientIpmiModuleListParams = {
     clientCode: string;
   };

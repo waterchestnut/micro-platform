@@ -298,3 +298,37 @@ export function formatPublicClients(clients) {
         return item
     })
 }
+
+/**
+ * @description 按标签统计应用数量
+ * @author menglb
+ * @param {String} [operatorUserCode] 可选，按创建者筛选
+ * @returns {Promise<Array>} 统计结果数组
+ */
+export async function statClientByTag(operatorUserCode) {
+    const matchStage = {
+        $match: {
+            status: { $ne: -1 }
+        }
+    }
+    if (operatorUserCode) {
+        matchStage.$match['operator.userCode'] = operatorUserCode
+    }
+    const pipeline = [
+        matchStage,
+        { $unwind: { path: '$tags', preserveNullAndEmptyArrays: true } },
+        {
+            $group: {
+                _id: { key: '$tags.key', value: '$tags.value' },
+                count: { $sum: 1 }
+            }
+        },
+        { $sort: { count: -1 } }
+    ]
+    const results = await clientDac.aggregate(pipeline)
+    return results.map(item => ({
+        key: item._id?.key || 'null',
+        value: item._id?.value || '未分类',
+        count: item.count
+    })).filter(item => item.key)
+}

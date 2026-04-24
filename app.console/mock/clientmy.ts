@@ -41,6 +41,9 @@ export default {
   'POST /core/client-my/list': (req: Request, res: Response) => {
     res.status(200).send({});
   },
+  'GET /core/client-my/list/stat-by-tag': (req: Request, res: Response) => {
+    res.status(200).send({});
+  },
   'GET /core/client-my/detail': (req: Request, res: Response) => {
     res.status(200).send({});
   },

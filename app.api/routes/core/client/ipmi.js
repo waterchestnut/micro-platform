@@ -5,7 +5,11 @@
  */
 
 import * as clientService from '../../../services/core/client.js'
-import {getPageListResSwaggerSchema, getResSwaggerSchema} from '../../../daos/swaggerSchema/responseHandler.js'
+import {
+    getListResSwaggerSchema,
+    getPageListResSwaggerSchema,
+    getResSwaggerSchema
+} from '../../../daos/swaggerSchema/responseHandler.js'
 import {getUcenterClient, saveUcenterClient} from '../../../grpc/clients/client.js'
 
 const clientSchema = {$ref: 'fullParamModels#/properties/Client'}
@@ -57,7 +61,7 @@ const ucenterClientWriteSchema = {
 
 export const autoPrefix = '/core/client/ipmi'
 
-export function registerClientCommonRoutes(fastify, opts,tags=['client-ipmi']) {
+export function registerClientCommonRoutes(fastify, opts, tags = ['client-ipmi']) {
     fastify.get('/detail', {
         schema: {
             description: '获取应用全部信息结构',
@@ -229,6 +233,34 @@ export default async function (fastify, opts) {
         }
     }, async function (request, reply) {
         return await clientService.getClients(request.reqParams.filter, request.reqParams.pageIndex, request.reqParams.pageSize, request.reqParams.options)
+    })
+
+    fastify.get('/list/stat-by-tag', {
+        schema: {
+            description: '按标签统计应用数量',
+            summary: '按标签统计应用数量',
+            querystring: {
+                type: 'object',
+                properties: {
+                    operatorUserCode: {type: 'string', description: '可选，按创建者筛选'}
+                }
+            },
+            tags: ['client-ipmi'],
+            response: {
+                default: {
+                    ...getListResSwaggerSchema({
+                        type: 'object',
+                        properties: {
+                            key: {type: 'string'},
+                            value: {type: 'string'},
+                            count: {type: 'number'}
+                        }
+                    })
+                }
+            }
+        }
+    }, async function (request, reply) {
+        return await clientService.statClientByTag(request.reqParams.operatorUserCode)
     })
 
     registerClientCommonRoutes(fastify, opts)

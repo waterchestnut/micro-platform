@@ -5,7 +5,11 @@
  */
 
 import * as clientService from '../../../services/core/client.js'
-import {getPageListResSwaggerSchema, getResSwaggerSchema} from '../../../daos/swaggerSchema/responseHandler.js'
+import {
+    getListResSwaggerSchema,
+    getPageListResSwaggerSchema,
+    getResSwaggerSchema
+} from '../../../daos/swaggerSchema/responseHandler.js'
 import {registerClientCommonRoutes} from '../client/ipmi.js'
 
 export const autoPrefix = '/core/client-my'
@@ -46,6 +50,28 @@ export default async function (fastify, opts) {
             ...request.reqParams.filter,
             operatorUserCode: request.userInfo.userCode
         }, request.reqParams.pageIndex, request.reqParams.pageSize, request.reqParams.options)
+    })
+
+    fastify.get('/list/stat-by-tag', {
+        schema: {
+            description: '按标签统计我创建的应用数量',
+            summary: '按标签统计我的应用数量',
+            tags: ['client-my'],
+            response: {
+                default: {
+                    ...getListResSwaggerSchema({
+                        type: 'object',
+                        properties: {
+                            key: {type: 'string'},
+                            value: {type: 'string'},
+                            count: {type: 'number'}
+                        }
+                    })
+                }
+            }
+        }
+    }, async function (request, reply) {
+        return await clientService.statClientByTag(request.userInfo.userCode)
     })
 
     registerClientCommonRoutes(fastify, opts, ['client-my'])

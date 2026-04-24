@@ -85,3 +85,25 @@ export async function saveUcenterClient(params: any, relativeUrl = '') {
     params: {clientCode: params.clientCode}
   })
 }
+
+/** 按标签统计应用数量 */
+export async function statClientByTagIpmi(relativeUrl = '') {
+  let ret = await appRequest(relativeUrl || '/core/client/ipmi/list/stat-by-tag', {
+    method: 'GET'
+  })
+  if (ret.code === 0) {
+    return ret.data
+  }
+  return []
+}
+
+/** 按标签统计我的应用数量 */
+export async function statClientByTagMy(relativeUrl = '') {
+  let ret = await appRequest(relativeUrl || '/core/client-my/list/stat-by-tag', {
+    method: 'GET'
+  })
+  if (ret.code === 0) {
+    return ret.data
+  }
+  return []
+}

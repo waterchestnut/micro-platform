@@ -457,6 +457,27 @@ export async function postCoreClientIpmiList(
   });
 }
 
+/** 按标签统计应用数量 按标签统计应用数量 返回值: Default Response GET /core/client/ipmi/list/stat-by-tag */
+export async function getCoreClientIpmiListStatByTag(
+  // 叠加生成的Param类型 (非body参数swagger默认没有生成对象)
+  params: APPAPI.getCoreClientIpmiListStatByTagParams,
+  options?: { [key: string]: any },
+) {
+  return request<{
+    statusCode: number;
+    code: number;
+    msg?: string;
+    errorLevel?: string;
+    data?: { key?: string; value?: string; count?: number }[];
+  }>('/core/client/ipmi/list/stat-by-tag', {
+    method: 'GET',
+    params: {
+      ...params,
+    },
+    ...(options || {}),
+  });
+}
+
 /** 获取应用在授权中心的信息结构 获取应用在授权中心的信息结构 返回值: Default Response GET /core/client/ipmi/ucenter/detail */
 export async function getCoreClientIpmiUcenterDetail(
   // 叠加生成的Param类型 (非body参数swagger默认没有生成对象)

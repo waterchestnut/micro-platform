@@ -118,6 +118,20 @@ export async function postCoreClientMyList(
   });
 }
 
+/** 按标签统计我的应用数量 按标签统计我创建的应用数量 返回值: Default Response GET /core/client-my/list/stat-by-tag */
+export async function getCoreClientMyListStatByTag(options?: { [key: string]: any }) {
+  return request<{
+    statusCode: number;
+    code: number;
+    msg?: string;
+    errorLevel?: string;
+    data?: { key?: string; value?: string; count?: number }[];
+  }>('/core/client-my/list/stat-by-tag', {
+    method: 'GET',
+    ...(options || {}),
+  });
+}
+
 /** 添加应用模块 添加应用模块 返回值: Default Response POST /core/client-my/module/add */
 export async function postCoreClientMyModuleAdd(
   // 叠加生成的Param类型 (非body参数swagger默认没有生成对象)
