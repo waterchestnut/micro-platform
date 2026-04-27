@@ -172,7 +172,8 @@ const AppsPop: React.FC<AppsPopProps> = (props) => {
                 >
                   <a onClick={() => {
                     setAppsPopOpened(false)
-                    history.push(`/sub/${item.clientCode}`)
+                    let visitPath = item.endpoints?.find((_: APPAPI.ClientPublic) => _.endpointType === 'pc')?.visitPath
+                    history.push(visitPath?.startsWith('/') ? visitPath : `/sub/${item.clientCode}`)
                   }}>{item.clientName}</a>
                 </div>
                 <div

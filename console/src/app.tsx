@@ -59,9 +59,10 @@ const formatMenuData = (toShowClients: any[], myClients: any[], currentPrivs: an
     }
   ]
   let dynamicList: any[] = toShowClients.map((clientInfo: APPAPI.ClientPublic) => {
+    let visitPath = clientInfo.endpoints?.find((_) => _.endpointType === 'pc')?.visitPath
     return {
       name: clientInfo.clientName,
-      path: `/sub/${clientInfo.clientCode}`,
+      path: visitPath?.startsWith('/') ? visitPath : `/sub/${clientInfo.clientCode}`,
       authority: clientInfo.needAuth2Show ? [`${clientInfo.clientCode}-browse`] : false,
     }
   })
