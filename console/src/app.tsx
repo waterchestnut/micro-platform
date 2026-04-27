@@ -66,7 +66,7 @@ const formatMenuData = (toShowClients: any[], myClients: any[], currentPrivs: an
       authority: clientInfo.needAuth2Show ? [`${clientInfo.clientCode}-browse`] : false,
     }
   })
-  let extraList: any[] = loopMenuItem(routes[0]?.routes?.filter((route: any) => route.path === '/personal') || [])
+  let extraList: any[] = loopMenuItem(routes[0]?.routes?.filter((route: any) => ['/personal'].includes(route.path)) || [])
   return menuDataRender(staticList.concat(dynamicList).concat(extraList), currentPrivs)
 }
 
