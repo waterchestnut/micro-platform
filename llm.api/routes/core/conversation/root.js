@@ -38,7 +38,10 @@ export default async function (fastify, opts) {
             }
         }
     }, async function (request, reply) {
-        return await getConversations(request.reqParams.filter, request.reqParams.pageIndex, request.reqParams.pageSize, request.reqParams.options)
+        return await getConversations({
+            ...request.reqParams.filter,
+            userCode: request.userInfo.userCode
+        }, request.reqParams.pageIndex, request.reqParams.pageSize, request.reqParams.options)
     })
 
     fastify.post('/stat-channel-group', {

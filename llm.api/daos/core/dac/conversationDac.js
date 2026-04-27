@@ -38,6 +38,14 @@ export class ConversationDac extends BaseDac {
         if (tools.isExist(options.title)) {
             params.$and.push({title: {$regex: new RegExpExt(options.title, 'i', true)}})
         }
+        if (tools.isExist(options.userCode)) {
+            params.$and.push({
+                $or: [
+                    {userCodes: options.userCode},
+                    {'operator.userCode': options.userCode},
+                ]
+            })
+        }
         if (tools.isExist(options.keywords)) {
             let keywordReg = {$regex: new RegExpExt(options.keywords, 'i', true)};
             params.$and.push({
