@@ -128,6 +128,8 @@ export const layout: RunTimeLayoutConfig = ({initialState, setInitialState}) => 
         return initialState?.menuData || []
       },
       locale: false,
+      defaultOpenAll: true,
+      ignoreFlatMenu: true,
     },
     avatarProps: {
       src: initialState?.currentUser?.avatarUrl ? getDocHttpUrl(initialState?.currentUser?.avatarUrl) : undefined,
