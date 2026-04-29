@@ -5,14 +5,14 @@
  */
 
 import mongoose from 'mongoose'
-import StatusEnum from "../enum/StatusEnum.js"
-import AuthTypeEnum from "../enum/AuthTypeEnum.js"
-import DegreeEnum from "../enum/DegreeEnum.js"
-import GenderEnum from "../enum/GenderEnum.js"
-import SchemaEnum from "../enum/SchemaEnum.js"
-import Tag from "../definition/Tag.js"
-import UserDepartment from "../definition/UserDepartment.js"
-import AdminClass from "../definition/AdminClass.js";
+import StatusEnum from '../enum/StatusEnum.js'
+import AuthTypeEnum from '../enum/AuthTypeEnum.js'
+import DegreeEnum from '../enum/DegreeEnum.js'
+import GenderEnum from '../enum/GenderEnum.js'
+import SchemaEnum from '../enum/SchemaEnum.js'
+import Tag from '../definition/Tag.js'
+import UserDepartment from '../definition/UserDepartment.js'
+import AdminClass from '../definition/AdminClass.js'
 import Experience from '../definition/Experience.js'
 import PlatformUser from '../definition/PlatformUser.js'
 
@@ -135,5 +135,7 @@ userInfoSchema.index({email: 1})
 userInfoSchema.index({schemaCodes: 1})
 userInfoSchema.index({'tags.key': 1})
 userInfoSchema.index({'tags.value': 1})
+userInfoSchema.index({unionUserCode: 1})
+userInfoSchema.index({'platformUsers.platformCode': 1, 'platformUsers.userCode': 1})
 
 export default userInfoSchema
