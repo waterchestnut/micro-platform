@@ -14,6 +14,7 @@ import Tag from "../definition/Tag.js"
 import UserDepartment from "../definition/UserDepartment.js"
 import AdminClass from "../definition/AdminClass.js";
 import Experience from '../definition/Experience.js'
+import PlatformUser from '../definition/PlatformUser.js'
 
 const Schema = mongoose.Schema
 const tools = ucenter.tools
@@ -55,6 +56,10 @@ const tools = ucenter.tools
  * @property {String} collegeName 学院名称
  * @property {String} specialtyCode 专业标识
  * @property {String} specialtyName 专业名称
+ * @property {Schema.Types.Mixed[]} experiences 经历，参见Experience
+ * @property {Date} timeInSchool 入学时间
+ * @property {String} unionUserCode 联盟平台的用户标识
+ * @property {Schema.Types.Mixed[]} platformUsers 关联的平台用户，参见PlatformUser
  * @property {Date} insertTime 创建时间
  * @property {Date} updateTime 最近更新时间
  */
@@ -101,6 +106,9 @@ const userInfoSchema = new Schema({
     specialtyCode: {type: String, description: '专业标识'},
     specialtyName: {type: String, description: '专业名称'},
     experiences: {type: [Experience], description: '经历'},
+    timeInSchool: {type: Date, description: '入学时间'},
+    unionUserCode: {type: String, description: '联盟平台的用户标识'},
+    platformUsers: {type: [PlatformUser], description: '关联的平台用户'},
     insertTime: {
         type: Date, default: function () {
             return new Date()
