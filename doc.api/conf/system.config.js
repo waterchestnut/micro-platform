@@ -79,7 +79,7 @@ export default {
         /** 最大传送数据：256M */
         maxMessageLength: 256 * 1024 * 1024,
     },
-    /** minio存储器的配置 */
+    /** minio存储器的配置（向后兼容保留） */
     minioConfig: {
         /** 默认的节点配置 */
         defaultMinioCode: process.env['MINIO_DEFAULT'],
@@ -93,6 +93,51 @@ export default {
                 secretKey: process.env['MINIO_BASE_SECRET'],
                 bucketName: process.env['MINIO_BASE_BUCKET'],
             }
+        },
+    },
+    /** 多存储提供商的统一配置 */
+    storageConfig: {
+        /** 默认的存储提供商 */
+        defaultProvider: process.env['STORAGE_DEFAULT_PROVIDER'] || 'minio',
+        /** 各提供商的存储节点配置 */
+        providers: {
+            minio: {
+                defaultStoreCode: process.env['MINIO_DEFAULT'] || 'minioBase',
+                stores: {
+                    minioBase: {
+                        endPoint: process.env['MINIO_BASE_ENDPOINT'],
+                        port: parseInt(process.env['MINIO_BASE_PORT']),
+                        useSSL: process.env['MINIO_BASE_SSL'] === 'true',
+                        accessKey: process.env['MINIO_BASE_ACCESS'],
+                        secretKey: process.env['MINIO_BASE_SECRET'],
+                        bucketName: process.env['MINIO_BASE_BUCKET'],
+                    }
+                },
+            },
+            oss: {
+                defaultStoreCode: process.env['OSS_DEFAULT'] || 'ossBase',
+                stores: {
+                    ossBase: {
+                        region: process.env['OSS_REGION'],
+                        accessKeyId: process.env['OSS_ACCESS_KEY_ID'],
+                        accessKeySecret: process.env['OSS_ACCESS_KEY_SECRET'],
+                        bucket: process.env['OSS_BUCKET'],
+                        endpoint: process.env['OSS_ENDPOINT'],
+                        internal: process.env['OSS_INTERNAL'] === 'true',
+                    }
+                },
+            },
+            rustfs: {
+                defaultStoreCode: process.env['RUSTFS_DEFAULT'] || 'rustfsBase',
+                stores: {
+                    rustfsBase: {
+                        endpoint: process.env['RUSTFS_ENDPOINT'],
+                        accessKey: process.env['RUSTFS_ACCESS_KEY'],
+                        secretKey: process.env['RUSTFS_SECRET_KEY'],
+                        namespace: process.env['RUSTFS_NAMESPACE'],
+                    }
+                },
+            },
         },
     },
     /** 资源转换服务的配置 */

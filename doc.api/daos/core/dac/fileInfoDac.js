@@ -27,6 +27,9 @@ export class FileInfoDac extends BaseDac {
         if (options.minioCode) {
             params.$and.push({minioCode: {$eq: options.minioCode}})
         }
+        if (options.storeProvider) {
+            params.$and.push({storeProvider: {$eq: options.storeProvider}})
+        }
         if (tools.isExist(options.fileName)) {
             params.$and.push({fileName: {$regex: new RegExpExt(options.fileName, 'i', true)}})
         }

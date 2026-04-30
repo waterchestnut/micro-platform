@@ -9,6 +9,7 @@ import StatusEnum from "../enum/StatusEnum.js"
 import Tag from "../definition/Tag.js"
 import SourceTypeEnum from "../enum/SourceTypeEnum.js"
 import StoreTypeEnum from "../enum/StoreTypeEnum.js"
+import StorageProviderEnum from "../enum/StorageProviderEnum.js"
 import Operator from "../definition/Operator.js"
 
 const Schema = mongoose.Schema
@@ -27,7 +28,7 @@ const tools = doc.tools
  * @property {String} storeType 文件存储类型：参见StoreTypeEnum
  * @property {String} thumbnailUrl 文件缩略图
  * @property {String} srcFileCode 转换的文件对应的原文件标识
- * @property {String} minioCode 在minio中存储的节点配置
+ * @property {String} minioCode 在minio等存储的节点配置
  * @property {Number} status 状态：参见StatusEnum
  * @property {Schema.Types.Mixed[]} tags 标签，参见Tag
  * @property {String} encoding 编码方式
@@ -55,7 +56,8 @@ const fileInfoSchema = new Schema({
     storeType: {type: String, default: 'random', description: '文件存储类型', enum: StoreTypeEnum.toValues()},
     thumbnailUrl: {type: String, description: '文件缩略图'},
     srcFileCode: {type: String, description: '原文件标识'},
-    minioCode: {type: String, description: 'minio标识'},
+    minioCode: {type: String, description: '存储节点配置'},
+    storeProvider: {type: String, default: 'minio', description: '存储提供商', enum: StorageProviderEnum.toValues()},
     status: {type: Number, default: 0, description: '状态', enum: StatusEnum.toValues()},
     tags: {type: [Tag], description: '标签'},
     encoding: {type: String, description: '编码方式'},

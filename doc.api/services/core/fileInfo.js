@@ -6,7 +6,7 @@
 
 import fileInfoDac from '../../daos/core/dac/fileInfoDac.js'
 import retSchema from '../../daos/retSchema.js'
-import {getMinioClient} from '../../daos/minio/minioClient.js'
+import {getStorageAdapter, getDefaultAdapter} from '../../daos/storage/factory.js'
 import dayjs from 'dayjs'
 import StoreTypeEnum from '../../daos/core/enum/StoreTypeEnum.js'
 import crypto from 'crypto'
@@ -37,15 +37,13 @@ export async function getFileObject(fileCode) {
     if (!fileInfo?.fileCode) {
         throw new Error('文件不存在')
     }
-    let minioClient = getMinioClient(fileInfo.minioCode)
-    if (!minioClient) {
+    let storageAdapter = getStorageAdapter(fileInfo.storeProvider, fileInfo.minioCode)
+    if (!storageAdapter) {
         throw new Error('文件存储位不存在')
     }
-    /*let stat = await minioClient.statObject(minioClient.bucketName, fileInfo.filePath)
-    console.log(fileInfo.fileSize, stat.size)*/
     return {
         fileInfo,
-        fileStream: await minioClient.getObject(minioClient.bucketName, fileInfo.filePath)
+        fileStream: await storageAdapter.getObject(storageAdapter.bucketName, fileInfo.filePath)
     }
 }
 
@@ -94,8 +92,8 @@ export async function saveFile(fileInfo, extInfo, buffer, folder = 'general', cu
         filePath = `${folder}/${now.year()}/${now.format('YYYYMMDD')}/${fileCode}.${fileExt}`
     }
 
-    let minioClient = getMinioClient()
-    await minioClient.putObject(minioClient.bucketName, filePath, buffer, fileInfo.fileSize, {'Content-Type': fileInfo.mimetype, ...extInfo})
+    let storageAdapter = getDefaultAdapter()
+    await storageAdapter.putObject(storageAdapter.bucketName, filePath, buffer, fileInfo.fileSize, {'Content-Type': fileInfo.mimetype, ...extInfo})
 
     await fileInfoDac.upsert({
         fileCode,
@@ -106,7 +104,8 @@ export async function saveFile(fileInfo, extInfo, buffer, folder = 'general', cu
         fileSize,
         sourceType: fileInfo.sourceType,
         storeType: fileInfo.storeType,
-        minioCode: minioClient.minioCode,
+        minioCode: storageAdapter.storeCode,
+        storeProvider: storageAdapter.storeProvider,
         encoding: fileInfo.encoding,
         mimetype: fileInfo.mimetype,
         extInfo,
@@ -156,14 +155,15 @@ export async function copyFile(originalFileCode, fileInfo, folder = 'general', c
         userCode: curUserInfo.userCode,
         realName: curUserInfo.realName
     }
-    let minioClient = getMinioClient(originalFileInfo.minioCode)
-    await minioClient.copyObject(minioClient.bucketName, filePath, `/${minioClient.bucketName}/${originalFileInfo.filePath}`)
+    let storageAdapter = getStorageAdapter(originalFileInfo.storeProvider, originalFileInfo.minioCode)
+    await storageAdapter.copyObject(storageAdapter.bucketName, filePath, `/${storageAdapter.bucketName}/${originalFileInfo.filePath}`)
 
     let newInfo = {
         ...originalFileInfo,
         filePath,
         sourceType: 'copy',
-        minioCode: minioClient.minioCode,
+        minioCode: storageAdapter.storeCode,
+        storeProvider: storageAdapter.storeProvider,
         operator,
         ...fileInfo,
         fileCode,

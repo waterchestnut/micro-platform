@@ -1,22 +1,20 @@
 /**
- * @fileOverview 初始化数据
+ * @fileOverview 初始化数据（创建各存储提供商的bucket/namespace）
  * @author xianyang
  * @module
  */
 
 import './init.js'
-import {loadClients} from './daos/minio/minioClient.js'
+import {getRegisteredAdapters} from './daos/storage/factory.js'
 
-// minio：创建bucket
-let clients = loadClients()
-for (let key in clients) {
-    let minioClient = clients[key]
+let adapters = getRegisteredAdapters()
+for (let key in adapters) {
+    let adapter = adapters[key]
     try {
-        await minioClient.makeBucket(minioClient.bucketName)
+        await adapter.createBucket(adapter.bucketName || adapter.namespace)
+        console.log(`[${key}] bucket/namespace created successfully`)
     } catch (err) {
-        if (err.code === 'BucketAlreadyOwnedByYou') {
-            continue
-        }
+        console.error(`[${key}] failed to create bucket:`, err.message)
         throw err
     }
 }
