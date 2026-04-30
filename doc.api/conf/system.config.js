@@ -79,7 +79,7 @@ export default {
         /** 最大传送数据：256M */
         maxMessageLength: 256 * 1024 * 1024,
     },
-    /** 用户授权中心的配置 */
+    /** minio存储器的配置 */
     minioConfig: {
         /** 默认的节点配置 */
         defaultMinioCode: process.env['MINIO_DEFAULT'],
