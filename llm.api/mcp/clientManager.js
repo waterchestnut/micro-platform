@@ -4,7 +4,7 @@
  * @module
  */
 
-import {createMcpClient} from './sseClient.js'
+import {createMcpClient} from './mcpClient.js'
 
 const logger = (typeof llm !== 'undefined' && llm?.logger) ? llm.logger : console
 

@@ -1,23 +1,25 @@
 /**
- * @fileOverview SSE 模式的 MCP 客户端实现
+ * @fileOverview MCP 客户端实现（支持 SSE 和 Streamable HTTP 两种传输模式）
  * @author xianyang
  * @module
  */
 
 import {Client} from '@modelcontextprotocol/sdk/client/index.js'
 import {SSEClientTransport} from '@modelcontextprotocol/sdk/client/sse.js'
+import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 
 const logger = (typeof llm !== 'undefined' && llm?.logger) ? llm.logger : console
 
 /**
- * @description SSE 模式的 MCP 客户端类
+ * @description MCP 客户端类，支持 SSE 和 Streamable HTTP 两种传输模式
  */
-export class SseMcpClient {
+export class McpClient {
     constructor(serverConfig, options = {}) {
         this.serverConfig = serverConfig
         this.url = serverConfig.url
         this.name = serverConfig.name || 'unknown'
         this.transport = serverConfig.transport || 'sse'
+        this.transportOptions = serverConfig.transportOptions || {}
 
         this.options = {
             timeout: 30000,
@@ -41,13 +43,14 @@ export class SseMcpClient {
         try {
             logger.info(`正在连接到 MCP 服务器 ${this.name}: ${this.url}`)
 
-            // 验证传输类型
-            if (this.transport !== 'sse') {
+            // 根据传输类型创建对应的传输层
+            if (this.transport === 'sse') {
+                this.transportInstance = new SSEClientTransport(new URL(this.url), this.transportOptions)
+            } else if (this.transport === 'streamableHttp') {
+                this.transportInstance = new StreamableHTTPClientTransport(new URL(this.url), this.transportOptions)
+            } else {
                 throw new Error(`不支持的传输类型: ${this.transport}`)
             }
-
-            // 创建 SSE 传输层
-            this.transportInstance = new SSEClientTransport(new URL(this.url))
 
             // 创建 MCP 客户端
             this.client = new Client(
@@ -290,8 +293,8 @@ export class SseMcpClient {
  * @description 创建 MCP 客户端实例的工厂函数
  * @param {Object} serverConfig MCP 服务器配置
  * @param {Object} options 配置选项
- * @returns {SseMcpClient} MCP 客户端实例
+ * @returns {McpClient} MCP 客户端实例
  */
 export function createMcpClient(serverConfig, options = {}) {
-    return new SseMcpClient(serverConfig, options)
+    return new McpClient(serverConfig, options)
 }

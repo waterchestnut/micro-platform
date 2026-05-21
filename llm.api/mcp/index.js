@@ -5,6 +5,6 @@
  */
 
 // 核心组件导出
-export {SseMcpClient, createMcpClient} from './sseClient.js'
+export {McpClient, createMcpClient} from './mcpClient.js'
 export {McpClientManager, mcpClientManager} from './clientManager.js'
 export {McpToolManager, mcpToolManager} from './toolManager.js'

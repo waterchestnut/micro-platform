@@ -12,11 +12,24 @@ const llmChannelDataSet = {
         /** 增强检索提示词 */
         ragPrompt: `## 用户资料： \n
     {{segs}}`,
-        /** 可以调用的MCP配置列表 */
+        /** 可以调用的MCP配置列表
+         * transport 支持: 'sse' | 'streamableHttp' */
         mcpServers: {
-            searxng: {
+            /*searxng: {
                 transport: 'sse',
                 url: process.env['MCP_SEARXNG_URI']
+            },*/
+            searxng_http: {
+                transport: 'streamableHttp',
+                url: process.env['MCP_SEARXNG_HTTP_URI'],
+                transportOptions: {
+                    sessionId: null,
+                    reconnectionOptions: {
+                        maxRetries: 2,
+                        initialReconnectionDelay: 1000,
+                        maxReconnectionDelay: 30000
+                    }
+                }
             }
         },
         /** 是否启用MCP调用 */
