@@ -21,6 +21,8 @@ const tools = app.tools
  * @property {String} logoUrl 小组件的图标地址
  * @property {String} apiUrl 获取小组件内容的接口地址，该地址可以是绝对地址（需要支持跨域请求），也可以是相对地址（网关代理后的api地址）
  * @property {String} miniApiUrl 获取小组件内容的接口地址（小程序使用的代理后的地址），该地址只允许相对地址
+ * @property {String} pcRedirectUrl PC端前端默认跳转地址
+ * @property {String} miniRedirectUrl 小程序端前端默认跳转地址
  * @property {String} description 小组件描述
  * @property {Number} order 小组件在平台展示的顺序（值越小排序越靠前）
  * @property {Boolean} default2Home 是否默认显示在首页
@@ -44,6 +46,8 @@ const widgetSchema = new Schema({
     logoUrl: {type: String, description: '小组件图标'},
     apiUrl: {type: String, description: '获取小组件内容的接口地址'},
     miniApiUrl: {type: String, description: '获取小组件内容的接口地址（小程序使用的代理后的地址），该地址只允许相对地址'},
+    pcRedirectUrl: {type: String, description: 'PC端前端默认跳转地址'},
+    miniRedirectUrl: {type: String, description: '小程序端前端默认跳转地址'},
     description: {type: String, description: '小组件描述'},
     order: {type: Number, default: 0, description: '排序'},
     default2Home: {type: Boolean, default: true, description: '是否默认显示在首页'},

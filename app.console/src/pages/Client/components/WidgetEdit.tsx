@@ -204,6 +204,16 @@ const Edit: ForwardRefRenderFunction<EditAction, EditProps> = (props, ref) => {
         label='小程序API地址'
         placeholder='小程序使用的代理后的API地址（相对地址）'
       />
+      <ProFormText
+        name='pcRedirectUrl'
+        label='PC端默认跳转地址'
+        placeholder='PC端前端默认跳转地址'
+      />
+      <ProFormText
+        name='miniRedirectUrl'
+        label='小程序端默认跳转地址'
+        placeholder='小程序端前端默认跳转地址'
+      />
       <ProFormTextArea
         name='description'
         label='小组件描述'

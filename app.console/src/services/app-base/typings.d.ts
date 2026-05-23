@@ -124,6 +124,8 @@ declare namespace APPAPI {
       logoUrl?: string;
       apiUrl?: string;
       miniApiUrl?: string;
+      pcRedirectUrl?: string;
+      miniRedirectUrl?: string;
       description?: string;
       order?: number;
       default2Home?: boolean;
@@ -192,6 +194,8 @@ declare namespace APPAPI {
       logoUrl?: string;
       apiUrl?: string;
       miniApiUrl?: string;
+      pcRedirectUrl?: string;
+      miniRedirectUrl?: string;
       description?: string;
       order?: number;
       default2Home?: boolean;
@@ -388,6 +392,10 @@ declare namespace APPAPI {
     apiUrl?: string;
     /** 获取小组件内容的接口地址（小程序使用的代理后的地址），该地址只允许相对地址 */
     miniApiUrl?: string;
+    /** PC端前端默认跳转地址 */
+    pcRedirectUrl?: string;
+    /** 小程序端前端默认跳转地址 */
+    miniRedirectUrl?: string;
     /** 小组件描述 */
     description?: string;
     /** 排序 */

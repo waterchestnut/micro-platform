@@ -66,6 +66,20 @@ const WidgetManage: React.FC<WidgetManageProps> = (props) => {
       width: 80,
     },
     {
+      title: 'PC端跳转地址',
+      dataIndex: 'pcRedirectUrl',
+      width: 160,
+      render: (val) => val || '-',
+      ellipsis: true,
+    },
+    {
+      title: '小程序端跳转地址',
+      dataIndex: 'miniRedirectUrl',
+      width: 160,
+      render: (val) => val || '-',
+      ellipsis: true,
+    },
+    {
       title: '默认首页',
       dataIndex: 'default2Home',
       render: (val) => {
