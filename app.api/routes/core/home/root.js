@@ -25,9 +25,9 @@ export default async function (fastify, opts) {
                 }
             },
             tags: ['home'],
-            response: {
+            /*response: {
                 default: {...getListResSwaggerSchema(homeClientSchema)}
-            }
+            }*/
         }
     }, async function (request, reply) {
         return await homeClientService.getHomeClients(request.userInfo.userCode, request.reqParams.homeEndpoint)
@@ -109,9 +109,9 @@ export default async function (fastify, opts) {
                 }
             },
             tags: ['home'],
-            response: {
+            /*response: {
                 default: {...getListResSwaggerSchema(homeWidgetSchema)}
-            }
+            }*/
         }
     }, async function (request, reply) {
         return await homeWidgetService.getHomeWidgets(request.userInfo.userCode, request.reqParams.homeEndpoint)

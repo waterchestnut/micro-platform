@@ -33,9 +33,9 @@ export async function getHomeClients(userCode, homeEndpoint) {
     let result = []
     defaultClients.forEach(c => {
         if (addedClientCodes.has(c.clientCode)) {
-            result.push({clientCode: c.clientCode, homeEndpoint, order: c.order, fromUser: true})
+            result.push({...c, clientCode: c.clientCode, homeEndpoint, order: c.order, fromUser: true})
         } else if (!removedClientCodes.has(c.clientCode)) {
-            result.push({clientCode: c.clientCode, homeEndpoint, order: c.order, fromUser: false})
+            result.push({...c, clientCode: c.clientCode, homeEndpoint, order: c.order, fromUser: false})
         }
     })
 

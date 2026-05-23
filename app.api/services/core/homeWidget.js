@@ -33,9 +33,9 @@ export async function getHomeWidgets(userCode, homeEndpoint) {
     let result = []
     defaultWidgets.forEach(w => {
         if (addedWidgetCodes.has(w.widgetCode)) {
-            result.push({widgetCode: w.widgetCode, homeEndpoint, order: w.order, fromUser: true})
+            result.push({...w, widgetCode: w.widgetCode, homeEndpoint, order: w.order, fromUser: true})
         } else if (!removedWidgetCodes.has(w.widgetCode)) {
-            result.push({widgetCode: w.widgetCode, homeEndpoint, order: w.order, fromUser: false})
+            result.push({...w, widgetCode: w.widgetCode, homeEndpoint, order: w.order, fromUser: false})
         }
     })
 
