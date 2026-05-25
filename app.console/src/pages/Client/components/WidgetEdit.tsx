@@ -70,6 +70,7 @@ const Edit: ForwardRefRenderFunction<EditAction, EditProps> = (props, ref) => {
     let ret
     let tip
     if (widgetInfo && !widgetInfo.viewer) {
+      widgetInfo.logoUrl = formData.logoUrl
       ret = await updateWidget({...formData, widgetCode: widgetInfo.widgetCode}, apiRelativeUrls?.updateWidget)
       tip = '修改小组件'
     } else {

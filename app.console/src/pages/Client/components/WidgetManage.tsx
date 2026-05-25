@@ -55,6 +55,7 @@ const WidgetManage: React.FC<WidgetManageProps> = (props) => {
       title: '小组件图标',
       dataIndex: 'logoUrl',
       render: (val) => {
+        //console.log(val)
         if (!val) return '-'
         return <img src={getDocHttpUrl(val as string)} alt='logo'
                     style={{width: 32, height: 32, objectFit: 'contain'}}/>
