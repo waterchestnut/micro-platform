@@ -62,7 +62,7 @@ export const layout: RunTimeLayoutConfig = ({initialState, setInitialState}) => 
       markStyle: {minHeight: 'calc(100vh - 250px)'}
     },
     contentStyle: {minHeight: 'calc(100vh - 180px)'},
-    footerRender: () => <Footer/>,
+    menuFooterRender: () => <Footer/>,
     onPageChange: () => {
     },
     menu: {
