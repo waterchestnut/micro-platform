@@ -59,7 +59,7 @@ const useStyles = createStyles(({token, css}) => ({
     flex-direction: column;
     gap: 8px;
 
-    .ant-sidebar-footer {
+    .ant-pro-global-footer {
       margin-block-start: 24px;
       margin-block-end: 13px;
     }
@@ -208,7 +208,6 @@ const ConversationList: ForwardRefRenderFunction<ConversationListAction, Convers
         </div>
         <Footer
           style={{borderTop: `1px solid ${token.colorBorder}`}}
-          prefixCls='sidebar-footer'
         />
       </div>
     </div>
