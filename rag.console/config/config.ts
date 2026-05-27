@@ -133,6 +133,20 @@ export default defineConfig({
   headScripts: [
     // 解决首次加载时白屏的问题
     { src: '/scripts/loading.js', async: true },
+    {
+      content: `
+    /*用户中心接口地址*/
+    UCENTER_API_BASE='${process.env.UCENTER_API_BASE || 'http://localhost:12001'}';
+    /*用户中心平台地址*/
+    UCENTER_PLATFORM_BASE='${process.env.UCENTER_PLATFORM_BASE || 'http://localhost:11002'}';
+    /*文件服务地址*/
+    DOC_API_BASE='${process.env.DOC_API_BASE || 'http://localhost:12004'}';
+    /*文件上传大小限制*/
+    UPLOAD_FILE_SIZE_LIMIT=parseInt('${process.env.UPLOAD_FILE_SIZE_LIMIT || 500 * 1024 * 1024}');
+    /*知识库管理接口地址*/
+    RAG_API_BASE='${process.env.RAG_API_BASE || 'http://localhost:12013'}';
+    `, type: 'text/javascript'
+    },
   ],
   //================ pro 插件配置 =================
   presets: ['umi-presets-pro'],
@@ -155,15 +169,5 @@ export default defineConfig({
   },
   esbuildMinifyIIFE: true,
   requestRecord: {},
-  define: {
-    /*用户中心接口地址*/
-    UCENTER_API_BASE: process.env.UCENTER_API_BASE || 'http://localhost:12001',
-    /*用户中心平台地址*/
-    UCENTER_PLATFORM_BASE: process.env.UCENTER_PLATFORM_BASE || 'http://localhost:11002',
-    /*文件服务地址*/
-    DOC_API_BASE: process.env.DOC_API_BASE || 'http://localhost:12004',
-    UPLOAD_FILE_SIZE_LIMIT: process.env.UPLOAD_FILE_SIZE_LIMIT || 500 * 1024 * 1024,
-    /*知识库管理接口地址*/
-    RAG_API_BASE: process.env.RAG_API_BASE || 'http://localhost:12013',
-  },
+  define: {},
 });

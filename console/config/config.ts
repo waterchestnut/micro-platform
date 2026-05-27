@@ -133,6 +133,28 @@ export default defineConfig({
   headScripts: [
     // 解决首次加载时白屏的问题
     {src: '/scripts/loading.js', async: true},
+    {
+      content: `
+    /*用户中心接口地址*/
+    UCENTER_API_BASE='${process.env.UCENTER_API_BASE || 'http://localhost:12001'}';
+    /*用户中心平台地址*/
+    UCENTER_PLATFORM_BASE='${process.env.UCENTER_PLATFORM_BASE || 'http://localhost:11002'}';
+    /*文件服务地址*/
+    DOC_API_BASE='${process.env.DOC_API_BASE || 'http://localhost:12004'}';
+    /*文件上传大小限制*/
+    UPLOAD_FILE_SIZE_LIMIT=parseInt('${process.env.UPLOAD_FILE_SIZE_LIMIT || 500 * 1024 * 1024}');
+    /*APP管理接口地址*/
+    APP_API_BASE='${process.env.APP_API_BASE || 'http://localhost:12003'}';
+    /*APP管理平台地址*/
+    APP_PLATFORM_BASE='${process.env.APP_PLATFORM_BASE || 'http://localhost:11003'}';
+    /*资源服务平台地址*/
+    RESOURCE_PLATFORM_BASE='${process.env.RESOURCE_PLATFORM_BASE || 'http://localhost:11007'}';
+    /*总控制台地址*/
+    PLATFORM_BASE='${process.env.PLATFORM_BASE || 'http://localhost:11001'}';
+    /*大模型服务地址*/
+    LLM_API_BASE='${process.env.LLM_API_BASE || 'http://localhost:12008'}';
+    `, type: 'text/javascript'
+    },
   ],
   //================ pro 插件配置 =================
   presets: ['umi-presets-pro'],
@@ -148,23 +170,5 @@ export default defineConfig({
   },
   esbuildMinifyIIFE: true,
   requestRecord: {},
-  define: {
-    /*用户中心接口地址*/
-    UCENTER_API_BASE: process.env.UCENTER_API_BASE || 'http://localhost:12001',
-    /*用户中心平台地址*/
-    UCENTER_PLATFORM_BASE: process.env.UCENTER_PLATFORM_BASE || 'http://localhost:11002',
-    /*文件服务地址*/
-    DOC_API_BASE: process.env.DOC_API_BASE || 'http://localhost:12004',
-    UPLOAD_FILE_SIZE_LIMIT: process.env.UPLOAD_FILE_SIZE_LIMIT || 500 * 1024 * 1024,
-    /*APP管理接口地址*/
-    APP_API_BASE: process.env.APP_API_BASE || 'http://localhost:12003',
-    /*APP管理平台地址*/
-    APP_PLATFORM_BASE: process.env.APP_PLATFORM_BASE || 'http://localhost:11003',
-    /*资源服务平台地址*/
-    RESOURCE_PLATFORM_BASE: process.env.RESOURCE_PLATFORM_BASE || 'http://localhost:11007',
-    /*总控制台地址*/
-    PLATFORM_BASE: process.env.PLATFORM_BASE || 'http://localhost:11001',
-    /*大模型服务地址*/
-    LLM_API_BASE: process.env.LLM_API_BASE || 'http://localhost:12008',
-  },
+  define: {},
 });

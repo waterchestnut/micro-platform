@@ -134,6 +134,24 @@ export default defineConfig({
   headScripts: [
     // 解决首次加载时白屏的问题
     {src: '/scripts/loading.js', async: true},
+    {
+      content: `
+    /*用户中心接口地址*/
+    UCENTER_API_BASE='${process.env.UCENTER_API_BASE || 'http://localhost:12001'}';
+    /*用户中心平台地址*/
+    UCENTER_PLATFORM_BASE='${process.env.UCENTER_PLATFORM_BASE || 'http://localhost:11002'}';
+    /*文件服务地址*/
+    DOC_API_BASE='${process.env.DOC_API_BASE || 'http://localhost:12004'}';
+    /*文件上传大小限制*/
+    UPLOAD_FILE_SIZE_LIMIT=parseInt('${500 * 1024 * 1024}');
+    /*大模型服务地址*/
+    LLM_API_BASE='${process.env.LLM_API_BASE || 'http://localhost:12008'}';
+    /*文献解读平台地址*/
+    PDF_VIEWER_BASE='${process.env.PDF_VIEWER_BASE || 'http://localhost:11016'}';
+    /*资源服务地址*/
+    RESOURCE_API_BASE='${process.env.RESOURCE_API_BASE || 'http://localhost:12007'}';
+    `, type: 'text/javascript'
+    },
   ],
   //================ pro 插件配置 =================
   presets: ['umi-presets-pro'],
@@ -163,21 +181,7 @@ export default defineConfig({
   },
   esbuildMinifyIIFE: true,
   requestRecord: {},
-  define: {
-    /*用户中心接口地址*/
-    UCENTER_API_BASE: process.env.UCENTER_API_BASE || 'http://localhost:12001',
-    /*用户中心平台地址*/
-    UCENTER_PLATFORM_BASE: process.env.UCENTER_PLATFORM_BASE || 'http://localhost:11002',
-    /*文件服务地址*/
-    DOC_API_BASE: process.env.DOC_API_BASE || 'http://localhost:12004',
-    UPLOAD_FILE_SIZE_LIMIT: 500 * 1024 * 1024,
-    /*大模型服务地址*/
-    LLM_API_BASE: process.env.LLM_API_BASE || 'http://localhost:12008',
-    /*文献解读平台地址*/
-    PDF_VIEWER_BASE: process.env.PDF_VIEWER_BASE || 'http://localhost:11016',
-    /*资源服务地址*/
-    RESOURCE_API_BASE: process.env.RESOURCE_API_BASE || 'http://localhost:12007',
-  },
+  define: {},
   alias: {
     'antd/lib/table': path.resolve(__dirname, '../node_modules/antd/es/table'),
     'antd/lib/grid': path.resolve(__dirname, '../node_modules/antd/es/grid'),
