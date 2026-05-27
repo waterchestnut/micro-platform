@@ -62,7 +62,7 @@ type AttachmentItem = GetProp<AttachmentsProps, 'items'>[number];
 
 const useStyles = createStyles(({token, css}) => ({
   container: css`
-    height: 100%;
+    height: calc(100vh - 64px);
     background-color: ${token.colorBgLayout};
   `,
   main: css`
