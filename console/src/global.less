@@ -66,6 +66,16 @@ ol {
   overflow: auto;
 }
 
+.ant-pro-layout main.ant-pro-layout-content {
+  height: calc(100vh - 64px);
+  overflow: auto;
+
+  .app-main {
+    height: 100%;
+    overflow: visible;
+  }
+}
+
 .ant-pro-sider-collapsed .ant-pro-sider-footer {
   display: none;
 }
@@ -192,10 +202,6 @@ ol {
 
 .ant-menu-inline-collapsed > .ant-menu-item, .ant-menu-inline-collapsed > .ant-menu-item-group > .ant-menu-item-group-list > .ant-menu-item, .ant-menu-inline-collapsed > .ant-menu-item-group > .ant-menu-item-group-list > .ant-menu-submenu > .ant-menu-submenu-title, .ant-menu-inline-collapsed > .ant-menu-submenu > .ant-menu-submenu-title {
   padding-inline: 0;
-}
-
-.ant-pro-layout main.ant-pro-layout-content {
-  height: calc(100vh - 64px);
 }
 
 .ant-pro-top-nav-header-logo, .ant-pro-global-header-logo, .ant-pro-sider-logo {
