@@ -30,6 +30,7 @@ import {ResponseStructure} from '@/services/request' // 按要求保留
 import {setCookie} from '@/utils/cookie'
 import WechatLoginModal from './WechatLoginModal'
 import {getWechatConfig} from '@/services/ucenter/wechatAuth'
+import {getCarsiConfig} from '@/services/ucenter/carsiAuth'
 
 interface LoginResult {
   status?: string;
@@ -92,6 +93,7 @@ const Login: React.FC = () => {
   const [captchaHtml, setCaptchaHtml] = useState('')
   const [wechatModalOpen, setWechatModalOpen] = useState(false)
   const [allowRegister, setAllowRegister] = useState(true)
+  const [carsiEnabled, setCarsiEnabled] = useState(false)
   const {token} = theme.useToken()
   // 2. 使用 useForm Hook 获取 form 实例
   const [form] = Form.useForm()
@@ -100,6 +102,9 @@ const Login: React.FC = () => {
     refreshCaptcha()
     getWechatConfig().then(res => {
       if (res.code === 0) setAllowRegister(res.data.allowRegister !== false)
+    }).catch(() => {})
+    getCarsiConfig().then(res => {
+      if (res.code === 0 && res.data.enabled) setCarsiEnabled(true)
     }).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // 保留原有的依赖数组
@@ -182,6 +187,58 @@ const Login: React.FC = () => {
     const urlParams = new URL(window.location.href).searchParams
     // @ts-ignore
     location.href = urlParams.get('retUrl') || PLATFORM_BASE || '/'
+  }
+
+  const handleCarsiLogin = () => {
+    const w = 900, h = 700
+    const left = (screen.width - w) / 2
+    const top = (screen.height - h) / 2
+    // @ts-ignore
+    const loginUrl = UCENTER_API_BASE + '/public-bin/carsi/login'
+    const popup = window.open(loginUrl, 'carsiLogin', `width=${w},height=${h},left=${left},top=${top}`)
+    if (!popup) {
+      message.warning('请允许浏览器弹窗后重试')
+      return
+    }
+
+    let resolved = false
+    const cleanup = () => {
+      resolved = true
+      window.removeEventListener('message', onMessage)
+      window.removeEventListener('focus', onFocus)
+      clearInterval(checkClosed)
+      if (popup && !popup.closed) popup.close()
+    }
+
+    const onMessage = (e: MessageEvent) => {
+      if (e.data?.type === 'carsiLogin') {
+        cleanup()
+        if (e.data.success) {
+          successMessage('CARSI登录成功')
+          const urlParams = new URL(window.location.href).searchParams
+          // @ts-ignore
+          location.href = urlParams.get('retUrl') || PLATFORM_BASE || '/'
+        }
+      }
+    }
+
+    const onFocus = () => {
+      if (!resolved) {
+        cleanup()
+      }
+    }
+
+    window.addEventListener('message', onMessage)
+    window.addEventListener('focus', onFocus)
+
+    const checkClosed = setInterval(() => {
+      if (popup.closed) {
+        cleanup()
+        const urlParams = new URL(window.location.href).searchParams
+        // @ts-ignore
+        location.href = urlParams.get('retUrl') || PLATFORM_BASE || '/'
+      }
+    }, 500)
   }
 
   const {status, type: loginType, msg} = userLoginState
@@ -270,21 +327,26 @@ const Login: React.FC = () => {
               </span>
                 </Divider>
                 <Space align='center' size={24}>
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'center',
-                      alignItems: 'center',
-                      flexDirection: 'column',
-                      height: 40,
-                      width: 40,
-                      border: '1px solid ' + token.colorPrimaryBorder,
-                      borderRadius: '50%',
-                    }}
-                    title='教务系统登录'
-                  >
-                    <ReconciliationOutlined className={styles.iconStyles} style={{color: '#1677FF'}}/>
-                  </div>
+                  {carsiEnabled && (
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        flexDirection: 'column',
+                        height: 40,
+                        width: 40,
+                        border: '1px solid ' + token.colorPrimaryBorder,
+                        borderRadius: '50%',
+                        cursor: 'pointer',
+                      }}
+                      title='CARSI登录'
+                      onClick={handleCarsiLogin}
+                    >
+                      {/*<ReconciliationOutlined className={styles.iconStyles} style={{color: '#1677FF'}}/>*/}
+                      <img src='/carsi.webp' alt='CARSI' style={{width: '60%', height: '60%'}}/>
+                    </div>
+                  )}
                   <div
                     style={{
                       display: 'flex',

@@ -198,4 +198,23 @@ export default {
             appSecret: process.env['WECHAT_MP_APP_SECRET'] || '',
         },
     },
+    /** CARSI 教育联邦认证 OAuth2 配置 */
+    carsi: {
+        /** OAuth授权端点 */
+        authorizeUrl: process.env['CARSI_AUTHORIZE_URL'] || '',
+        /** OAuth令牌端点 */
+        tokenUrl: process.env['CARSI_TOKEN_URL'] || '',
+        /** OAuth用户信息端点 */
+        userinfoUrl: process.env['CARSI_USERINFO_URL'] || '',
+        /** 客户端标识 */
+        clientId: process.env['CARSI_CLIENT_ID'] || '',
+        /** 客户端密钥 */
+        clientSecret: process.env['CARSI_CLIENT_SECRET'] || '',
+        /** OAuth回调地址 */
+        redirectUri: process.env['CARSI_REDIRECT_URI'] || '',
+        /** OAuth授权范围 */
+        scope: process.env['CARSI_SCOPE'] || 'openid profile email',
+        /** 登录状态缓存时间，单位：秒 */
+        stateExpiresTime: 600,
+    },
 }

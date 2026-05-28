@@ -71,4 +71,9 @@ export default {
     'FAIL_WECHAT_SERVER_ERROR': {code: 7007, msg: '微信登录服务异常'},
     'FAIL_WECHAT_ALREADY_BIND': {code: 7008, msg: '该微信已绑定其他账号'},
     'FAIL_WECHAT_REGISTER_DISABLED': {code: 7009, msg: '当前系统不允许注册新用户'},
+
+    'FAIL_CARSI_CONFIG_MISS': {code: 8001, msg: 'CARSI登录未配置'},
+    'FAIL_CARSI_PARAM_MISS': {code: 8002, msg: 'CARSI请求参数不全'},
+    'FAIL_CARSI_LOGIN_FAILED': {code: 8003, msg: 'CARSI登录失败'},
+    'FAIL_CARSI_SERVER_ERROR': {code: 8004, msg: 'CARSI服务异常'},
 }

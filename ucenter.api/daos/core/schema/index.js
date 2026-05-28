@@ -21,6 +21,7 @@ import refreshTokenSchema from './refreshTokenSchema.js'
 import mobileRangeSchema from './mobileRangeSchema.js'
 import agreementSchema from './agreementSchema.js'
 import wechatUserSchema from './wechatUserSchema.js'
+import carsiUserSchema from './carsiUserSchema.js'
 
 const mongodbConfig = ucenter.config.mongodbConfig
 
@@ -58,3 +59,4 @@ export const RefreshToken = conn.model('RefreshToken', refreshTokenSchema, 'refr
 export const MobileRange = conn.model('MobileRange', mobileRangeSchema, 'mobileRange')
 export const Agreement = conn.model('Agreement', agreementSchema, 'agreement')
 export const WechatUser = conn.model('WechatUser', wechatUserSchema, 'wechatUser')
+export const CarsiUser = conn.model('CarsiUser', carsiUserSchema, 'carsiUser')
