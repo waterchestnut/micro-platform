@@ -50,25 +50,10 @@ const WechatLoginModal: React.FC<WechatLoginModalProps> = ({open, onCancel, onSu
   const [bindEmailCaptchaHtml, setBindEmailCaptchaHtml] = useState('')
   const [bindEmailCode, setBindEmailCode] = useState('')
 
-  const loadQrCode = async () => {
-    setStatus('loading')
-    try {
-      const [authRes, configRes] = await Promise.all([getWechatAuthUrl(), getWechatConfig()])
-      if (configRes.code === 0) {
-        setAllowRegister(configRes.data.allowRegister !== false)
-      }
-      if (authRes.code !== 0) {
-        setStatus('error')
-        setErrorMsg(authRes.msg || '获取微信登录链接失败')
-        return
-      }
-      setAuthUrl(authRes.data.authUrl)
-      setStateKey(authRes.data.state)
-      setStatus('qrcode')
-      startPolling(authRes.data.state)
-    } catch (err) {
-      setStatus('error')
-      setErrorMsg('网络异常，请重试')
+  const stopPolling = () => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current)
+      pollingRef.current = undefined
     }
   }
 
@@ -78,7 +63,7 @@ const WechatLoginModal: React.FC<WechatLoginModalProps> = ({open, onCancel, onSu
       try {
         const res = await getWechatLoginStatus(state)
         if (res.code !== 0) {
-          if (res.code == 7004) {
+          if (res.code === 7004) {
             setStatus('expired')
             stopPolling()
           }
@@ -104,23 +89,6 @@ const WechatLoginModal: React.FC<WechatLoginModalProps> = ({open, onCancel, onSu
     }, 2000)
   }
 
-  const stopPolling = () => {
-    if (pollingRef.current) {
-      clearInterval(pollingRef.current)
-      pollingRef.current = undefined
-    }
-  }
-
-  useEffect(() => {
-    if (open) {
-      loadQrCode()
-    } else {
-      stopPolling()
-      resetState()
-    }
-    return () => stopPolling()
-  }, [open])
-
   const resetState = () => {
     setAuthUrl('')
     setStateKey('')
@@ -145,6 +113,38 @@ const WechatLoginModal: React.FC<WechatLoginModalProps> = ({open, onCancel, onSu
     setBindEmailCode('')
   }
 
+  const loadQrCode = async () => {
+    setStatus('loading')
+    try {
+      const [authRes, configRes] = await Promise.all([getWechatAuthUrl(), getWechatConfig()])
+      if (configRes.code === 0) {
+        setAllowRegister(configRes.data.allowRegister !== false)
+      }
+      if (authRes.code !== 0) {
+        setStatus('error')
+        setErrorMsg(authRes.msg || '获取微信登录链接失败')
+        return
+      }
+      setAuthUrl(authRes.data.authUrl)
+      setStateKey(authRes.data.state)
+      setStatus('qrcode')
+      startPolling(authRes.data.state)
+    } catch (err) {
+      setStatus('error')
+      setErrorMsg('网络异常，请重试')
+    }
+  }
+
+  useEffect(() => {
+    if (open) {
+      loadQrCode()
+    } else {
+      stopPolling()
+      resetState()
+    }
+    return () => stopPolling()
+  }, [open])
+
   const handleRegister = async () => {
     try {
       const res = await registerWechatUser(stateKey)
@@ -158,18 +158,18 @@ const WechatLoginModal: React.FC<WechatLoginModalProps> = ({open, onCancel, onSu
     }
   }
 
-  const goBindLogin = async () => {
-    setStatus('bindLogin')
-    setBindTab('account')
-    refreshAccountCaptcha()
-  }
-
   const refreshAccountCaptcha = async () => {
     const res = await getCaptcha(bindCaptchaKey)
     if (res.code === 0) {
       setBindCaptchaKey(res.data.key)
       setBindCaptchaHtml(res.data.image)
     }
+  }
+
+  const goBindLogin = async () => {
+    setStatus('bindLogin')
+    setBindTab('account')
+    refreshAccountCaptcha()
   }
 
   const refreshPhoneCaptcha = async () => {
@@ -329,8 +329,8 @@ const WechatLoginModal: React.FC<WechatLoginModalProps> = ({open, onCancel, onSu
                       <Input prefix={<SafetyOutlined/>} placeholder='图形验证码'
                              value={bindCaptcha} onChange={e => setBindCaptcha(e.target.value)}
                              suffix={<div dangerouslySetInnerHTML={{__html: bindCaptchaHtml}}
-                                           onClick={refreshAccountCaptcha}
-                                           style={{cursor: 'pointer', width: 80, height: 32}}/>} />
+                                          onClick={refreshAccountCaptcha}
+                                          style={{cursor: 'pointer', width: 80, height: 32}}/>} />
                     </div>
                   )
                 },
@@ -346,8 +346,8 @@ const WechatLoginModal: React.FC<WechatLoginModalProps> = ({open, onCancel, onSu
                              style={{marginBottom: 12}}
                              value={bindPhoneCaptcha} onChange={e => setBindPhoneCaptcha(e.target.value)}
                              suffix={<div dangerouslySetInnerHTML={{__html: bindPhoneCaptchaHtml}}
-                                           onClick={refreshPhoneCaptcha}
-                                           style={{cursor: 'pointer', width: 80, height: 32}}/>} />
+                                          onClick={refreshPhoneCaptcha}
+                                          style={{cursor: 'pointer', width: 80, height: 32}}/>} />
                       <Input prefix={<LockOutlined/>} placeholder='短信验证码'
                              value={bindSmsCode} onChange={e => setBindSmsCode(e.target.value)}
                              suffix={<a onClick={handleGetSmsCode}>获取验证码</a>} />
@@ -366,8 +366,8 @@ const WechatLoginModal: React.FC<WechatLoginModalProps> = ({open, onCancel, onSu
                              style={{marginBottom: 12}}
                              value={bindEmailCaptcha} onChange={e => setBindEmailCaptcha(e.target.value)}
                              suffix={<div dangerouslySetInnerHTML={{__html: bindEmailCaptchaHtml}}
-                                           onClick={refreshEmailCaptcha}
-                                           style={{cursor: 'pointer', width: 80, height: 32}}/>} />
+                                          onClick={refreshEmailCaptcha}
+                                          style={{cursor: 'pointer', width: 80, height: 32}}/>} />
                       <Input prefix={<LockOutlined/>} placeholder='邮箱验证码'
                              value={bindEmailCode} onChange={e => setBindEmailCode(e.target.value)}
                              suffix={<a onClick={handleGetEmailCode}>获取验证码</a>} />

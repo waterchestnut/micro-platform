@@ -668,6 +668,9 @@ const Login: React.FC = () => {
                   justifyContent: 'right',
                   flex: 1
                 }}
+                onClick={() => {
+                  history.replace(`/user/forget${history.location.search}`)
+                }}
               >
                 <FormattedMessage id='pages.login.forgotPassword' defaultMessage='忘记密码'/>
               </a>

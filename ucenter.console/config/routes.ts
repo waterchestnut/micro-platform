@@ -27,6 +27,12 @@ export default [
     layout: false,
   },
   {
+    name: 'forget',
+    path: '/user/forget',
+    component: './User/Forget',
+    layout: false,
+  },
+  {
     path: '/',
     access: 'normalRouteFilter',
     authority: ['ucenter-browse'],
