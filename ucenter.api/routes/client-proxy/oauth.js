@@ -36,9 +36,7 @@ export default async function (fastify, opts) {
         if (!tools.isExist(stateCode) || stateCode !== request.query.state) {
             /*state过期，重新跳转*/
             let retUrl = request.query.retUrl || '/'
-            reply.redirect(retUrl)
-            reply.end()
-            return {}
+            return reply.redirect(retUrl)
         }
 
         let tokenRetUrl = (request.headers.protocol || request.protocol) + '://' + request.headers.host.replace(/:(80|443)$/, '') + clientProxyConfig.authBackUrl + '?retUrl=' + encodeURIComponent(request.query.retUrl)
@@ -48,9 +46,7 @@ export default async function (fastify, opts) {
         reply.cookie('param-refreshToken', token.refreshToken)
 
         let retUrl = request.query.retUrl || '/'
-        reply.redirect(retUrl)
-
-        return {}
+        return reply.redirect(retUrl)
     })
 
     fastify.get('/sign-in', {
