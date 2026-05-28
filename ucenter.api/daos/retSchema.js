@@ -60,5 +60,15 @@ export default {
     'FAIL_MAIL_AUTH_INVALID': {code: 6028, msg: '邮箱验证码错误'},
     'FAIL_USER_EMAIL_HAS_BIND': {code: 6029, msg: '邮箱已存在'},
     'FAIL_USER_EMAIL_NOT_BIND': {code: 6030, msg: '邮箱未绑定账号'},
-    'FAIL_USER_EMAIL_BIND': {code:6031, msg: '邮箱绑定失败'}
+    'FAIL_USER_EMAIL_BIND': {code:6031, msg: '邮箱绑定失败'},
+
+    'FAIL_WECHAT_CONFIG_MISS': {code: 7001, msg: '微信登录未配置'},
+    'FAIL_WECHAT_PARAM_MISS': {code: 7002, msg: '微信回调参数不全'},
+    'FAIL_WECHAT_LOGIN_FAILED': {code: 7003, msg: '微信登录失败'},
+    'FAIL_WECHAT_STATE_EXPIRED': {code: 7004, msg: '微信扫码已过期'},
+    'FAIL_WECHAT_TOKEN_ERROR': {code: 7005, msg: '获取微信Token失败'},
+    'FAIL_WECHAT_USERINFO_ERROR': {code: 7006, msg: '获取微信用户信息失败'},
+    'FAIL_WECHAT_SERVER_ERROR': {code: 7007, msg: '微信登录服务异常'},
+    'FAIL_WECHAT_ALREADY_BIND': {code: 7008, msg: '该微信已绑定其他账号'},
+    'FAIL_WECHAT_REGISTER_DISABLED': {code: 7009, msg: '当前系统不允许注册新用户'},
 }

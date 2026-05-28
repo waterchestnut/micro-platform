@@ -263,6 +263,9 @@ export default async function (fastify, opts) {
             }
         }
     }, async function (request, reply) {
+        if (!config.allowRegister) {
+            return {code: 7009, msg: '当前系统不允许注册新用户'}
+        }
         return await smsLoginService.registerByMobile(request.reqParams)
     })
 
@@ -316,6 +319,9 @@ export default async function (fastify, opts) {
             }
         }
     }, async function (request, reply) {
+        if (!config.allowRegister) {
+            return {code: 7009, msg: '当前系统不允许注册新用户'}
+        }
         return await emailLoginService.registerByEmail(request.reqParams)
     })
 

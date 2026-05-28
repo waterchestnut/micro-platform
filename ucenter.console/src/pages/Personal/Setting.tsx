@@ -2,6 +2,7 @@ import React, {useEffect, useState} from 'react'
 import {queryCurrentUser} from '@/services/ucenter/user'
 import MobileEdit from './components/MobileEdit'
 import EmailEdit from './components/EmailEdit'
+import WechatBindEdit from './components/WechatBindEdit'
 import {PageLoading} from '@ant-design/pro-components'
 
 interface UserInfo {
@@ -49,6 +50,7 @@ const Setting: React.FC = () => {
           <>
             <MobileEdit mobile={userInfo.mobile} onEditFinish={handleRefresh}/>
             <EmailEdit email={userInfo.email} onEditFinish={handleRefresh}/>
+            <WechatBindEdit onEditFinish={handleRefresh}/>
           </>
         )
       }

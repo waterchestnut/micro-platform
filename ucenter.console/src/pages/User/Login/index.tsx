@@ -28,6 +28,8 @@ import {getCaptcha} from '@/services/ucenter/captcha'
 import {errorMessage, successMessage} from '@/utils/msg'
 import {ResponseStructure} from '@/services/request' // 按要求保留
 import {setCookie} from '@/utils/cookie'
+import WechatLoginModal from './WechatLoginModal'
+import {getWechatConfig} from '@/services/ucenter/wechatAuth'
 
 interface LoginResult {
   status?: string;
@@ -88,12 +90,17 @@ const Login: React.FC = () => {
   const intl = useIntl()
   const [captchaKey, setCaptchaKey] = useState('')
   const [captchaHtml, setCaptchaHtml] = useState('')
+  const [wechatModalOpen, setWechatModalOpen] = useState(false)
+  const [allowRegister, setAllowRegister] = useState(true)
   const {token} = theme.useToken()
   // 2. 使用 useForm Hook 获取 form 实例
   const [form] = Form.useForm()
 
   useEffect(() => {
     refreshCaptcha()
+    getWechatConfig().then(res => {
+      if (res.code === 0) setAllowRegister(res.data.allowRegister !== false)
+    }).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []) // 保留原有的依赖数组
 
@@ -165,6 +172,17 @@ const Login: React.FC = () => {
     }
   }
 
+  const handleWechatSuccess = (accessToken: string, refreshToken: string) => {
+    setWechatModalOpen(false)
+    setCookie('param-accessToken', accessToken)
+    if (refreshToken) {
+      setCookie('param-refreshToken', refreshToken)
+    }
+    successMessage('微信登录成功！')
+    const urlParams = new URL(window.location.href).searchParams
+    // @ts-ignore
+    location.href = urlParams.get('retUrl') || PLATFORM_BASE || '/'
+  }
 
   const {status, type: loginType, msg} = userLoginState
 
@@ -277,8 +295,10 @@ const Login: React.FC = () => {
                       width: 40,
                       border: '1px solid ' + token.colorPrimaryBorder,
                       borderRadius: '50%',
+                      cursor: 'pointer',
                     }}
                     title='微信扫码登录'
+                    onClick={() => setWechatModalOpen(true)}
                   >
                     <WechatOutlined className={styles.iconStyles} style={{color: '#FF6A10'}}/>
                   </div>
@@ -633,13 +653,15 @@ const Login: React.FC = () => {
               {/*<ProFormCheckbox noStyle name="autoLogin">
               <FormattedMessage id="pages.login.rememberMe" defaultMessage="自动登录" />
             </ProFormCheckbox>*/}
-              <a
-                onClick={() => {
-                  history.replace(`/user/register${history.location.search}`)
-                }}
-              >
-                <FormattedMessage id='pages.login.registerAccount' defaultMessage='注册账号'/>
-              </a>
+              {allowRegister && (
+                <a
+                  onClick={() => {
+                    history.replace(`/user/register${history.location.search}`)
+                  }}
+                >
+                  <FormattedMessage id='pages.login.registerAccount' defaultMessage='注册账号'/>
+                </a>
+              )}
               <a
                 style={{
                   display: 'flex',
@@ -654,6 +676,11 @@ const Login: React.FC = () => {
         </div>
       </div>
       <Footer style={{background: 'rgba(245,245,245,0.6)'}}/> {/* Footer 保持不变 */}
+      <WechatLoginModal
+        open={wechatModalOpen}
+        onCancel={() => setWechatModalOpen(false)}
+        onSuccess={handleWechatSuccess}
+      />
     </div>
   )
 }

@@ -6,6 +6,7 @@ import retSchema from '../../../daos/retSchema.js'
 import {getUserPrivs} from '../../../services/core/userInfo.js'
 import * as smsLoginService from '../../../services/sms/smsLogin.js'
 import * as emailLoginService from '../../../services/email/emailLogin.js'
+import * as wechatService from '../../../services/wechat/wechatLogin.js'
 
 export default async function (fastify, opts) {
     const userSchema = {$ref: 'fullParamModels#/properties/UserInfo'}
@@ -149,6 +150,72 @@ export default async function (fastify, opts) {
         }
         const userCode = request.userInfo.userCode
         return await emailLoginService.updateEmail(request.reqParams, userCode, 0)
+    })
+
+    fastify.get('/cur/wechat/bind-status', {
+        schema: {
+            description: '查询当前用户微信绑定状态',
+            summary: '微信绑定状态',
+            tags: ['user'],
+            response: {
+                default: {
+                    ...getResSwaggerSchema({
+                        type: 'object',
+                        properties: {
+                            bound: {type: 'boolean', description: '是否已绑定'},
+                            nickName: {type: 'string', description: '微信昵称'},
+                            avatarUrl: {type: 'string', description: '微信头像'}
+                        }
+                    })
+                }
+            }
+        }
+    }, async function (request, reply) {
+        if (!request.userInfo) {
+            return {...retSchema.FAIL_TOKEN_NO_REDIRECT}
+        }
+        return await wechatService.getWechatBindStatus(request.userInfo.userCode)
+    })
+
+    fastify.post('/cur/wechat/bind-url', {
+        schema: {
+            description: '获取绑定微信的二维码（需登录态）',
+            summary: '获取微信绑定二维码',
+            tags: ['user'],
+            response: {
+                default: {
+                    ...getResSwaggerSchema({
+                        type: 'object',
+                        properties: {
+                            authUrl: {type: 'string', description: '微信授权URL'},
+                            state: {type: 'string', description: '绑定状态标识'},
+                            expiresIn: {type: 'number', description: '过期时间(毫秒)'}
+                        }
+                    })
+                }
+            }
+        }
+    }, async function (request, reply) {
+        if (!request.userInfo) {
+            return {...retSchema.FAIL_TOKEN_NO_REDIRECT}
+        }
+        return await wechatService.getWechatAuthUrl(request.userInfo.userCode)
+    })
+
+    fastify.post('/cur/wechat/unbind', {
+        schema: {
+            description: '解除当前用户的微信绑定',
+            summary: '解除微信绑定',
+            tags: ['user'],
+            response: {
+                default: {...getResSwaggerSchema()}
+            }
+        }
+    }, async function (request, reply) {
+        if (!request.userInfo) {
+            return {...retSchema.FAIL_TOKEN_NO_REDIRECT}
+        }
+        return await wechatService.unbindWechat(request.userInfo.userCode)
     })
 
 }

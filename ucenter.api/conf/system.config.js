@@ -178,4 +178,24 @@ export default {
         /** 默认的使用模式*/
         default: ''
     },
+    /** 是否允许用户自行注册，默认true，设为false时关闭注册通道 */
+    allowRegister: process.env['ALLOW_REGISTER'] !== 'false',
+    /** 微信开放平台扫码登录配置 */
+    wechat: {
+        /** 微信开放平台 AppID */
+        appId: process.env['WECHAT_APP_ID'] || '',
+        /** 微信开放平台 AppSecret */
+        appSecret: process.env['WECHAT_APP_SECRET'] || '',
+        /** 微信OAuth回调地址 */
+        redirectUri: process.env['WECHAT_REDIRECT_URI'] || '',
+        /** 微信扫码登录状态缓存时间，单位：秒 */
+        stateExpiresTime: 300,
+        /** 微信小程序配置 */
+        miniProgram: {
+            /** 小程序 AppID */
+            appId: process.env['WECHAT_MP_APP_ID'] || '',
+            /** 小程序 AppSecret */
+            appSecret: process.env['WECHAT_MP_APP_SECRET'] || '',
+        },
+    },
 }
