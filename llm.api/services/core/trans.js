@@ -13,6 +13,74 @@ const config = llm.config
 const llmConfig = config.models.deepseek31
 
 /**
+ * @description 检测文本是否为非中文，若是则翻译为简体中文，返回整段翻译和逐句翻译
+ * @author xianyang
+ * @param {String} sourceText 原文，不能超过8000字
+ * @param {Object} options 附加选项
+ * @returns {Promise<{fullTrans: string, sentenceTrans: Array<{original: string, translation: string}>}>}
+ */
+export async function nonChineseTrans(sourceText, options = {}) {
+    if (!sourceText) {
+        return {fullTrans: '', sentenceTrans: []}
+    }
+
+    if (sourceText.length > 8000) {
+        throw new Error('文本不能超过8000字')
+    }
+
+    const chineseRegex = /[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]/
+    if (chineseRegex.test(sourceText)) {
+        return {fullTrans: '', sentenceTrans: []}
+    }
+
+    const openai = new OpenAI({
+        apiKey: llmConfig.apiKey,
+        baseURL: llmConfig.baseURL,
+    })
+
+    const sysPrompt = `你是一个多语言翻译高手。请将用户提供的非中文原文翻译为简体中文。
+你需要返回以下格式的JSON：
+{
+  "fullTrans": "整段翻译后的文本",
+  "sentenceTrans": [
+    {"original": "第一句原文", "translation": "第一句译文"},
+    {"original": "第二句原文", "translation": "第二句译文"}
+  ]
+}
+要求：
+1. 整段翻译（fullTrans）是对整个原文的连贯翻译
+2. 逐句翻译（sentenceTrans）是将原文按句子拆分后逐句翻译
+3. 仅返回JSON，不要额外解释
+4. 如果无法识别或无法翻译，fullTrans为空字符串，sentenceTrans为空数组`
+
+    let ret = await openai.chat.completions.create({
+        model: llmConfig.model,
+        messages: [
+            {'role': 'system', 'content': sysPrompt},
+            {'role': 'user', 'content': `**原文：**\n${sourceText}`}
+        ],
+        max_tokens: llmConfig.maxTokens,
+        temperature: 0.7,
+        stream: false
+    })
+
+    if (!ret?.choices?.length) {
+        return {fullTrans: '', sentenceTrans: []}
+    }
+
+    try {
+        const content = ret.choices[0].message.content
+        if (content.startsWith('无法识别与翻译')) {
+            return {fullTrans: '', sentenceTrans: []}
+        }
+        return JSON.parse(content)
+    } catch (e) {
+        logger.error(e)
+        return {fullTrans: '', sentenceTrans: []}
+    }
+}
+
+/**
  * @description 自动翻译原文信息
  * @author xianyang
  * @param {String} sourceText 原文
