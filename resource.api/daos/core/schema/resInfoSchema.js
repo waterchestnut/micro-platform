@@ -12,6 +12,7 @@ import FileInfo from '../definition/FileInfo.js'
 import ResManageTypeEnum from '../enum/ResManageTypeEnum.js'
 import Operator from '../definition/Operator.js'
 import RagStatusEnum from '../enum/RagStatusEnum.js'
+import SentenceTransItem from '../definition/SentenceTransItem.js'
 
 const Schema = mongoose.Schema
 const tools = resource.tools
@@ -20,8 +21,12 @@ const tools = resource.tools
  * @description 定义resInfo的结构
  * @property {String} resCode 唯一标识
  * @property {String} title 标题
+ * @property {String} titleCnTrans 翻译后的中文标题
  * @property {String[]} author 作者
  * @property {String} abstract 摘要与简介
+ * @property {String} abstractCnTrans 翻译后的中文摘要（整段翻译）
+ * @property {SentenceTransItem[]} abstractCnSentenceTrans 翻译后的中文摘要（逐句翻译），参见SentenceTransItem
+ * @property {String} language 资源原语言
  * @property {String} publisher 出版社
  * @property {String} publishDate 出版时间
  * @property {String} resType 类型：参见ResTypeEnum
@@ -60,8 +65,12 @@ const resInfoSchema = new Schema({
         required: true
     },
     title: {type: String, description: '标题'},
+    titleCnTrans: {type: String, description: '翻译后的中文标题'},
     author: {type: [String], description: '作者'},
     abstract: {type: String, description: '摘要与简介'},
+    abstractCnTrans: {type: String, description: '翻译后的中文摘要（整段翻译）'},
+    abstractCnSentenceTrans: {type: [SentenceTransItem], description: '翻译后的中文摘要（逐句翻译）'},
+    language: {type: String, description: '资源原语言'},
     publisher: {type: String, description: '出版社'},
     publishDate: {type: String, description: '出版时间'},
     resType: {type: String, description: '类型', enum: ResTypeEnum.toValues()},
