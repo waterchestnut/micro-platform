@@ -43,6 +43,10 @@ export default async function (fastify, opts) {
             if (!isOwner) {
                 throw new Error('无权限操作，仅所有者可执行此操作')
             }
+        } else if (url?.startsWith('/core/rag-my/member/quit')) {
+            if (!isMember) {
+                throw new Error('您不是该知识库的成员')
+            }
         } else if (writeRoutes.some(r => url?.startsWith(r)) || url?.startsWith('/core/rag-my/member/') || url?.startsWith('/core/rag-my/application/handle')) {
             if (!isOwner && !isAdmin) {
                 throw new Error('无权限操作，仅管理员或所有者可执行此操作')

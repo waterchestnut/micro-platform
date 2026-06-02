@@ -54,6 +54,26 @@ export default async function (fastify, opts) {
         return await ragInfoService.removeMember(request.userInfo, request.reqParams.ragCode, request.reqParams.userCode)
     })
 
+    fastify.post('/member/quit', {
+        schema: {
+            description: '退出知识库',
+            summary: '当前用户主动退出知识库',
+            body: {
+                type: 'object',
+                properties: {
+                    ragCode: {type: 'string'},
+                },
+                required: ['ragCode']
+            },
+            tags: ['rag-my'],
+            response: {
+                default: {...getResSwaggerSchema()}
+            }
+        }
+    }, async function (request, reply) {
+        return await ragInfoService.quitMember(request.userInfo, request.reqParams.ragCode)
+    })
+
     fastify.post('/member/update-type', {
         schema: {
             description: '更新成员角色',

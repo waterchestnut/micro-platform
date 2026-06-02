@@ -2,8 +2,10 @@ import React, {useEffect, useState} from 'react'
 import RagInfoDetail from '@/pages/Rag/Detail'
 import {history} from '@@/core/history'
 import {getRagInfo} from '@/services/rag/ragInfo'
+import {quitMember} from '@/services/rag/ragMember'
 import {useModel, useParams, useSearchParams} from '@umijs/max'
-import {Spin} from 'antd'
+import {Button, Popconfirm, Spin} from 'antd'
+import {errorMessage, successMessage} from '@/utils/msg'
 
 const JoinedRagInfoDetail: React.FC = () => {
   const {initialState} = useModel('@@initialState')
@@ -86,12 +88,35 @@ const JoinedRagInfoDetail: React.FC = () => {
     apiRelativeUrls.handleApplication = '/core/rag-my/application/handle'
   }
 
+  let headerExtra: React.ReactNode = null
+  if (memberRole && memberRole !== 'owner' && memberRole !== 'pending') {
+    headerExtra = (
+      <Popconfirm
+        title='确定退出该知识库？'
+        description='退出后将无法访问该知识库，但可以通过邀请链接重新加入。'
+        onConfirm={async () => {
+          let ret = await quitMember(params.ragCode!)
+          if (ret.code !== 0) {
+            return errorMessage(ret.msg || '退出失败')
+          }
+          successMessage('已退出知识库')
+          history.push('/my-rag-joined/list')
+        }}
+        okText='确定退出'
+        cancelText='取消'
+      >
+        <Button danger>退出知识库</Button>
+      </Popconfirm>
+    )
+  }
+
   return (
     <RagInfoDetail
       apiRelativeUrls={apiRelativeUrls}
       memberRole={effectiveRole}
       canSetPermission={false}
       canManageMembers={canManageMembers}
+      headerExtra={headerExtra}
       toBack={() => {
         history.push('/my-rag-joined/list')
       }}

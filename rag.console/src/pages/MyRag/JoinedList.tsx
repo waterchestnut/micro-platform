@@ -2,9 +2,11 @@ import React, {useRef} from 'react'
 import {type ActionType, PageContainer, ProColumns} from '@ant-design/pro-components'
 import ProTableWrapper from '@/components/ProTableWrapper'
 import {getRagInfoList} from '@/services/rag/ragInfo'
+import {quitMember} from '@/services/rag/ragMember'
 import {history} from '@@/core/history'
 import {useModel} from '@umijs/max'
-import {Tag} from 'antd'
+import {Popconfirm, Tag} from 'antd'
+import {errorMessage, successMessage} from '@/utils/msg'
 
 const memberTypeLabels: Record<string, string> = {
   owner: '创建者',
@@ -104,6 +106,27 @@ const JoinedRagInfoList: React.FC = () => {
             >
               配置
             </a>,
+          )
+        }
+        if (member.memberType !== 'owner') {
+          actions.push(
+            <Popconfirm
+              key='quit'
+              title='确定退出该知识库？'
+              description='退出后将无法访问该知识库，但可以通过邀请链接重新加入。'
+              onConfirm={async () => {
+                let ret = await quitMember(record.ragCode)
+                if (ret.code !== 0) {
+                  return errorMessage(ret.msg || '退出失败')
+                }
+                successMessage('已退出知识库')
+                actionRef.current?.reloadAndRest?.()
+              }}
+              okText='确定退出'
+              cancelText='取消'
+            >
+              <a>退出</a>
+            </Popconfirm>,
           )
         }
         return actions

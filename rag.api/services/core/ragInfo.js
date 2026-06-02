@@ -266,6 +266,27 @@ export async function removeMember(curUserInfo, ragCode, userCode) {
 }
 
 /**
+ * @description 退出知识库
+ * @param {Object} curUserInfo 当前用户
+ * @param {String} ragCode 知识库标识
+ * @returns {Promise<Object>} 更新结果
+ */
+export async function quitMember(curUserInfo, ragCode) {
+    let ragInfo = await ragInfoDac.getByCode(ragCode)
+    if (!ragInfo) {
+        throw new Error('知识库不存在')
+    }
+    if (ragInfo.operator?.userCode === curUserInfo.userCode) {
+        throw new Error('创建者不能退出知识库')
+    }
+    let members = (ragInfo.members || []).filter(m => m.userCode !== curUserInfo.userCode)
+    if (members.length === (ragInfo.members || []).length) {
+        throw new Error('您不是该知识库的成员')
+    }
+    return ragInfoDac.update({ragCode, members})
+}
+
+/**
  * @description 更新成员角色
  * @param {Object} curUserInfo 当前用户
  * @param {String} ragCode 知识库标识

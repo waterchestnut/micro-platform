@@ -34,3 +34,10 @@ export async function handleApplication(ragCode: string, applicationCode: string
     data: {ragCode, applicationCode, status}
   })
 }
+
+export async function quitMember(ragCode: string, relativeUrl = '') {
+  return ragRequest(relativeUrl || '/core/rag-my/member/quit', {
+    method: 'POST',
+    data: {ragCode}
+  })
+}

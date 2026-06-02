@@ -14,10 +14,11 @@ export type RagInfoDetailProps = {
   canSetPermission?: boolean;
   canManageMembers?: boolean;
   memberRole?: string;
+  headerExtra?: React.ReactNode;
 };
 
 const RagInfoDetail: React.FC<RagInfoDetailProps> = (props) => {
-  const {apiRelativeUrls, toBack, toMaterialDetail, canSetPermission = true, canManageMembers = true, memberRole} = props
+  const {apiRelativeUrls, toBack, toMaterialDetail, canSetPermission = true, canManageMembers = true, memberRole, headerExtra} = props
   const [activeKey, setActiveKey] = useState('material')
   const [ragInfo, setRagInfo] = useState<any>(null)
   const baseInfoRef = createRef<BaseInfoAction>()
@@ -118,7 +119,8 @@ const RagInfoDetail: React.FC<RagInfoDetailProps> = (props) => {
           } else {
             history.push('/rag/list')
           }
-        }
+        },
+        extra: headerExtra,
       }}
       tabActiveKey={activeKey}
       onTabChange={(activeKey) => {
