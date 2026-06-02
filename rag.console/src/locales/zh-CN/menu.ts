@@ -53,7 +53,10 @@ export default {
   'menu.rag.list': '知识库管理',
   'menu.rag.detail': '知识库详情',
   'menu.rag.material-detail': '材料详情',
-  'menu.my-rag.list': '我的知识库',
+  'menu.my-rag.list': '我管理的知识库',
   'menu.my-rag.detail': '知识库详情',
   'menu.my-rag.material-detail': '材料详情',
+  'menu.my-rag-joined.list': '我加入的知识库',
+  'menu.my-rag-joined.detail': '知识库详情',
+  'menu.my-rag-joined.material-detail': '材料详情',
 };

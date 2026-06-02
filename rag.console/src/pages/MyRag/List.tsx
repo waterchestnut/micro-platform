@@ -32,9 +32,12 @@ const MyRagInfoList: React.FC = () => {
     enableRagChunk: '/core/rag-my/chunk/enable',
     disableRagChunk: '/core/rag-my/chunk/disable',
     getRagChunk: '/core/rag-my/chunk/detail',
+    removeMember: '/core/rag-my/member/remove',
+    updateMemberType: '/core/rag-my/member/update-type',
+    handleApplication: '/core/rag-my/application/handle',
   }
   return (
-    <RagInfoList addHideRagCode apiRelativeUrls={apiRelativeUrls} toDetail={(ragCode: string) => {
+    <RagInfoList addHideRagCode canSetPermission={false} apiRelativeUrls={apiRelativeUrls} toDetail={(ragCode: string) => {
       history.push(`/my-rag/detail/${ragCode}`)
     }}/>
   )

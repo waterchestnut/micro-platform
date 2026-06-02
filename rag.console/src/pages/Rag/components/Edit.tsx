@@ -6,6 +6,7 @@ export type EditProps = {
   onEditFinish?: (resData?: any) => Promise<void>;
   apiRelativeUrls?: any;
   addHideRagCode?: boolean;
+  canSetPermission?: boolean;
 };
 
 export type EditAction = {
@@ -14,7 +15,7 @@ export type EditAction = {
 }
 
 const Edit: ForwardRefRenderFunction<EditAction, EditProps> = (props, ref) => {
-  const {onEditFinish, apiRelativeUrls,addHideRagCode} = props
+  const {onEditFinish, apiRelativeUrls, addHideRagCode, canSetPermission} = props
   const [isOpen, setIsOpen] = useState(false)
   const [ragInfo, setRagInfo] = useState<any>(null)
   const baseInfoRef = createRef<BaseInfoAction>()
@@ -48,6 +49,7 @@ const Edit: ForwardRefRenderFunction<EditAction, EditProps> = (props, ref) => {
       <BaseInfo
         ref={baseInfoRef}
         addHideRagCode={addHideRagCode}
+        canSetPermission={canSetPermission}
         onEditFinish={async () => {
           if (onEditFinish) {
             await onEditFinish()

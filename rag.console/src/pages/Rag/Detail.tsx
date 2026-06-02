@@ -5,15 +5,18 @@ import {useParams, history} from '@umijs/max'
 import {getRagInfo} from '@/services/rag/ragInfo'
 import MaterialManage from '@/pages/Rag/components/MaterialManage'
 import RagSearch from '@/pages/Rag/components/RagSearch'
+import MemberManage from '@/pages/Rag/components/MemberManage'
 
 export type RagInfoDetailProps = {
   apiRelativeUrls?: any;
   toBack?: (ragCode: string) => void;
   toMaterialDetail?: (ragCode: string, ragMaterialCode: string) => void;
+  canSetPermission?: boolean;
+  canManageMembers?: boolean;
 };
 
 const RagInfoDetail: React.FC<RagInfoDetailProps> = (props) => {
-  const {apiRelativeUrls, toBack, toMaterialDetail} = props
+  const {apiRelativeUrls, toBack, toMaterialDetail, canSetPermission = true, canManageMembers = true} = props
   const [activeKey, setActiveKey] = useState('material')
   const [ragInfo, setRagInfo] = useState<any>(null)
   const baseInfoRef = createRef<BaseInfoAction>()
@@ -53,6 +56,7 @@ const RagInfoDetail: React.FC<RagInfoDetailProps> = (props) => {
             }}
             pRagInfo={ragInfo}
             apiRelativeUrls={apiRelativeUrls}
+            canSetPermission={canSetPermission}
           />
         </ProCard>
       )
@@ -69,7 +73,7 @@ const RagInfoDetail: React.FC<RagInfoDetailProps> = (props) => {
     }
     if (activeKey === 'member') {
       return (
-        <div>成员管理</div>
+        <MemberManage pRagInfo={ragInfo} apiRelativeUrls={apiRelativeUrls} canManageMembers={canManageMembers}/>
       )
     }
     return null

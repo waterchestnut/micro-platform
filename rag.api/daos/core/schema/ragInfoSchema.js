@@ -11,6 +11,7 @@ import RagTypeEnum from '../enum/RagTypeEnum.js'
 import RagPermissionEnum from '../enum/RagPermissionEnum.js'
 import Operator from '../definition/Operator.js'
 import Member from '../definition/Member.js'
+import Application from '../definition/Application.js'
 
 const Schema = mongoose.Schema
 const tools = rag.tools
@@ -31,6 +32,8 @@ const tools = rag.tools
  * @property {String} permission 召回权限，参加RagPermissionEnum
  * @property {String[]} permissionDepartmentCodes 能召回的部门标识列表，当召回权限为指定部门成员可用时使用
  * @property {Schema.Types.Mixed[]} members 成员，参见Member
+ * @property {Schema.Types.Mixed[]} applications 加入申请，参见Application
+ * @property {String[]} recommendedQuestions 推荐问题列表
  * @property {Number} needTrans 是否需要把非中文的材料翻译为中文，0-不需要，1-需要
  * @property {Date} insertTime 创建时间
  * @property {Date} updateTime 最近更新时间
@@ -56,6 +59,8 @@ const ragInfoSchema = new Schema({
     permission: {type: String, default: 'member', description: '召回权限', enum: RagPermissionEnum.toValues()},
     permissionDepartmentCodes: {type: [String], default: [], description: '能召回的部门标识列表'},
     members: {type: [Member], description: '成员'},
+    applications: {type: [Application], description: '加入申请'},
+    recommendedQuestions: {type: [String], description: '推荐问题'},
     needTrans: {type: Number, default: 0, description: '是否需要把非中文的材料翻译为中文'},
     insertTime: {
         type: Date, default: function () {
@@ -79,6 +84,7 @@ ragInfoSchema.index({updateTime: 1})
 ragInfoSchema.index({ragCode: 1})
 ragInfoSchema.index({status: 1})
 ragInfoSchema.index({'operator.userCode': 1})
+ragInfoSchema.index({'members.userCode': 1})
 ragInfoSchema.index({'tags.key': 1})
 ragInfoSchema.index({'tags.value': 1})
 

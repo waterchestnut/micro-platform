@@ -32,9 +32,12 @@ const MyRagInfoDetail: React.FC = () => {
     enableRagChunk: '/core/rag-my/chunk/enable',
     disableRagChunk: '/core/rag-my/chunk/disable',
     getRagChunk: '/core/rag-my/chunk/detail',
+    removeMember: '/core/rag-my/member/remove',
+    updateMemberType: '/core/rag-my/member/update-type',
+    handleApplication: '/core/rag-my/application/handle',
   }
   return (
-    <RagInfoDetail apiRelativeUrls={apiRelativeUrls} toBack={(ragCode: string) => {
+    <RagInfoDetail apiRelativeUrls={apiRelativeUrls} canManageMembers toBack={(ragCode: string) => {
       history.push('/my-rag/list')
     }} toMaterialDetail={(ragCode: string, ragMaterialCode: string) => {
       history.push(`/my-rag/detail/${ragCode}/${ragMaterialCode}`)

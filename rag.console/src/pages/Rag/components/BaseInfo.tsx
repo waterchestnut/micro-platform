@@ -1,12 +1,12 @@
 import React, {ForwardRefRenderFunction, useEffect, useImperativeHandle, useRef, useState} from 'react'
 import {
   ProCard,
-  ProForm, ProFormDigit,
+  ProForm,
   ProFormGroup,
   ProFormInstance,
-  ProFormList, ProFormSelect, ProFormSwitch, ProFormText, ProFormTextArea
+  ProFormList, ProFormSelect, ProFormText, ProFormTextArea
 } from '@ant-design/pro-components'
-import {formatUploadFile, isArray, waitTime} from '@/utils/util'
+import {waitTime} from '@/utils/util'
 import {errorMessage, successMessage} from '@/utils/msg'
 import {addRagInfo, updateRagInfo} from '@/services/rag/ragInfo'
 import {Button, Col, Row, Space} from 'antd'
@@ -18,6 +18,7 @@ export type BaseInfoProps = {
   pRagInfo?: any;
   apiRelativeUrls?: any;
   addHideRagCode?: boolean;
+  canSetPermission?: boolean;
 };
 
 export type BaseInfoAction = {
@@ -37,7 +38,7 @@ const inlineItemLayout = {
 }
 
 const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props, ref) => {
-  const {onEditFinish, onEditCancel, pRagInfo, apiRelativeUrls, addHideRagCode} = props
+  const {onEditFinish, onEditCancel, pRagInfo, apiRelativeUrls, addHideRagCode, canSetPermission} = props
   const [editing, setEditing] = useState(false)
   const [ragInfo, setRagInfo] = useState<any>(null)
   const formRef = useRef<ProFormInstance>()
@@ -177,6 +178,34 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
         name='description'
         label='知识库描述'
       />
+      <ProFormSelect
+        name='permission'
+        label='召回权限'
+        rules={[{required: true, message: '请选择召回权限'}]}
+        initialValue='member'
+        options={[
+          {label: '仅知识库成员可用', value: 'member'},
+          ...(canSetPermission ? [
+            {label: '联盟平台内共享（公开）', value: 'union'},
+            {label: '机构平台内共享', value: 'platform'},
+            {label: '指定部门成员可用', value: 'department'},
+          ] : []),
+        ]}
+      />
+      <ProFormList
+        name='recommendedQuestions'
+        label='推荐问题'
+        creatorButtonProps={{
+          creatorButtonText: '添加推荐问题',
+        }}
+        copyIconProps={{tooltipText: '复制'}}
+        deleteIconProps={{tooltipText: '删除'}}
+      >
+        <ProFormText
+          placeholder='请输入推荐问题'
+          rules={[{required: true, message: '请输入推荐问题'}]}
+        />
+      </ProFormList>
       <ProFormList
         name='tags'
         label='标签'

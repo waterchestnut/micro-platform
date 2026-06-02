@@ -11,10 +11,11 @@ export type RagInfoListProps = {
   apiRelativeUrls?: any;
   toDetail?: (ragCode: string) => void;
   addHideRagCode?: boolean;
+  canSetPermission?: boolean;
 };
 
 const RagInfoList: React.FC<RagInfoListProps> = (props) => {
-  const {apiRelativeUrls, toDetail,addHideRagCode} = props
+  const {apiRelativeUrls, toDetail, addHideRagCode, canSetPermission = true} = props
   const actionRef = useRef<ActionType>()
   const editRef = createRef<EditAction>()
 
@@ -164,7 +165,7 @@ const RagInfoList: React.FC<RagInfoListProps> = (props) => {
           </Button>,
         ]}
       />
-      <Edit ref={editRef} onEditFinish={localEditFinish} apiRelativeUrls={apiRelativeUrls} addHideRagCode={addHideRagCode}/>
+      <Edit ref={editRef} onEditFinish={localEditFinish} apiRelativeUrls={apiRelativeUrls} addHideRagCode={addHideRagCode} canSetPermission={canSetPermission}/>
     </PageContainer>
   )
 }

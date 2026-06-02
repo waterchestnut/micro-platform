@@ -86,6 +86,8 @@ export async function addRagInfo(curUserInfo, ragInfo, needRagCode = 0) {
         ragType: 'self',
         embeddingModelProvider: embeddingConfig.provider,
         embeddingModelId: embeddingConfig.model,
+        permission: ragInfo.permission || 'member',
+        recommendedQuestions: ragInfo.recommendedQuestions || [],
         members: [{userCode: curUserInfo.userCode, realName: curUserInfo.realName, memberType: 'owner'}]
     }
     let ret = await ragInfoDac.add(newRagInfo)
@@ -119,6 +121,7 @@ export async function updateRagInfo(curUserInfo, ragCode, newRagInfo) {
         metas: newRagInfo.metas,
         permission: newRagInfo.permission,
         permissionDepartmentCodes: newRagInfo.permissionDepartmentCodes,
+        recommendedQuestions: newRagInfo.recommendedQuestions,
     }
 
     let ret = await ragInfoDac.update(ragInfo)
@@ -206,10 +209,151 @@ export async function saveMembers(curUserInfo, ragCode, newMembers) {
 
     let members = [{userCode: ragInfo.operator.userCode, realName: ragInfo.operator.realName, memberType: 'owner'}]
     newMembers.forEach(member => {
-        if (member.userCode && member.realName && ['write', 'read'].includes(member.memberType) && members.every(_ => _.userCode !== member.userCode)) {
+        if (member.userCode && member.realName && ['admin', 'user'].includes(member.memberType) && members.every(_ => _.userCode !== member.userCode)) {
             members.push({userCode: member.userCode, realName: member.realName, memberType: member.memberType})
         }
     })
     await ragInfoDac.update({ragCode, members})
     return members.length
+}
+
+/**
+ * @description 添加成员
+ * @param {Object} curUserInfo 当前用户
+ * @param {String} ragCode 知识库标识
+ * @param {String} userCode 用户标识
+ * @param {String} realName 用户姓名
+ * @param {String} memberType 成员类型（admin/user）
+ * @returns {Promise<Object>} 更新结果
+ */
+export async function addMember(curUserInfo, ragCode, userCode, realName, memberType = 'user') {
+    if (!userCode || !realName) {
+        throw new Error('缺少用户信息')
+    }
+    if (!['admin', 'user'].includes(memberType)) {
+        throw new Error('无效的成员类型')
+    }
+    let ragInfo = await ragInfoDac.getByCode(ragCode)
+    if (!ragInfo) {
+        throw new Error('知识库不存在')
+    }
+    if (ragInfo.members?.some(m => m.userCode === userCode)) {
+        throw new Error('该用户已是知识库成员')
+    }
+    let members = [...(ragInfo.members || []), {userCode, realName, memberType}]
+    return ragInfoDac.update({ragCode, members})
+}
+
+/**
+ * @description 移除成员
+ * @param {Object} curUserInfo 当前用户
+ * @param {String} ragCode 知识库标识
+ * @param {String} userCode 要移除的用户标识
+ * @returns {Promise<Object>} 更新结果
+ */
+export async function removeMember(curUserInfo, ragCode, userCode) {
+    let ragInfo = await ragInfoDac.getByCode(ragCode)
+    if (!ragInfo) {
+        throw new Error('知识库不存在')
+    }
+    if (ragInfo.operator?.userCode === userCode) {
+        throw new Error('不能移除创建者')
+    }
+    let members = (ragInfo.members || []).filter(m => m.userCode !== userCode)
+    return ragInfoDac.update({ragCode, members})
+}
+
+/**
+ * @description 更新成员角色
+ * @param {Object} curUserInfo 当前用户
+ * @param {String} ragCode 知识库标识
+ * @param {String} userCode 用户标识
+ * @param {String} memberType 新的成员类型
+ * @returns {Promise<Object>} 更新结果
+ */
+export async function updateMemberType(curUserInfo, ragCode, userCode, memberType) {
+    if (!['admin', 'user'].includes(memberType)) {
+        throw new Error('无效的成员类型')
+    }
+    let ragInfo = await ragInfoDac.getByCode(ragCode)
+    if (!ragInfo) {
+        throw new Error('知识库不存在')
+    }
+    if (ragInfo.operator?.userCode === userCode) {
+        throw new Error('不能修改创建者角色')
+    }
+    let members = (ragInfo.members || []).map(m => {
+        if (m.userCode === userCode) {
+            return {...m, memberType}
+        }
+        return m
+    })
+    return ragInfoDac.update({ragCode, members})
+}
+
+/**
+ * @description 申请加入知识库
+ * @param {Object} curUserInfo 当前用户
+ * @param {String} ragCode 知识库标识
+ * @returns {Promise<Object>} 申请结果
+ */
+export async function applyJoin(curUserInfo, ragCode) {
+    let ragInfo = await ragInfoDac.getByCode(ragCode)
+    if (!ragInfo) {
+        throw new Error('知识库不存在')
+    }
+    if (ragInfo.members?.some(m => m.userCode === curUserInfo.userCode)) {
+        throw new Error('您已是知识库成员')
+    }
+    let applications = ragInfo.applications || []
+    if (applications.some(a => a.userCode === curUserInfo.userCode && a.status === 0)) {
+        throw new Error('您已有待审批的申请')
+    }
+    applications = applications.filter(a => a.userCode !== curUserInfo.userCode || a.status === 0)
+    applications.push({
+        applicationCode: tools.getUUID(),
+        userCode: curUserInfo.userCode,
+        realName: curUserInfo.realName,
+        status: 0,
+        insertTime: new Date()
+    })
+    return ragInfoDac.update({ragCode, applications})
+}
+
+/**
+ * @description 处理加入申请
+ * @param {Object} curUserInfo 当前用户
+ * @param {String} ragCode 知识库标识
+ * @param {String} applicationCode 申请标识
+ * @param {Number} status 处理状态：1-同意，2-拒绝
+ * @returns {Promise<Object>} 处理结果
+ */
+export async function handleApplication(curUserInfo, ragCode, applicationCode, status) {
+    if (![1, 2].includes(status)) {
+        throw new Error('无效的处理状态')
+    }
+    let ragInfo = await ragInfoDac.getByCode(ragCode)
+    if (!ragInfo) {
+        throw new Error('知识库不存在')
+    }
+    let applications = ragInfo.applications || []
+    let application = applications.find(a => a.applicationCode === applicationCode)
+    if (!application) {
+        throw new Error('申请不存在')
+    }
+    if (application.status !== 0) {
+        throw new Error('该申请已处理')
+    }
+    application.status = status
+    application.handleTime = new Date()
+
+    let updateData = {ragCode, applications}
+    if (status === 1) {
+        let members = ragInfo.members || []
+        if (!members.some(m => m.userCode === application.userCode)) {
+            members.push({userCode: application.userCode, realName: application.realName, memberType: 'user'})
+            updateData.members = members
+        }
+    }
+    return ragInfoDac.update(updateData)
 }

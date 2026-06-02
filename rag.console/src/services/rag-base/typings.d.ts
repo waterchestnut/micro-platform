@@ -18,10 +18,9 @@ declare namespace RAGAPI {
     /** RagPermissionEnum */
     RagPermissionEnum?: {
       union?: string;
-      onlyMe?: string;
+      member?: string;
       platform?: string;
-      departmentDirect?: string;
-      departmentALL?: string;
+      department?: string;
     };
     /** RagTypeEnum */
     RagTypeEnum?: { builtIn?: string; dify?: string; self?: string };
@@ -69,7 +68,11 @@ declare namespace RAGAPI {
       tags?: { key?: string; value?: string }[];
       embeddingModelProvider?: string;
       embeddingModelId?: string;
-      permission?: 'union' | 'onlyMe' | 'platform' | 'departmentDirect' | 'departmentALL';
+      permission?: 'union' | 'member' | 'platform' | 'department';
+      permissionDepartmentCodes?: string[];
+      members?: { userCode?: string; realName?: string; memberType?: 'owner' | 'admin' | 'user' }[];
+      applications?: { applicationCode?: string; userCode?: string; realName?: string; status?: number; insertTime?: string; handleTime?: string }[];
+      recommendedQuestions?: string[];
     };
     /** RagMaterial */
     RagMaterial?: {
@@ -153,7 +156,11 @@ declare namespace RAGAPI {
       tags?: { key?: string; value?: string; _id?: string }[];
       embeddingModelProvider?: string;
       embeddingModelId?: string;
-      permission?: 'union' | 'onlyMe' | 'platform' | 'departmentDirect' | 'departmentALL';
+      permission?: 'union' | 'member' | 'platform' | 'department';
+      permissionDepartmentCodes?: string[];
+      members?: { userCode?: string; realName?: string; memberType?: 'owner' | 'admin' | 'user' }[];
+      applications?: { applicationCode?: string; userCode?: string; realName?: string; status?: number; insertTime?: string; handleTime?: string }[];
+      recommendedQuestions?: string[];
       insertTime?: string;
       updateTime?: string;
       _id?: string;
@@ -287,7 +294,15 @@ declare namespace RAGAPI {
     /** 向量模型ID */
     embeddingModelId?: string;
     /** 访问权限 */
-    permission?: 'union' | 'onlyMe' | 'platform' | 'departmentDirect' | 'departmentALL';
+    permission?: 'union' | 'member' | 'platform' | 'department';
+    /** 指定部门标识列表 */
+    permissionDepartmentCodes?: string[];
+    /** 成员列表 */
+    members?: { userCode?: string; realName?: string; memberType?: 'owner' | 'admin' | 'user' }[];
+    /** 加入申请 */
+    applications?: { applicationCode?: string; userCode?: string; realName?: string; status?: number; insertTime?: string; handleTime?: string }[];
+    /** 推荐问题 */
+    recommendedQuestions?: string[];
   };
 
   type RagMaterial = {
