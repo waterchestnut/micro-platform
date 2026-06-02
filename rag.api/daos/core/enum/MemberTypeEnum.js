@@ -7,7 +7,7 @@ import Enumify from '../../../extends/Enumify.js'
 
 export default class MemberTypeEnum extends Enumify {
     static owner = new MemberTypeEnum('owner', '所有者')
-    static read = new MemberTypeEnum('read', '召回')
-    static write = new MemberTypeEnum('write', '召回与编辑')
+    static admin = new MemberTypeEnum('admin', '管理员')
+    static user = new MemberTypeEnum('user', '用户')
     static _ = this.closeEnum()
 }

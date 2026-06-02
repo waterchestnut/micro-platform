@@ -29,7 +29,7 @@ const tools = rag.tools
  * @property {String} embeddingModelProvider 向量模型提供商
  * @property {String} embeddingModelId 向量模型ID
  * @property {String} permission 召回权限，参加RagPermissionEnum
- * @property {String[]} permissionDepartmentCodes 能召回的部门标识列表，当召回权限为直属部门成员可用、部门及下属部门成员可用时使用
+ * @property {String[]} permissionDepartmentCodes 能召回的部门标识列表，当召回权限为指定部门成员可用时使用
  * @property {Schema.Types.Mixed[]} members 成员，参见Member
  * @property {Number} needTrans 是否需要把非中文的材料翻译为中文，0-不需要，1-需要
  * @property {Date} insertTime 创建时间
