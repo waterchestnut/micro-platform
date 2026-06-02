@@ -103,6 +103,14 @@ export default [
         hideInMenu: true,
       },
       {
+        name: 'join',
+        path: '/join/:ragCode',
+        access: 'normalRouteFilter',
+        authority: ['rag-myrag'],
+        component: './Join',
+        hideInMenu: true,
+      },
+      {
         path: '/',
         redirect: '/home',
       },

@@ -1,9 +1,9 @@
 import React, {useEffect, useState} from 'react'
 import {ProCard, ProList} from '@ant-design/pro-components'
-import {Avatar, Badge, Button, Popconfirm, Select, Space, Tabs, Tag} from 'antd'
+import {Alert, Avatar, Badge, Button, Popconfirm, Select, Space, Tabs, Tag, Typography} from 'antd'
 import {handleApplication, removeMember, updateMemberType} from '@/services/rag/ragMember'
 import {errorMessage, successMessage} from '@/utils/msg'
-import {UserOutlined} from '@ant-design/icons'
+import {CopyOutlined, LinkOutlined, UserOutlined} from '@ant-design/icons'
 
 export type MemberManageProps = {
   pRagInfo?: any;
@@ -46,6 +46,18 @@ const MemberManage: React.FC<MemberManageProps> = (props) => {
     }
   }, [pRagInfo])
 
+  const getJoinLink = () => {
+    return `${window.location.origin}/join/${pRagInfo?.ragCode}`
+  }
+
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(getJoinLink()).then(() => {
+      successMessage('链接已复制到剪贴板')
+    }).catch(() => {
+      errorMessage('复制失败，请手动复制')
+    })
+  }
+
   const handleRemoveMember = async (userCode: string) => {
     let ret = await removeMember(pRagInfo.ragCode, userCode, apiRelativeUrls?.removeMember)
     if (ret.code !== 0) {
@@ -86,62 +98,93 @@ const MemberManage: React.FC<MemberManageProps> = (props) => {
     setApplications(applications.filter(a => a.applicationCode !== applicationCode))
   }
 
+  const renderShareLink = () => {
+    if (!canManageMembers) return null
+    return (
+      <Alert
+        style={{marginBottom: 16}}
+        type='info'
+        showIcon
+        icon={<LinkOutlined/>}
+        message='邀请链接'
+        description={
+          <Space direction='vertical' style={{width: '100%'}}>
+            <Typography.Text type='secondary'>
+              将此链接分享给他人，对方访问链接即可加入知识库{pRagInfo?.needApproval === 0 ? '（无需审批，直接加入）' : '（需管理员审批）'}
+            </Typography.Text>
+            <Space>
+              <Typography.Text copyable={{text: getJoinLink()}} style={{maxWidth: 500, wordBreak: 'break-all'}}>
+                {getJoinLink()}
+              </Typography.Text>
+              <Button type='primary' size='small' icon={<CopyOutlined/>} onClick={handleCopyLink}>
+                复制链接
+              </Button>
+            </Space>
+          </Space>
+        }
+      />
+    )
+  }
+
   const renderMembers = () => {
     return (
-      <ProList
-        rowKey='userCode'
-        dataSource={members}
-        metas={{
-          avatar: {
-            render: () => <Avatar icon={<UserOutlined/>} size='small'/>,
-          },
-          title: {
-            render: (_, record) => (
-              <Space>
-                <span>{record.realName}</span>
-                <Tag color={memberTypeColors[record.memberType]}>
-                  {memberTypeLabels[record.memberType]}
-                </Tag>
-              </Space>
-            ),
-          },
-          description: {
-            render: (_, record) => {
-              if (record.memberType === 'owner') {
-                return null
-              }
-              return memberTypeDescriptions[record.memberType] || null
+      <>
+        {renderShareLink()}
+        <ProList
+          rowKey='userCode'
+          dataSource={members}
+          metas={{
+            avatar: {
+              render: () => <Avatar icon={<UserOutlined/>} size='small'/>,
             },
-          },
-          actions: {
-            render: (_, record) => {
-              if (!canManageMembers || record.memberType === 'owner') {
-                return null
-              }
-              return (
+            title: {
+              render: (_, record) => (
                 <Space>
-                  <Select
-                    size='small'
-                    value={record.memberType}
-                    options={memberTypeOptions}
-                    onChange={(value) => handleUpdateMemberType(record.userCode, value)}
-                    style={{width: 100}}
-                  />
-                  <Popconfirm
-                    title='确定移除成员？'
-                    description='确定移除该成员？移除后不可恢复，但该成员仍可重新申请加入本库。'
-                    onConfirm={() => handleRemoveMember(record.userCode)}
-                    okText='确定移除'
-                    cancelText='取消'
-                  >
-                    <a>移除</a>
-                  </Popconfirm>
+                  <span>{record.realName}</span>
+                  <Tag color={memberTypeColors[record.memberType]}>
+                    {memberTypeLabels[record.memberType]}
+                  </Tag>
                 </Space>
-              )
+              ),
             },
-          },
-        }}
-      />
+            description: {
+              render: (_, record) => {
+                if (record.memberType === 'owner') {
+                  return null
+                }
+                return memberTypeDescriptions[record.memberType] || null
+              },
+            },
+            actions: {
+              render: (_, record) => {
+                if (!canManageMembers || record.memberType === 'owner') {
+                  return null
+                }
+                return (
+                  <Space>
+                    <Select
+                      size='small'
+                      value={record.memberType}
+                      options={memberTypeOptions}
+                      onChange={(value) => handleUpdateMemberType(record.userCode, value)}
+                      style={{width: 100}}
+                    />
+                    <Popconfirm
+                      title='确定移除成员？'
+                      description='确定移除该成员？移除后不可恢复，但该成员仍可重新申请加入本库。'
+                      onConfirm={() => handleRemoveMember(record.userCode)}
+                      okText='确定移除'
+                      cancelText='取消'
+                    >
+                      <a>移除</a>
+                    </Popconfirm>
+                  </Space>
+                )
+              },
+            },
+          }}
+        />
+      </>
     )
   }
 

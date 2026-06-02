@@ -73,6 +73,7 @@ declare namespace RAGAPI {
       members?: { userCode?: string; realName?: string; memberType?: 'owner' | 'admin' | 'user' }[];
       applications?: { applicationCode?: string; userCode?: string; realName?: string; status?: number; insertTime?: string; handleTime?: string }[];
       recommendedQuestions?: string[];
+      needApproval?: 0 | 1;
     };
     /** RagMaterial */
     RagMaterial?: {
@@ -161,6 +162,7 @@ declare namespace RAGAPI {
       members?: { userCode?: string; realName?: string; memberType?: 'owner' | 'admin' | 'user' }[];
       applications?: { applicationCode?: string; userCode?: string; realName?: string; status?: number; insertTime?: string; handleTime?: string }[];
       recommendedQuestions?: string[];
+      needApproval?: 0 | 1;
       insertTime?: string;
       updateTime?: string;
       _id?: string;
@@ -303,6 +305,8 @@ declare namespace RAGAPI {
     applications?: { applicationCode?: string; userCode?: string; realName?: string; status?: number; insertTime?: string; handleTime?: string }[];
     /** 推荐问题 */
     recommendedQuestions?: string[];
+    /** 加入是否需要审批 */
+    needApproval?: 0 | 1;
   };
 
   type RagMaterial = {

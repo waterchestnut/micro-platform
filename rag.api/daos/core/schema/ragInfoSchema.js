@@ -34,6 +34,7 @@ const tools = rag.tools
  * @property {Schema.Types.Mixed[]} members 成员，参见Member
  * @property {Schema.Types.Mixed[]} applications 加入申请，参见Application
  * @property {String[]} recommendedQuestions 推荐问题列表
+ * @property {Number} needApproval 加入是否需要审批，0-不需要（直接加入），1-需要（默认）
  * @property {Number} needTrans 是否需要把非中文的材料翻译为中文，0-不需要，1-需要
  * @property {Date} insertTime 创建时间
  * @property {Date} updateTime 最近更新时间
@@ -61,6 +62,7 @@ const ragInfoSchema = new Schema({
     members: {type: [Member], description: '成员'},
     applications: {type: [Application], description: '加入申请'},
     recommendedQuestions: {type: [String], description: '推荐问题'},
+    needApproval: {type: Number, default: 1, description: '加入是否需要审批，0-不需要，1-需要'},
     needTrans: {type: Number, default: 0, description: '是否需要把非中文的材料翻译为中文'},
     insertTime: {
         type: Date, default: function () {

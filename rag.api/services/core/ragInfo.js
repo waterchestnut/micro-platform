@@ -88,6 +88,7 @@ export async function addRagInfo(curUserInfo, ragInfo, needRagCode = 0) {
         embeddingModelId: embeddingConfig.model,
         permission: ragInfo.permission || 'member',
         recommendedQuestions: ragInfo.recommendedQuestions || [],
+        needApproval: ragInfo.needApproval ?? 1,
         members: [{userCode: curUserInfo.userCode, realName: curUserInfo.realName, memberType: 'owner'}]
     }
     let ret = await ragInfoDac.add(newRagInfo)
@@ -122,6 +123,7 @@ export async function updateRagInfo(curUserInfo, ragCode, newRagInfo) {
         permission: newRagInfo.permission,
         permissionDepartmentCodes: newRagInfo.permissionDepartmentCodes,
         recommendedQuestions: newRagInfo.recommendedQuestions,
+        needApproval: newRagInfo.needApproval,
     }
 
     let ret = await ragInfoDac.update(ragInfo)
@@ -295,7 +297,7 @@ export async function updateMemberType(curUserInfo, ragCode, userCode, memberTyp
  * @description 申请加入知识库
  * @param {Object} curUserInfo 当前用户
  * @param {String} ragCode 知识库标识
- * @returns {Promise<Object>} 申请结果
+ * @returns {Promise<Object>} 申请结果，返回 {needApproval: 0|1} 表示是否需要审批
  */
 export async function applyJoin(curUserInfo, ragCode) {
     let ragInfo = await ragInfoDac.getByCode(ragCode)
@@ -305,6 +307,13 @@ export async function applyJoin(curUserInfo, ragCode) {
     if (ragInfo.members?.some(m => m.userCode === curUserInfo.userCode)) {
         throw new Error('您已是知识库成员')
     }
+
+    if (ragInfo.needApproval === 0) {
+        let members = [...(ragInfo.members || []), {userCode: curUserInfo.userCode, realName: curUserInfo.realName, memberType: 'user'}]
+        await ragInfoDac.update({ragCode, members})
+        return {needApproval: 0}
+    }
+
     let applications = ragInfo.applications || []
     if (applications.some(a => a.userCode === curUserInfo.userCode && a.status === 0)) {
         throw new Error('您已有待审批的申请')
@@ -317,7 +326,8 @@ export async function applyJoin(curUserInfo, ragCode) {
         status: 0,
         insertTime: new Date()
     })
-    return ragInfoDac.update({ragCode, applications})
+    await ragInfoDac.update({ragCode, applications})
+    return {needApproval: 1}
 }
 
 /**

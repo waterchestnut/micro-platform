@@ -4,7 +4,7 @@ import {
   ProForm,
   ProFormGroup,
   ProFormInstance,
-  ProFormList, ProFormSelect, ProFormText, ProFormTextArea
+  ProFormList, ProFormSelect, ProFormSwitch, ProFormText, ProFormTextArea
 } from '@ant-design/pro-components'
 import {waitTime} from '@/utils/util'
 import {errorMessage, successMessage} from '@/utils/msg'
@@ -191,6 +191,14 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
             {label: '指定部门成员可用', value: 'department'},
           ] : []),
         ]}
+      />
+      <ProFormSwitch
+        name='needApproval'
+        label='加入需审批'
+        initialValue={true}
+        fieldProps={{checkedChildren: '是', unCheckedChildren: '否'}}
+        transform={(value) => ({needApproval: value ? 1 : 0})}
+        convertValue={(value) => value === 1 || value === true || value === undefined}
       />
       <ProFormList
         name='recommendedQuestions'
