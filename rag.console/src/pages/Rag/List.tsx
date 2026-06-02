@@ -94,7 +94,9 @@ const RagInfoList: React.FC<RagInfoListProps> = (props) => {
       width: 240,
       fixed: 'right',
       className: 'option-wrap',
-      render: (_, record) => [
+      render: (_, record) => {
+        let isBuiltIn = record.ragType === 'builtIn'
+        return [
         <a
           key='view'
           onClick={() => {
@@ -103,7 +105,7 @@ const RagInfoList: React.FC<RagInfoListProps> = (props) => {
         >
           查看
         </a>,
-        canEditOf(record) ? <a
+        !isBuiltIn && canEditOf(record) ? <a
           key='edit'
           onClick={() => {
             editRef?.current?.show({...record})
@@ -111,7 +113,7 @@ const RagInfoList: React.FC<RagInfoListProps> = (props) => {
         >
           编辑
         </a> : null,
-        <a
+        !isBuiltIn ? <a
           key='conf'
           onClick={() => {
             if (toDetail) {
@@ -122,8 +124,8 @@ const RagInfoList: React.FC<RagInfoListProps> = (props) => {
           }}
         >
           配置
-        </a>,
-        isOwnerOf(record) ? <Popconfirm
+        </a> : null,
+        !isBuiltIn && isOwnerOf(record) ? <Popconfirm
           title='确定要删除该知识库吗？'
           onConfirm={async () => {
             let ret = await deleteRagInfo(record.ragCode, apiRelativeUrls?.deleteRagInfo)
@@ -140,7 +142,7 @@ const RagInfoList: React.FC<RagInfoListProps> = (props) => {
         >
           <a href='#'>删除</a>
         </Popconfirm> : null,
-        isOwnerOf(record) && record.status === 0 ? <Popconfirm
+        !isBuiltIn && isOwnerOf(record) && record.status === 0 ? <Popconfirm
           title='确定要禁用该知识库吗？'
           onConfirm={async () => {
             let ret = await disableRagInfo(record.ragCode, apiRelativeUrls?.disableRagInfo)
@@ -157,7 +159,7 @@ const RagInfoList: React.FC<RagInfoListProps> = (props) => {
         >
           <a href='#'>禁用</a>
         </Popconfirm> : null,
-        isOwnerOf(record) && record.status === 1 ? <a
+        !isBuiltIn && isOwnerOf(record) && record.status === 1 ? <a
           key='enable'
           onClick={async () => {
             let ret = await enableRagInfo(record.ragCode, apiRelativeUrls?.enableRagInfo)
@@ -171,7 +173,8 @@ const RagInfoList: React.FC<RagInfoListProps> = (props) => {
         >
           启用
         </a> : null,
-      ],
+        ]
+      },
     },
   ]
 
