@@ -11,10 +11,11 @@ export type MaterialManageProps = {
   pRagInfo?: any;
   apiRelativeUrls?: any;
   toDetail?: (ragCode: string, ragMaterialCode: string) => void;
+  canEdit?: boolean;
 };
 
 const MaterialManage: React.FC<MaterialManageProps> = (props) => {
-  const {pRagInfo, apiRelativeUrls, toDetail} = props
+  const {pRagInfo, apiRelativeUrls, toDetail, canEdit = true} = props
   const actionRef = useRef<ActionType>()
   const materialEditRef = createRef<MaterialEditAction>()
 
@@ -42,57 +43,62 @@ const MaterialManage: React.FC<MaterialManageProps> = (props) => {
       width: 160,
       fixed: 'right',
       className: 'option-wrap',
-      render: (_, record) => [
-        <a
-          key='detail'
-          onClick={() => {
-            if (toDetail) {
-              toDetail(record.ragCode, record.ragMaterialCode)
-            } else {
-              history.push(`/rag/detail/${record.ragCode}/${record.ragMaterialCode}`)
-            }
-          }}
-        >
-          材料片段
-        </a>,
-        <a
-          key='edit'
-          onClick={() => {
-            materialEditRef?.current?.show({...record})
-          }}
-        >
-          编辑
-        </a>,
-        <Popconfirm
-          title='确定要删除该材料吗？'
-          onConfirm={async () => {
-            let ret = await deleteRagMaterial(record.ragMaterialCode, apiRelativeUrls?.deleteRagMaterial, pRagInfo.ragCode)
-            if (ret.code !== 0) {
-              let msg = ret.msg || '删除失败，请稍后再试'
-              return errorMessage(msg)
-            }
-            successMessage('删除材料成功')
-            actionRef?.current?.reloadAndRest?.()
-          }}
-          okText='确定'
-          cancelText='取消'
-          key='delete'
-        >
-          <a href='#'>删除</a>
-        </Popconfirm>,
-      ],
+      render: (_, record) => {
+        let actions: React.ReactNode[] = [
+          <a
+            key='detail'
+            onClick={() => {
+              if (toDetail) {
+                toDetail(record.ragCode, record.ragMaterialCode)
+              } else {
+                history.push(`/rag/detail/${record.ragCode}/${record.ragMaterialCode}`)
+              }
+            }}
+          >
+            材料片段
+          </a>,
+        ]
+        if (canEdit) {
+          actions.push(
+            <a
+              key='edit'
+              onClick={() => {
+                materialEditRef?.current?.show({...record})
+              }}
+            >
+              编辑
+            </a>,
+            <Popconfirm
+              title='确定要删除该材料吗？'
+              onConfirm={async () => {
+                let ret = await deleteRagMaterial(record.ragMaterialCode, apiRelativeUrls?.deleteRagMaterial, pRagInfo.ragCode)
+                if (ret.code !== 0) {
+                  let msg = ret.msg || '删除失败，请稍后再试'
+                  return errorMessage(msg)
+                }
+                successMessage('删除材料成功')
+                actionRef?.current?.reloadAndRest?.()
+              }}
+              okText='确定'
+              cancelText='取消'
+              key='delete'
+            >
+              <a href='#'>删除</a>
+            </Popconfirm>,
+          )
+        }
+        return actions
+      },
     },
   ]
   return (
     <>
       <ProTableWrapper
         columns={columns}
-        /*headerTitle='知识库文档材料'*/
         rowKey='ragMaterialCode'
         actionRef={actionRef}
         pagination={{hideOnSinglePage: true, pageSize: 20}}
         request={async (paramsIn, sorter, filterIn) => {
-          /*console.log(paramsIn, sorter, filterIn);*/
           let filter = {...paramsIn, ragCode: pRagInfo.ragCode}
           delete filter.current
           delete filter.pageSize
@@ -103,13 +109,13 @@ const MaterialManage: React.FC<MaterialManageProps> = (props) => {
             success: true
           }
         }}
-        toolBarRender={() => [
+        toolBarRender={() => canEdit ? [
           <Button type='primary' key='add' onClick={() => {
             materialEditRef?.current?.show()
           }}>
             上传材料
           </Button>,
-        ]}
+        ] : []}
       />
       <MaterialEdit ref={materialEditRef} onEditFinish={localEditFinish} pRagInfo={pRagInfo}
                     apiRelativeUrls={apiRelativeUrls}/>

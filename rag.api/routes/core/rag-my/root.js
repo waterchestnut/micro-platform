@@ -44,7 +44,8 @@ export default async function (fastify, opts) {
     }, async function (request, reply) {
         return await ragInfoService.getRagInfos({
             ...request.reqParams.filter,
-            operatorUserCode: request.userInfo.userCode
+            ragType: 'self',
+            managedMemberUserCode: request.userInfo.userCode
         }, request.reqParams.pageIndex, request.reqParams.pageSize, request.reqParams.options)
     })
 
@@ -79,7 +80,8 @@ export default async function (fastify, opts) {
     }, async function (request, reply) {
         return await ragInfoService.getRagInfos({
             ...request.reqParams.filter,
-            joinedUserCode: request.userInfo.userCode
+            ragType: 'self',
+            joinedOrPendingUserCode: request.userInfo.userCode
         }, request.reqParams.pageIndex, request.reqParams.pageSize, request.reqParams.options)
     })
 

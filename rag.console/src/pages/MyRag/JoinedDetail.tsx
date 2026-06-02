@@ -1,9 +1,51 @@
-import React from 'react'
+import React, {useEffect, useState} from 'react'
 import RagInfoDetail from '@/pages/Rag/Detail'
 import {history} from '@@/core/history'
+import {getRagInfo} from '@/services/rag/ragInfo'
+import {useModel, useParams, useSearchParams} from '@umijs/max'
+import {Spin} from 'antd'
 
 const JoinedRagInfoDetail: React.FC = () => {
-  const apiRelativeUrls: any = {
+  const {initialState} = useModel('@@initialState')
+  const currentUser = initialState?.currentUser
+  const params = useParams()
+  const [searchParams] = useSearchParams()
+  const isViewMode = searchParams.get('view') === '1'
+  const [memberRole, setMemberRole] = useState<string | undefined>(undefined)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!params.ragCode || !currentUser?.userCode) return
+    getRagInfo(params.ragCode, '/core/rag-my/detail').then(info => {
+      if (!info?.ragCode) {
+        setMemberRole('pending')
+        setLoading(false)
+        return
+      }
+      let member = info.members?.find((m: any) => m.userCode === currentUser.userCode)
+      if (member) {
+        setMemberRole(member.memberType)
+      } else {
+        let hasPending = info.applications?.some((a: any) => a.userCode === currentUser.userCode && a.status === 0)
+        setMemberRole(hasPending ? 'pending' : 'user')
+      }
+      setLoading(false)
+    }).catch(() => {
+      setMemberRole('pending')
+      setLoading(false)
+    })
+  }, [params.ragCode, currentUser?.userCode])
+
+  if (loading) {
+    return <div style={{textAlign: 'center', padding: 100}}><Spin size='large'/></div>
+  }
+
+  let effectiveRole = isViewMode ? 'user' : memberRole
+  let canEdit = effectiveRole === 'owner' || effectiveRole === 'admin'
+  let canDelete = effectiveRole === 'owner'
+  let canManageMembers = effectiveRole === 'owner' || effectiveRole === 'admin'
+
+  let apiRelativeUrls: any = {
     getRagInfo: '/core/rag-my/detail',
     getRagMaterialList: '/core/rag-my/material/list',
     getRagMaterial: '/core/rag-my/material/detail',
@@ -12,12 +54,51 @@ const JoinedRagInfoDetail: React.FC = () => {
     getRagChunkList: '/core/rag-my/chunk/list',
     getRagChunk: '/core/rag-my/chunk/detail',
   }
+
+  if (canEdit) {
+    apiRelativeUrls.updateRagInfo = '/core/rag-my/update'
+    apiRelativeUrls.addRagMaterial = '/core/rag-my/material/add'
+    apiRelativeUrls.updateRagMaterial = '/core/rag-my/material/update'
+    apiRelativeUrls.deleteRagMaterial = '/core/rag-my/material/delete'
+    apiRelativeUrls.enableRagMaterial = '/core/rag-my/material/enable'
+    apiRelativeUrls.disableRagMaterial = '/core/rag-my/material/disable'
+    apiRelativeUrls.addRagSegment = '/core/rag-my/segment/add'
+    apiRelativeUrls.updateRagSegment = '/core/rag-my/segment/update'
+    apiRelativeUrls.deleteRagSegment = '/core/rag-my/segment/delete'
+    apiRelativeUrls.enableRagSegment = '/core/rag-my/segment/enable'
+    apiRelativeUrls.disableRagSegment = '/core/rag-my/segment/disable'
+    apiRelativeUrls.addRagChunk = '/core/rag-my/chunk/add'
+    apiRelativeUrls.updateRagChunk = '/core/rag-my/chunk/update'
+    apiRelativeUrls.deleteRagChunk = '/core/rag-my/chunk/delete'
+    apiRelativeUrls.enableRagChunk = '/core/rag-my/chunk/enable'
+    apiRelativeUrls.disableRagChunk = '/core/rag-my/chunk/disable'
+  }
+
+  if (canDelete) {
+    apiRelativeUrls.deleteRagInfo = '/core/rag-my/delete'
+    apiRelativeUrls.enableRagInfo = '/core/rag-my/enable'
+    apiRelativeUrls.disableRagInfo = '/core/rag-my/disable'
+  }
+
+  if (canManageMembers) {
+    apiRelativeUrls.removeMember = '/core/rag-my/member/remove'
+    apiRelativeUrls.updateMemberType = '/core/rag-my/member/update-type'
+    apiRelativeUrls.handleApplication = '/core/rag-my/application/handle'
+  }
+
   return (
-    <RagInfoDetail apiRelativeUrls={apiRelativeUrls} toBack={() => {
-      history.push('/my-rag-joined/list')
-    }} toMaterialDetail={(ragCode: string, ragMaterialCode: string) => {
-      history.push(`/my-rag-joined/detail/${ragCode}/${ragMaterialCode}`)
-    }}/>
+    <RagInfoDetail
+      apiRelativeUrls={apiRelativeUrls}
+      memberRole={effectiveRole}
+      canSetPermission={false}
+      canManageMembers={canManageMembers}
+      toBack={() => {
+        history.push('/my-rag-joined/list')
+      }}
+      toMaterialDetail={(ragCode: string, ragMaterialCode: string) => {
+        history.push(`/my-rag-joined/detail/${ragCode}/${ragMaterialCode}${isViewMode ? '?view=1' : ''}`)
+      }}
+    />
   )
 }
 

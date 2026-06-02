@@ -83,7 +83,7 @@ export async function addRagInfo(curUserInfo, ragInfo, needRagCode = 0) {
         status: 0,
         usage: 0,
         tags: ragInfo.tags,
-        ragType: 'self',
+        ragType: ragInfo.ragType || 'self',
         embeddingModelProvider: embeddingConfig.provider,
         embeddingModelId: embeddingConfig.model,
         permission: ragInfo.permission || 'member',

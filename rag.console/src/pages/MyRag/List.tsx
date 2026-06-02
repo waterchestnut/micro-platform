@@ -37,7 +37,7 @@ const MyRagInfoList: React.FC = () => {
     handleApplication: '/core/rag-my/application/handle',
   }
   return (
-    <RagInfoList addHideRagCode canSetPermission={false} apiRelativeUrls={apiRelativeUrls} toDetail={(ragCode: string) => {
+    <RagInfoList addHideRagCode canSetPermission={false} checkOwnerForDangerActions showMemberRoleColumn apiRelativeUrls={apiRelativeUrls} toDetail={(ragCode: string) => {
       history.push(`/my-rag/detail/${ragCode}`)
     }}/>
   )

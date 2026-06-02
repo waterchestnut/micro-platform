@@ -3,21 +3,46 @@ import {type ActionType, PageContainer, ProColumns} from '@ant-design/pro-compon
 import ProTableWrapper from '@/components/ProTableWrapper'
 import {disableRagInfo, enableRagInfo, getRagInfoList,deleteRagInfo} from '@/services/rag/ragInfo'
 import Edit, {EditAction} from './components/Edit'
-import {Button, Popconfirm} from 'antd'
+import {Button, Popconfirm, Tag} from 'antd'
 import {errorMessage, successMessage} from '@/utils/msg'
-import {history} from '@umijs/max'
+import {history, useModel} from '@umijs/max'
+
+const memberTypeLabels: Record<string, string> = {
+  owner: '创建者',
+  admin: '管理员',
+  user: '用户',
+}
 
 export type RagInfoListProps = {
   apiRelativeUrls?: any;
   toDetail?: (ragCode: string) => void;
   addHideRagCode?: boolean;
   canSetPermission?: boolean;
+  checkOwnerForDangerActions?: boolean;
+  showMemberRoleColumn?: boolean;
 };
 
 const RagInfoList: React.FC<RagInfoListProps> = (props) => {
-  const {apiRelativeUrls, toDetail, addHideRagCode, canSetPermission = true} = props
+  const {apiRelativeUrls, toDetail, addHideRagCode, canSetPermission = true, checkOwnerForDangerActions = false, showMemberRoleColumn = false} = props
   const actionRef = useRef<ActionType>()
   const editRef = createRef<EditAction>()
+  const {initialState} = useModel('@@initialState')
+  const currentUser = initialState?.currentUser
+
+  const getMyMemberType = (record: any) => {
+    return record.members?.find((m: any) => m.userCode === currentUser?.userCode)?.memberType
+  }
+
+  const isOwnerOf = (record: any) => {
+    if (!checkOwnerForDangerActions) return true
+    return getMyMemberType(record) === 'owner'
+  }
+
+  const canEditOf = (record: any) => {
+    if (!checkOwnerForDangerActions) return true
+    let mt = getMyMemberType(record)
+    return mt === 'owner' || mt === 'admin'
+  }
 
   const localEditFinish = async () => {
     actionRef.current?.reloadAndRest?.()
@@ -32,6 +57,18 @@ const RagInfoList: React.FC<RagInfoListProps> = (props) => {
       title: '知识库标题',
       dataIndex: 'title',
     },
+    ...(showMemberRoleColumn ? [{
+      title: '我的角色',
+      dataIndex: 'memberType',
+      search: false,
+      render: (_: any, record: any) => {
+        let mt = getMyMemberType(record)
+        if (!mt) return '-'
+        return <Tag color={mt === 'owner' ? 'gold' : mt === 'admin' ? 'blue' : 'default'}>
+          {memberTypeLabels[mt] || mt}
+        </Tag>
+      },
+    } as ProColumns] : []),
     {
       title: '知识库状态',
       dataIndex: 'status',
@@ -66,14 +103,14 @@ const RagInfoList: React.FC<RagInfoListProps> = (props) => {
         >
           查看
         </a>,
-        <a
+        canEditOf(record) ? <a
           key='edit'
           onClick={() => {
             editRef?.current?.show({...record})
           }}
         >
           编辑
-        </a>,
+        </a> : null,
         <a
           key='conf'
           onClick={() => {
@@ -86,7 +123,7 @@ const RagInfoList: React.FC<RagInfoListProps> = (props) => {
         >
           配置
         </a>,
-        <Popconfirm
+        isOwnerOf(record) ? <Popconfirm
           title='确定要删除该知识库吗？'
           onConfirm={async () => {
             let ret = await deleteRagInfo(record.ragCode, apiRelativeUrls?.deleteRagInfo)
@@ -102,8 +139,8 @@ const RagInfoList: React.FC<RagInfoListProps> = (props) => {
           key='delete'
         >
           <a href='#'>删除</a>
-        </Popconfirm>,
-        record.status === 0 ? <Popconfirm
+        </Popconfirm> : null,
+        isOwnerOf(record) && record.status === 0 ? <Popconfirm
           title='确定要禁用该知识库吗？'
           onConfirm={async () => {
             let ret = await disableRagInfo(record.ragCode, apiRelativeUrls?.disableRagInfo)
@@ -120,7 +157,7 @@ const RagInfoList: React.FC<RagInfoListProps> = (props) => {
         >
           <a href='#'>禁用</a>
         </Popconfirm> : null,
-        record.status === 1 ? <a
+        isOwnerOf(record) && record.status === 1 ? <a
           key='enable'
           onClick={async () => {
             let ret = await enableRagInfo(record.ragCode, apiRelativeUrls?.enableRagInfo)

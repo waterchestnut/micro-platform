@@ -13,15 +13,20 @@ export type RagInfoDetailProps = {
   toMaterialDetail?: (ragCode: string, ragMaterialCode: string) => void;
   canSetPermission?: boolean;
   canManageMembers?: boolean;
+  memberRole?: string;
 };
 
 const RagInfoDetail: React.FC<RagInfoDetailProps> = (props) => {
-  const {apiRelativeUrls, toBack, toMaterialDetail, canSetPermission = true, canManageMembers = true} = props
+  const {apiRelativeUrls, toBack, toMaterialDetail, canSetPermission = true, canManageMembers = true, memberRole} = props
   const [activeKey, setActiveKey] = useState('material')
   const [ragInfo, setRagInfo] = useState<any>(null)
   const baseInfoRef = createRef<BaseInfoAction>()
   const [loading, setLoading] = useState<any>(true)
   const params = useParams()
+
+  let isReadonly = memberRole === 'user' || memberRole === 'pending'
+  let canEditMaterial = !isReadonly && (memberRole === undefined || memberRole === 'owner' || memberRole === 'admin')
+  let showMemberTab = memberRole !== 'pending'
 
   const loadRagInfo = async () => {
     if (!params.ragCode) {
@@ -54,7 +59,7 @@ const RagInfoDetail: React.FC<RagInfoDetailProps> = (props) => {
             }}
             onEditCancel={() => {
             }}
-            pRagInfo={ragInfo}
+            pRagInfo={isReadonly ? {...ragInfo, viewer: true} : ragInfo}
             apiRelativeUrls={apiRelativeUrls}
             canSetPermission={canSetPermission}
           />
@@ -63,7 +68,7 @@ const RagInfoDetail: React.FC<RagInfoDetailProps> = (props) => {
     }
     if (activeKey === 'material') {
       return (
-        <MaterialManage pRagInfo={ragInfo} apiRelativeUrls={apiRelativeUrls} toDetail={toMaterialDetail}/>
+        <MaterialManage pRagInfo={ragInfo} apiRelativeUrls={apiRelativeUrls} toDetail={toMaterialDetail} canEdit={canEditMaterial}/>
       )
     }
     if (activeKey === 'rag-search') {
@@ -79,27 +84,32 @@ const RagInfoDetail: React.FC<RagInfoDetailProps> = (props) => {
     return null
   }
 
+  let tabList = [
+    {
+      tab: '基本信息',
+      key: 'base',
+    },
+    {
+      tab: '材料',
+      key: 'material',
+    },
+    {
+      tab: '召回测试',
+      key: 'rag-search',
+    },
+  ]
+
+  if (showMemberTab) {
+    tabList.push({
+      tab: '成员管理',
+      key: 'member',
+    })
+  }
+
   return (
     <PageContainer
       loading={loading}
-      tabList={[
-        {
-          tab: '基本信息',
-          key: 'base',
-        },
-        {
-          tab: '材料',
-          key: 'material',
-        },
-        {
-          tab: '召回测试',
-          key: 'rag-search',
-        },
-        {
-          tab: '成员管理',
-          key: 'member',
-        },
-      ]}
+      tabList={tabList}
       header={{
         title: ragInfo?.title,
         onBack: () => {

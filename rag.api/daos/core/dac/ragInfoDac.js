@@ -29,12 +29,23 @@ export class RagInfoDac extends BaseDac {
         } else if (options.operatorUserCode) {
             params.$and.push({'operator.userCode': options.operatorUserCode})
         }
-        if (options.memberUserCode) {
-            params.$and.push({'members.userCode': options.memberUserCode})
+        if (options.managedMemberUserCode) {
+            params.$and.push({
+                members: {
+                    $elemMatch: {
+                        userCode: options.managedMemberUserCode,
+                        memberType: {$in: ['owner', 'admin']}
+                    }
+                }
+            })
         }
-        if (options.joinedUserCode) {
-            params.$and.push({'members.userCode': options.joinedUserCode})
-            params.$and.push({'operator.userCode': {$ne: options.joinedUserCode}})
+        if (options.joinedOrPendingUserCode) {
+            params.$and.push({
+                $or: [
+                    {'members.userCode': options.joinedOrPendingUserCode},
+                    {applications: {$elemMatch: {userCode: options.joinedOrPendingUserCode, status: 0}}}
+                ]
+            })
         }
 
         return params
