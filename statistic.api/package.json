@@ -34,6 +34,7 @@
     "dayjs": "^1.11.13",
     "dotenv": "^16.4.7",
     "es8": "npm:@elastic/elasticsearch@8",
+    "es9": "npm:@elastic/elasticsearch@9",
     "fastify": "^5.2.1",
     "fastify-cli": "^7.3.0",
     "fastify-plugin": "^5.0.1",

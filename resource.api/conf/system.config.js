@@ -91,7 +91,9 @@ export default {
             auth: {
                 username: process.env['SEARCH_RESOURCE_AUTH_USERNAME'],
                 password: process.env['SEARCH_RESOURCE_AUTH_PASSWORD']
-            }
+            },
+            /** ES客户端版本：es8 或 es9 */
+            esVersion: process.env['SEARCH_RESOURCE_ES_VERSION'] || 'es8'
         },
     },
     /** 知识库服务的配置 */

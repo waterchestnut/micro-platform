@@ -81,7 +81,9 @@ export default {
             auth: {
                 username: process.env['SEARCH_MSG_AUTH_USERNAME'],
                 password: process.env['SEARCH_MSG_AUTH_PASSWORD']
-            }
+            },
+            /** ES客户端版本：es8 或 es9 */
+            esVersion: process.env['SEARCH_MSG_ES_VERSION'] || 'es8'
         },
     },
     /** 用户授权中心的配置 */
