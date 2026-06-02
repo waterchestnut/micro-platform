@@ -33,10 +33,33 @@ export async function nonChineseTrans(sourceText, options = {}) {
         return {fullTrans: '', sentenceTrans: []}
     }
 
+    const onlyFull = options.onlyFull
+
     const openai = new OpenAI({
         apiKey: llmConfig.apiKey,
         baseURL: llmConfig.baseURL,
     })
+
+    if (onlyFull) {
+        const sysPrompt = `你是一个多语言翻译高手。请将用户提供的非中文原文翻译为简体中文。
+仅返回翻译后的文本，无需额外格式说明。如果无法识别或无法翻译，请回答：无法识别与翻译。`
+
+        let ret = await openai.chat.completions.create({
+            model: llmConfig.model,
+            messages: [
+                {'role': 'system', 'content': sysPrompt},
+                {'role': 'user', 'content': `**原文：**\n${sourceText}`}
+            ],
+            max_tokens: llmConfig.maxTokens,
+            temperature: 0.7,
+            stream: false
+        })
+
+        if (!ret?.choices?.length || ret.choices[0].message.content.startsWith('无法识别与翻译')) {
+            return {fullTrans: '', sentenceTrans: []}
+        }
+        return {fullTrans: ret.choices[0].message.content, sentenceTrans: []}
+    }
 
     const sysPrompt = `你是一个多语言翻译高手。请将用户提供的非中文原文翻译为简体中文。
 你需要返回以下格式的JSON：

@@ -29,6 +29,7 @@ message autoTransResponse {
 
 message nonChineseTransRequest {
   string sourceText = 1;
+  bool onlyFull = 2;
 }
 
 message sentenceItem {

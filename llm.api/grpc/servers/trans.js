@@ -26,7 +26,7 @@ export function initService(server) {
         },
         nonChineseTrans: async (call, callback) => {
             try {
-                let ret = await nonChineseTrans(call.request.sourceText)
+                let ret = await nonChineseTrans(call.request.sourceText, {onlyFull: call.request.onlyFull})
                 callback(null, ret)
             } catch (e) {
                 callback(e)
