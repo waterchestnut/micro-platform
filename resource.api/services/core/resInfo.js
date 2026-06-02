@@ -7,6 +7,7 @@
 import resInfoDac from '../../daos/core/dac/resInfoDac.js'
 import retSchema from '../../daos/retSchema.js'
 import {checkCodeField} from '../../tools/check.js'
+import {nonChineseTrans} from '../../grpc/clients/trans.js'
 
 const tools = resource.tools
 const logger = resource.logger
@@ -159,6 +160,67 @@ export async function deleteResInfo(curUserInfo, resCode) {
     }
 
     return resInfoDac.update({resCode, status: -1})
+}
+
+/**
+ * @description 获取资源标题的中文翻译，已缓存时直接返回
+ * @param {String} resCode 资源标识
+ * @returns {Promise<{fullTrans: String}|null>} 中文标题
+ */
+export async function transTitleToCn(resCode) {
+    let resInfo = await getResInfo(resCode)
+    if (!resInfo) {
+        return null
+    }
+    if (resInfo.titleCnTrans) {
+        return {fullTrans: resInfo.titleCnTrans}
+    }
+    if (!resInfo.title) {
+        return null
+    }
+    let ret = await nonChineseTrans(resInfo.title, true)
+    if (!ret?.fullTrans) {
+        return null
+    }
+    await resInfoDac.update({resCode, titleCnTrans: ret.fullTrans})
+    return {fullTrans: ret.fullTrans}
+}
+
+/**
+ * @description 获取资源摘要的中文翻译，已缓存时直接返回
+ * @param {String} resCode 资源标识
+ * @returns {Promise<{fullTrans: String, sentenceTrans: Array}|null>}
+ */
+export async function transAbstractToCn(resCode) {
+    let resInfo = await getResInfo(resCode)
+    if (!resInfo) {
+        return null
+    }
+    if (resInfo.abstractCnTrans) {
+        return {
+            fullTrans: resInfo.abstractCnTrans,
+            sentenceTrans: resInfo.abstractCnSentenceTrans || [],
+        }
+    }
+    if (!resInfo.abstract) {
+        return null
+    }
+    let ret = await nonChineseTrans(resInfo.abstract, false)
+    if (!ret?.fullTrans) {
+        return null
+    }
+    let updateData = {
+        resCode,
+        abstractCnTrans: ret.fullTrans,
+    }
+    if (ret.sentenceTrans?.length) {
+        updateData.abstractCnSentenceTrans = ret.sentenceTrans
+    }
+    await resInfoDac.update(updateData)
+    return {
+        fullTrans: ret.fullTrans,
+        sentenceTrans: ret.sentenceTrans || [],
+    }
 }
 
 /**

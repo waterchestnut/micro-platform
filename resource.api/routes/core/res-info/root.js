@@ -33,6 +33,66 @@ export default async function (fastify, opts) {
         return await resInfoService.addResInfo(request.userInfo, request.reqParams)
     })
 
+    fastify.post('/trans-title', {
+        schema: {
+            description: '获取资源标题的中文翻译',
+            summary: '获取资源标题的中文翻译',
+            body: {
+                type: 'object',
+                required: ['resCode'],
+                properties: {
+                    resCode: {type: 'string', description: '资源标识'},
+                }
+            },
+            tags: ['res'],
+            response: {
+                default: {...getResSwaggerSchema({
+                    type: 'object',
+                    properties: {
+                        fullTrans: {type: 'string'},
+                    }
+                })}
+            }
+        }
+    }, async function (request, reply) {
+        return await resInfoService.transTitleToCn(request.reqParams.resCode)
+    })
+
+    fastify.post('/trans-abstract', {
+        schema: {
+            description: '获取资源摘要的中文翻译',
+            summary: '获取资源摘要的中文翻译',
+            body: {
+                type: 'object',
+                required: ['resCode'],
+                properties: {
+                    resCode: {type: 'string', description: '资源标识'},
+                }
+            },
+            tags: ['res'],
+            response: {
+                default: {...getResSwaggerSchema({
+                    type: 'object',
+                    properties: {
+                        fullTrans: {type: 'string'},
+                        sentenceTrans: {
+                            type: 'array',
+                            items: {
+                                type: 'object',
+                                properties: {
+                                    original: {type: 'string'},
+                                    translation: {type: 'string'},
+                                }
+                            }
+                        }
+                    }
+                })}
+            }
+        }
+    }, async function (request, reply) {
+        return await resInfoService.transAbstractToCn(request.reqParams.resCode)
+    })
+
     fastify.post('/list', {
         schema: {
             description: '获取资源列表',
