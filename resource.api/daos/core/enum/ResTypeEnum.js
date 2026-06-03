@@ -18,6 +18,7 @@ export default class ResTypeEnum extends Enumify {
     static article = new ResTypeEnum('article', '文章')
     static exercise = new ResTypeEnum('exercise', '试题')
     static meeting = new ResTypeEnum('meeting', '会议')
+    static mooc = new ResTypeEnum('mooc', '慕课')
     static upload = new ResTypeEnum('upload', '自定义上传')
     //文章下的二级分类
     static camp = new ResTypeEnum('camp', '夏令营')
