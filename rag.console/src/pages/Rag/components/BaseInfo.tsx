@@ -9,7 +9,8 @@ import {
 import {waitTime} from '@/utils/util'
 import {errorMessage, successMessage} from '@/utils/msg'
 import {addRagInfo, updateRagInfo} from '@/services/rag/ragInfo'
-import {Button, Col, Row, Space} from 'antd'
+import {getDepartmentList} from '@/services/ucenter/department'
+import {Button, Col, Form, Row, Space} from 'antd'
 import StatusEnum from '@/enum/StatusEnum'
 
 export type BaseInfoProps = {
@@ -42,6 +43,21 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
   const [editing, setEditing] = useState(false)
   const [ragInfo, setRagInfo] = useState<any>(null)
   const formRef = useRef<ProFormInstance>()
+  const [departmentOptions, setDepartmentOptions] = useState<{label: string; value: string}[]>([])
+
+  const permissionValue = Form.useWatch('permission', formRef.current)
+
+  useEffect(() => {
+    if (canSetPermission) {
+      getDepartmentList(1, 1000).then(data => {
+        let options = (data.rows || []).map((d: any) => ({
+          label: d.departmentName,
+          value: d.departmentCode,
+        }))
+        setDepartmentOptions(options)
+      })
+    }
+  }, [canSetPermission])
 
   const resetForm = (info: any) => {
     waitTime(200).then(() => {
@@ -192,6 +208,21 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
           ] : []),
         ]}
       />
+      {
+        canSetPermission && permissionValue === 'department' ?
+          <ProFormSelect
+            name='permissionDepartmentCodes'
+            label='指定部门'
+            rules={[{required: true, message: '请选择指定部门'}]}
+            mode='multiple'
+            options={departmentOptions}
+            fieldProps={{
+              showSearch: true,
+              filterOption: (input: string, option: any) =>
+                (option?.label ?? '').toLowerCase().includes(input.toLowerCase()),
+            }}
+          /> : null
+      }
       <ProFormSwitch
         name='needApproval'
         label='加入需审批'
