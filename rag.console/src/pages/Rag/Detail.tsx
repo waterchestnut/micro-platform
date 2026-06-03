@@ -128,7 +128,7 @@ const RagInfoDetail: React.FC<RagInfoDetailProps> = (props) => {
           if (toBack) {
             toBack(params.ragCode + '')
           } else {
-            history.push('/rag/list')
+            history.push(`${location.pathname.startsWith('/lite/') ? '/lite' : ''}/rag/list`)
           }
         },
         extra: headerExtra,

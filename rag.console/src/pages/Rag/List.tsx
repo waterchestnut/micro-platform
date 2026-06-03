@@ -119,7 +119,7 @@ const RagInfoList: React.FC<RagInfoListProps> = (props) => {
             if (toDetail) {
               toDetail(record.ragCode)
             } else {
-              history.push(`/rag/detail/${record.ragCode}`)
+              history.push(`${location.pathname.startsWith('/lite/') ? '/lite' : ''}/rag/detail/${record.ragCode}`)
             }
           }}
         >

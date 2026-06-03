@@ -12,6 +12,41 @@
  */
 export default [
   {
+    path: '/lite',
+    access: 'normalRouteFilter',
+    icon: 'history',
+    authority: false,
+    hideInMenu: true,
+    layout: false,
+    component: './Layout',
+    routes: [
+      {
+        name: 'rag.list',
+        icon: 'appstore',
+        path: 'rag/list',
+        access: 'normalRouteFilter',
+        authority: ['rag-ipmirag-browse'],
+        component: './Rag/List',
+      },
+      {
+        name: 'rag.detail',
+        icon: 'appstore',
+        path: 'rag/detail/:ragCode',
+        access: 'normalRouteFilter',
+        authority: ['rag-ipmirag-browse'],
+        component: './Rag/Detail',
+      },
+      {
+        name: 'rag.material-detail',
+        icon: 'appstore',
+        path: 'rag/detail/:ragCode/:ragMaterialCode',
+        access: 'normalRouteFilter',
+        authority: ['rag-ipmirag-browse'],
+        component: './Rag/MaterialDetail',
+      },
+    ]
+  },
+  {
     path: '/',
     access: 'normalRouteFilter',
     authority: false,
@@ -121,4 +156,4 @@ export default [
     layout: false,
     component: './404',
   },
-];
+]

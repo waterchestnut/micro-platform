@@ -51,7 +51,7 @@ const MaterialManage: React.FC<MaterialManageProps> = (props) => {
               if (toDetail) {
                 toDetail(record.ragCode, record.ragMaterialCode)
               } else {
-                history.push(`/rag/detail/${record.ragCode}/${record.ragMaterialCode}`)
+                history.push(`${location.pathname.startsWith('/lite/') ? '/lite' : ''}/rag/detail/${record.ragCode}/${record.ragMaterialCode}`)
               }
             }}
           >

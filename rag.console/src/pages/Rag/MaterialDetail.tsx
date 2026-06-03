@@ -115,7 +115,7 @@ const RagMaterialDetail: React.FC<RagMaterialDetailProps> = (props) => {
           if (toBack) {
             toBack(params.ragCode + '')
           } else {
-            history.push(`/rag/detail/${ragInfo.ragCode}`)
+            history.push(`${location.pathname.startsWith('/lite/') ? '/lite' : ''}/rag/detail/${ragInfo.ragCode}`)
           }
         }
       }}
