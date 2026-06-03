@@ -75,7 +75,7 @@ export default async function (fastify, opts) {
 
     fastify.post('/list', {
         schema: {
-            description: '获取资源列表',
+            description: '获取资源列表（仅包含平台管理的资源）',
             summary: '资源列表',
             body: {
                 type: 'object',
@@ -102,7 +102,33 @@ export default async function (fastify, opts) {
             }
         }
     }, async function (request, reply) {
-        return await resInfoService.getResInfos(request.reqParams.filter, request.reqParams.pageIndex, request.reqParams.pageSize, request.reqParams.options)
+        let filter = {
+            ...request.reqParams.filter,
+            manageType: 'platform',
+        }
+        if (filter.myRes) {
+            filter.operatorUserCode = request.userInfo.userCode
+        }
+        delete filter.myRes
+        return await resInfoService.getResInfos(filter, request.reqParams.pageIndex, request.reqParams.pageSize, request.reqParams.options)
+    })
+
+    fastify.post('/add', {
+        schema: {
+            description: '添加平台管理资源（manageTypes 固定为 platform）',
+            summary: '添加平台资源',
+            body: resInfoSchema,
+            tags: ['res-ipmi'],
+            response: {
+                default: {...getResSwaggerSchema(resInfoSchema)}
+            }
+        }
+    }, async function (request, reply) {
+        let params = {
+            ...request.reqParams,
+            manageTypes: ['platform'],
+        }
+        return await resInfoService.addResInfo(request.userInfo, params)
     })
 
     registerCommonRoutes(fastify, opts)

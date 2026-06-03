@@ -107,8 +107,14 @@ export async function updateResInfo(curUserInfo, resCode, newResInfo) {
     let resInfo = {
         resCode,
         title: newResInfo.title,
+        author: newResInfo.author,
         abstract: newResInfo.abstract,
+        publisher: newResInfo.publisher,
+        publishDate: newResInfo.publishDate,
+        resType: newResInfo.resType,
+        url: newResInfo.url,
         tags: newResInfo.tags,
+        fileList: newResInfo.fileList,
     }
 
     let ret = await resInfoDac.update(resInfo)
