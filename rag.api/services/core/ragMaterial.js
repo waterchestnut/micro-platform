@@ -20,6 +20,7 @@ import {deleteByQuery, upsertItems} from '../../daos/milvus/dac/chunkDac.js'
 import {getContentVector} from '../openai/embedding.js'
 import {updateChunkRagIndex} from './ragChunk.js'
 import {addRagInfo} from './ragInfo.js'
+import {addLog} from './ragOperationLog.js'
 
 const tools = rag.tools
 const logger = rag.logger
@@ -105,6 +106,14 @@ export async function addRagMaterial(curUserInfo, ragMaterialInfo) {
     }
     let ret = await ragMaterialDac.add(newRagMaterial)
 
+    await addLog({
+        ragCode: ragMaterialInfo.ragCode,
+        logType: 'material_add',
+        operator: {userCode: curUserInfo.userCode, realName: curUserInfo.realName},
+        targetMaterialTitle: ragMaterialInfo.resTitle,
+        targetMaterialCode: ragMaterialInfo.ragMaterialCode,
+    })
+
     /*加入材料队列*/
     await sendMessage([{
         topic: kafkaConfig.topics.ragMaterial.topic, key: ret.ragMaterialCode, value: JSON.stringify(ret)
@@ -166,6 +175,8 @@ export async function deleteRagMaterial(curUserInfo, ragMaterialCode) {
         throw new Error('缺少材料标识')
     }
 
+    let materialInfo = await ragMaterialDac.getByCode(ragMaterialCode)
+
     //删除分段分句
     await ragSegmentDac.update({status: -1}, {ragMaterialCode})
     await ragChunkDac.update({status: -1}, {ragMaterialCode})
@@ -173,7 +184,19 @@ export async function deleteRagMaterial(curUserInfo, ragMaterialCode) {
         filter: `ragMaterialCode == '${ragMaterialCode}'`
     })
 
-    return ragMaterialDac.update({ragMaterialCode, status: -1})
+    let ret = await ragMaterialDac.update({ragMaterialCode, status: -1})
+
+    if (materialInfo) {
+        await addLog({
+            ragCode: materialInfo.ragCode,
+            logType: 'material_delete',
+            operator: {userCode: curUserInfo.userCode, realName: curUserInfo.realName},
+            targetMaterialTitle: materialInfo.resTitle,
+            targetMaterialCode: ragMaterialCode,
+        })
+    }
+
+    return ret
 }
 
 /**

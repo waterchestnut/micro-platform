@@ -28,7 +28,7 @@ const tools = rag.tools
  * @property {Schema.Types.Mixed} operator 材料所有者
  * @property {Number} status 状态：参见StatusEnum
  * @property {Schema.Types.Mixed[]} tags 标签，参见Tag
- * @property {Number} usage 材料使用情况，参加UsageEnum
+ * @property {Number} usage 材料使用情况，参见UsageEnum
  * @property {Number} handleStatus 数据处理状态：参见HandleStatusEnum
  * @property {String} handleError 数据处理出错信息
  * @property {Date} insertTime 创建时间

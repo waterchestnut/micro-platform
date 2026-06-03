@@ -9,6 +9,7 @@ import ragInfoSchema from './ragInfoSchema.js'
 import ragMaterialSchema from './ragMaterialSchema.js'
 import ragSegmentSchema from './ragSegmentSchema.js'
 import ragChunkSchema from './ragChunkSchema.js'
+import ragOperationLogSchema from './ragOperationLogSchema.js'
 
 const mongodbConfig = rag.config.mongodbConfig
 
@@ -34,3 +35,4 @@ export const RagInfo = conn.model('RagInfo', ragInfoSchema, 'ragInfo')
 export const RagMaterial = conn.model('RagMaterial', ragMaterialSchema, 'ragMaterial')
 export const RagSegment = conn.model('RagSegment', ragSegmentSchema, 'ragSegment')
 export const RagChunk = conn.model('RagChunk', ragChunkSchema, 'ragChunk')
+export const RagOperationLog = conn.model('RagOperationLog', ragOperationLogSchema, 'ragOperationLog')

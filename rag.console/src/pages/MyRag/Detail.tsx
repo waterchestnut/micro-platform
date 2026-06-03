@@ -35,6 +35,7 @@ const MyRagInfoDetail: React.FC = () => {
     removeMember: '/core/rag-my/member/remove',
     updateMemberType: '/core/rag-my/member/update-type',
     handleApplication: '/core/rag-my/application/handle',
+    getOperationLogList: '/core/rag-my/log/list',
   }
   return (
     <RagInfoDetail apiRelativeUrls={apiRelativeUrls} canManageMembers toBack={(ragCode: string) => {

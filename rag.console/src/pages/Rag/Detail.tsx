@@ -6,6 +6,7 @@ import {getRagInfo} from '@/services/rag/ragInfo'
 import MaterialManage from '@/pages/Rag/components/MaterialManage'
 import RagSearch from '@/pages/Rag/components/RagSearch'
 import MemberManage from '@/pages/Rag/components/MemberManage'
+import OperationLog from '@/pages/Rag/components/OperationLog'
 
 export type RagInfoDetailProps = {
   apiRelativeUrls?: any;
@@ -82,6 +83,11 @@ const RagInfoDetail: React.FC<RagInfoDetailProps> = (props) => {
         <MemberManage pRagInfo={ragInfo} apiRelativeUrls={apiRelativeUrls} canManageMembers={canManageMembers}/>
       )
     }
+    if (activeKey === 'log') {
+      return (
+        <OperationLog pRagInfo={ragInfo} apiRelativeUrls={apiRelativeUrls}/>
+      )
+    }
     return null
   }
 
@@ -106,6 +112,11 @@ const RagInfoDetail: React.FC<RagInfoDetailProps> = (props) => {
       key: 'member',
     })
   }
+
+  tabList.push({
+    tab: '操作日志',
+    key: 'log',
+  })
 
   return (
     <PageContainer

@@ -55,6 +55,7 @@ const JoinedRagInfoDetail: React.FC = () => {
     getRagSegment: '/core/rag-my/segment/detail',
     getRagChunkList: '/core/rag-my/chunk/list',
     getRagChunk: '/core/rag-my/chunk/detail',
+    getOperationLogList: '/core/rag-my/log/list',
   }
 
   if (canEdit) {

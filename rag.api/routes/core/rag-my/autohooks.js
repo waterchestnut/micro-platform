@@ -9,7 +9,7 @@ import {getRagInfo} from '../../../services/core/ragInfo.js'
 const tools = rag.tools
 const logger = rag.logger
 
-const readRoutes = ['/core/rag-my/detail', '/core/rag-my/material/list', '/core/rag-my/material/detail', '/core/rag-my/segment/list', '/core/rag-my/segment/detail', '/core/rag-my/chunk/list', '/core/rag-my/chunk/detail']
+const readRoutes = ['/core/rag-my/detail', '/core/rag-my/material/list', '/core/rag-my/material/detail', '/core/rag-my/segment/list', '/core/rag-my/segment/detail', '/core/rag-my/chunk/list', '/core/rag-my/chunk/detail', '/core/rag-my/log/list']
 const writeRoutes = ['/core/rag-my/update', '/core/rag-my/material/add', '/core/rag-my/material/update', '/core/rag-my/material/delete', '/core/rag-my/material/enable', '/core/rag-my/material/disable', '/core/rag-my/segment/add', '/core/rag-my/segment/update', '/core/rag-my/segment/delete', '/core/rag-my/segment/enable', '/core/rag-my/segment/disable', '/core/rag-my/chunk/add', '/core/rag-my/chunk/update', '/core/rag-my/chunk/delete', '/core/rag-my/chunk/enable', '/core/rag-my/chunk/disable']
 const ownerRoutes = ['/core/rag-my/delete', '/core/rag-my/enable', '/core/rag-my/disable']
 

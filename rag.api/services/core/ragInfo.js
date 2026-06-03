@@ -7,6 +7,7 @@
 import ragInfoDac from '../../daos/core/dac/ragInfoDac.js'
 import retSchema from '../../daos/retSchema.js'
 import {checkCodeField} from '../../tools/check.js'
+import {addLog} from './ragOperationLog.js'
 
 const tools = rag.tools
 const logger = rag.logger
@@ -261,8 +262,18 @@ export async function removeMember(curUserInfo, ragCode, userCode) {
     if (ragInfo.operator?.userCode === userCode) {
         throw new Error('不能移除创建者')
     }
+    let targetMember = (ragInfo.members || []).find(m => m.userCode === userCode)
     let members = (ragInfo.members || []).filter(m => m.userCode !== userCode)
-    return ragInfoDac.update({ragCode, members})
+    await ragInfoDac.update({ragCode, members})
+    if (targetMember) {
+        await addLog({
+            ragCode,
+            logType: 'member_remove',
+            operator: {userCode: curUserInfo.userCode, realName: curUserInfo.realName},
+            targetUser: {userCode: targetMember.userCode, realName: targetMember.realName},
+        })
+    }
+    return ragInfoDac.getByCode(ragCode)
 }
 
 /**
@@ -283,7 +294,14 @@ export async function quitMember(curUserInfo, ragCode) {
     if (members.length === (ragInfo.members || []).length) {
         throw new Error('您不是该知识库的成员')
     }
-    return ragInfoDac.update({ragCode, members})
+    await ragInfoDac.update({ragCode, members})
+    await addLog({
+        ragCode,
+        logType: 'member_quit',
+        operator: {userCode: curUserInfo.userCode, realName: curUserInfo.realName},
+        targetUser: {userCode: curUserInfo.userCode, realName: curUserInfo.realName},
+    })
+    return ragInfoDac.getByCode(ragCode)
 }
 
 /**
@@ -305,13 +323,25 @@ export async function updateMemberType(curUserInfo, ragCode, userCode, memberTyp
     if (ragInfo.operator?.userCode === userCode) {
         throw new Error('不能修改创建者角色')
     }
+    let oldMember = (ragInfo.members || []).find(m => m.userCode === userCode)
+    let fromType = oldMember?.memberType || ''
     let members = (ragInfo.members || []).map(m => {
         if (m.userCode === userCode) {
             return {...m, memberType}
         }
         return m
     })
-    return ragInfoDac.update({ragCode, members})
+    await ragInfoDac.update({ragCode, members})
+    if (oldMember) {
+        await addLog({
+            ragCode,
+            logType: 'member_role_change',
+            operator: {userCode: curUserInfo.userCode, realName: curUserInfo.realName},
+            targetUser: {userCode: oldMember.userCode, realName: oldMember.realName},
+            detail: {fromType, toType: memberType},
+        })
+    }
+    return ragInfoDac.getByCode(ragCode)
 }
 
 /**
@@ -332,6 +362,12 @@ export async function applyJoin(curUserInfo, ragCode) {
     if (ragInfo.needApproval === 0) {
         let members = [...(ragInfo.members || []), {userCode: curUserInfo.userCode, realName: curUserInfo.realName, memberType: 'user'}]
         await ragInfoDac.update({ragCode, members})
+        await addLog({
+            ragCode,
+            logType: 'member_join',
+            operator: {userCode: curUserInfo.userCode, realName: curUserInfo.realName},
+            targetUser: {userCode: curUserInfo.userCode, realName: curUserInfo.realName},
+        })
         return {needApproval: 0}
     }
 
@@ -348,6 +384,12 @@ export async function applyJoin(curUserInfo, ragCode) {
         insertTime: new Date()
     })
     await ragInfoDac.update({ragCode, applications})
+    await addLog({
+        ragCode,
+        logType: 'member_apply',
+        operator: {userCode: curUserInfo.userCode, realName: curUserInfo.realName},
+        targetUser: {userCode: curUserInfo.userCode, realName: curUserInfo.realName},
+    })
     return {needApproval: 1}
 }
 
@@ -386,5 +428,12 @@ export async function handleApplication(curUserInfo, ragCode, applicationCode, s
             updateData.members = members
         }
     }
-    return ragInfoDac.update(updateData)
+    await ragInfoDac.update(updateData)
+    await addLog({
+        ragCode,
+        logType: status === 1 ? 'application_approve' : 'application_reject',
+        operator: {userCode: curUserInfo.userCode, realName: curUserInfo.realName},
+        targetUser: {userCode: application.userCode, realName: application.realName},
+    })
+    return ragInfoDac.getByCode(ragCode)
 }

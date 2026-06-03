@@ -20,7 +20,7 @@ const tools = rag.tools
  * @description 定义ragInfo的结构
  * @author xianyang
  * @property {String} ragCode 知识库标识
- * @property {String} ragType 知识库类型，参加RagTypeEnum
+ * @property {String} ragType 知识库类型，参见RagTypeEnum
  * @property {String} title 知识库标题
  * @property {String} description 知识库描述
  * @property {Schema.Types.Mixed} metas 扩展元数据信息
@@ -29,7 +29,7 @@ const tools = rag.tools
  * @property {Schema.Types.Mixed[]} tags 标签，参见Tag
  * @property {String} embeddingModelProvider 向量模型提供商
  * @property {String} embeddingModelId 向量模型ID
- * @property {String} permission 召回权限，参加RagPermissionEnum
+ * @property {String} permission 召回权限，参见RagPermissionEnum
  * @property {String[]} permissionDepartmentCodes 能召回的部门标识列表，当召回权限为指定部门成员可用时使用
  * @property {Schema.Types.Mixed[]} members 成员，参见Member
  * @property {Schema.Types.Mixed[]} applications 加入申请，参见Application

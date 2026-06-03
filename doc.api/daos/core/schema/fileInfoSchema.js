@@ -34,7 +34,7 @@ const tools = doc.tools
  * @property {String} encoding 编码方式
  * @property {String} mimetype MIME类型
  * @property {Schema.Types.Mixed} extInfo 扩展信息
- * @property {Schema.Types.Mixed} operator 上传文件的用户，参加Operator
+ * @property {Schema.Types.Mixed} operator 上传文件的用户，参见Operator
  * @property {Date} insertTime 创建时间
  * @property {Date} updateTime 最近更新时间
  */

@@ -21,13 +21,13 @@ const tools = rag.tools
  * @description 定义ragMaterial的结构
  * @author xianyang
  * @property {String} ragMaterialCode 唯一标识
- * @property {String} ragType 知识库类型，参加RagTypeEnum
+ * @property {String} ragType 知识库类型，参见RagTypeEnum
  * @property {String} physicalPath 材料物理路径
  * @property {String} format 材料格式
  * @property {Schema.Types.Mixed[]} details 材料的文本数据信息，参见MaterialDetail
  * @property {Schema.Types.Mixed} metas 扩展元数据信息
  * @property {String} ragCode 知识库标识
- * @property {Number} usage 材料使用情况，参加UsageEnum
+ * @property {Number} usage 材料使用情况，参见UsageEnum
  * @property {Schema.Types.Mixed} operator 材料添加者
  * @property {Number} status 状态：参见StatusEnum
  * @property {Schema.Types.Mixed[]} tags 标签，参见Tag
