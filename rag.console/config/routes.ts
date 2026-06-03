@@ -18,7 +18,7 @@ export default [
     authority: false,
     hideInMenu: true,
     layout: false,
-    component: './Layout',
+    component: './LayoutLite',
     routes: [
       {
         name: 'rag.list',
