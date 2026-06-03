@@ -2,7 +2,7 @@ import {useModel, history} from '@umijs/max'
 import {theme} from 'antd'
 import React from 'react'
 import WujieReact from 'wujie-react'
-import {getCommonProps} from '@/utils/wujie'
+import {getCommonPlugins, getCommonProps} from '@/utils/wujie'
 
 const BorrowDD: React.FC = () => {
   const {token} = theme.useToken()
@@ -19,17 +19,7 @@ const BorrowDD: React.FC = () => {
       url={baseUrl + '/lite/personal/setting'}
       sync={true}
       props={props}
-      plugins={[
-        {
-          windowPropertyOverride: (subWindow: typeof window) =>
-            Object.defineProperty(subWindow.Navigator.prototype, 'clipboard', {
-              get: () => {
-                // @ts-ignore
-                return subWindow.__POWERED_BY_WUJIE__ ? subWindow.parent.navigator.clipboard : subWindow.navigator.clipboard
-              },
-            }),
-        },
-      ]}
+      plugins={getCommonPlugins()}
     ></WujieReact>
   )
 }

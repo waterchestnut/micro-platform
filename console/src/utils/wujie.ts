@@ -30,3 +30,18 @@ export function getCommonProps() {
     },
   }
 }
+
+/** 获取通用的无界插件 */
+export function getCommonPlugins() {
+  return [
+    {
+      windowPropertyOverride: (subWindow: typeof window) =>
+        Object.defineProperty(subWindow.Navigator.prototype, 'clipboard', {
+          get: () => {
+            // @ts-ignore
+            return subWindow.__POWERED_BY_WUJIE__ ? subWindow.parent.navigator.clipboard : subWindow.navigator.clipboard
+          },
+        }),
+    },
+  ]
+}

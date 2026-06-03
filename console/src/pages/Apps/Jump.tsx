@@ -1,7 +1,7 @@
 import React, {useEffect, useState} from 'react'
 import {useParams, history, useModel} from '@umijs/max'
 import WujieReact from 'wujie-react'
-import {getCommonProps} from '@/utils/wujie'
+import {getCommonPlugins, getCommonProps} from '@/utils/wujie'
 
 const Jump: React.FC = () => {
   const [clientInfo, setClientInfo] = useState<APPAPI.ClientPublic | undefined>()
@@ -32,17 +32,7 @@ const Jump: React.FC = () => {
         url={visitPath}
         sync={true}
         props={getCommonProps()}
-        plugins={[
-          {
-            windowPropertyOverride: (subWindow: typeof window) =>
-              Object.defineProperty(subWindow.Navigator.prototype, 'clipboard', {
-                get: () => {
-                  // @ts-ignore
-                  return subWindow.__POWERED_BY_WUJIE__ ? subWindow.parent.navigator.clipboard : subWindow.navigator.clipboard
-                },
-              }),
-          },
-        ]}
+        plugins={getCommonPlugins()}
       ></WujieReact>
     )
   }

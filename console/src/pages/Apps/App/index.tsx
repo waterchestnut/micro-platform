@@ -2,7 +2,7 @@ import {useModel, history} from '@umijs/max'
 import {theme} from 'antd'
 import React from 'react'
 import WujieReact from 'wujie-react'
-import {getCommonProps} from '@/utils/wujie'
+import {getCommonPlugins, getCommonProps} from '@/utils/wujie'
 
 const App: React.FC = () => {
   const {token} = theme.useToken()
@@ -18,6 +18,7 @@ const App: React.FC = () => {
       url={APP_PLATFORM_BASE}
       sync={true}
       props={props}
+      plugins={getCommonPlugins()}
     ></WujieReact>
   )
 }
