@@ -11,7 +11,7 @@ const platformBaseUrl = PLATFORM_BASE
 export function getCommonProps() {
   return {
     jump: (name: string) => {
-      history.push(`/${name}`)
+      location.href = name
     },
     getAccessToken: () => {
       return getAccessToken()
@@ -28,6 +28,7 @@ export function getCommonProps() {
     getToClientUrl: (clientCode: string, path: string) => {
       return `${platformBaseUrl}/sub/${clientCode}?${clientCode}=${encodeURIComponent(path)}`
     },
+    platformBaseUrl: platformBaseUrl,
   }
 }
 

@@ -16,7 +16,7 @@ const Ucenter: React.FC = () => {
       name="ucenter"
       // @ts-ignore
       url={UCENTER_PLATFORM_BASE}
-      sync={false}
+      sync={true}
       props={props}
       plugins={getCommonPlugins()}
     ></WujieReact>
