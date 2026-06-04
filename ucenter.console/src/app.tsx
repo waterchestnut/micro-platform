@@ -2,6 +2,7 @@ import {Footer, AvatarDropdown, AvatarName} from '@/components'
 import {LinkOutlined} from '@ant-design/icons'
 import type {Settings as LayoutSettings} from '@ant-design/pro-components'
 import {SettingDrawer} from '@ant-design/pro-components'
+import {history} from '@umijs/max'
 import type {RunTimeLayoutConfig} from '@umijs/max'
 import defaultSettings from '../config/defaultSettings'
 import {errorConfig} from './requestErrorConfig'
@@ -65,6 +66,27 @@ export const layout: RunTimeLayoutConfig = ({initialState, setInitialState}) => 
     menu: {
       defaultOpenAll: true,
       ignoreFlatMenu: true,
+    },
+    menuItemRender: (itemProps, defaultDom, props) => {
+      if (!itemProps.path || props.matchMenuKeys?.includes(itemProps.key as string)) {
+        return defaultDom
+      }
+      if (itemProps.path.startsWith('http')) {
+        return (
+          <a href={itemProps.path} target='_blank' rel='noreferrer'>
+            {defaultDom}
+          </a>
+        )
+      }
+      // @ts-ignore
+      const url = window.$wujie?.props?.getToClientUrl ? window.$wujie.props.getToClientUrl(window.$wujie.bus.id, itemProps.path) : itemProps.path
+      return <a
+        href={url}
+        onClick={(e) => {
+          e.preventDefault()
+          history.push(itemProps.path || '/')
+        }}
+      >{defaultDom}</a>
     },
     bgLayoutImgList: [
       {
