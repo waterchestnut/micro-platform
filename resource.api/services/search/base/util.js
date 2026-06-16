@@ -19,7 +19,10 @@ export function formatDataList(dataList, options = {
         let retItem = {}
         let textMaxWords = options.textMaxWords
         for (let key in item._source) {
-            retItem[key.replace(/^(long_)|(key_)|(string_)|(nested_)|(ip_)|(object_)|(double_)|(date_)|(text_cn_smart_)|(text_cn_)|(embedding_)/i, '')] = item._source[key]
+            let itemKey = key.replace(/^(long_)|(key_)|(string_)|(nested_)|(ip_)|(object_)|(double_)|(date_)|(text_cn_smart_)|(text_cn_)|(embedding_)/i, '')
+            if (!tools.isExist(retItem[itemKey])) {
+                retItem[itemKey] = item._source[key]
+            }
             options.formatField && options.formatField(retItem, item, key)
         }
         if (item.highlight) {
