@@ -1,10 +1,10 @@
 export const listSource = {
-    includes: ['s_string_*', 'text_cn_*', 'key_*', 'long_*', 'date_*', 'double_*', 'nested_*'],
+    includes: ['s_string_*', 'text_cn_*', 'key_*', 'long_*', 'date_*', 'double_*', 'nested_*', 'ukey'],
     excludes: ['embedding_*']
 }
 
 export const detailSource = {
-    includes: ['s_string_*', 'text_cn_*', 'key_*', 'long_*', 'date_*', 'double_*', 'nested_*'],
+    includes: ['s_string_*', 'text_cn_*', 'key_*', 'long_*', 'date_*', 'double_*', 'nested_*', 'ukey'],
     excludes: ['embedding_*']
 }
 
