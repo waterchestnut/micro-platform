@@ -28,7 +28,11 @@ class Search {
             nodes: this._esConfig.baseUrl.split(','),
             compression: true,
             auth: this._esConfig.auth,
-            requestTimeout: 120000
+            requestTimeout: 120000,
+            tls: {
+                // 忽略 TLS/SSL 证书验证
+                rejectUnauthorized: false
+            }
         }
         const Client = this._esVersion === 'es9'
             ? (await import('es9')).Client
