@@ -24,7 +24,7 @@ tags:
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | keywords | string | 是 | 检索关键词 |
-| resType | string | 否 | 资源类型筛选条件，取值：book(图书)、thesis(论文)、journal(期刊)、dataset(数据)、video(视频)、patent(专利)、audio(音频)、image(图片)、standard(标准)、article(文章)、exercise(试题)、meeting(会议)、upload(自定义上传)、camp(夏令营)、enrollment(招生)、admission(录取)、recruitment(招聘)、csc(公费留学) |
+| resType | string | 否 | 资源类型筛选条件，取值：book(图书)、thesis(论文)、journal(期刊)、dataset(数据)、video(视频)、patent(专利)、audio(音频)、image(图片)、standard(标准)、article(文章)、exercise(试题)、conference(会议)、upload(自定义上传)、camp(夏令营)、enrollment(招生)、admission(录取)、recruitment(招聘)、csc(公费留学) |
 | maxCount | number | 否 | 最大返回条数，默认10 |
 
 ### searchResMetas 返回

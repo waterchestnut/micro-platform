@@ -19,7 +19,7 @@ export function formatDataList(dataList, options = {
         let retItem = {}
         let textMaxWords = options.textMaxWords
         for (let key in item._source) {
-            let itemKey = key.replace(/^(long_)|(key_)|(string_)|(nested_)|(ip_)|(object_)|(double_)|(date_)|(text_cn_smart_)|(text_cn_)|(embedding_)/i, '')
+            let itemKey = key.replace(/^(long_)|(key_)|(string_)|(s_string_)|(nested_)|(ip_)|(object_)|(double_)|(date_)|(text_cn_smart_)|(text_cn_)|(embedding_)/i, '')
             if (!tools.isExist(retItem[itemKey])) {
                 retItem[itemKey] = item._source[key]
             }
@@ -32,7 +32,7 @@ export function formatDataList(dataList, options = {
                     // 跳过smart、embedding标红
                     continue
                 }
-                let itemKey = key.replace(/^(long_)|(key_)|(string_)|(nested_)|(ip_)|(object_)|(double_)|(date_)|(text_cn_smart_)|(text_cn_)|(embedding_)/i, '')
+                let itemKey = key.replace(/^(long_)|(key_)|(string_)|(s_string_)|(nested_)|(ip_)|(object_)|(double_)|(date_)|(text_cn_smart_)|(text_cn_)|(embedding_)/i, '')
                 let hlItem = {keys: {}, hlWords: 0, hlUniqueWords: 0}
 
                 let text = item.highlight[key].join('...')

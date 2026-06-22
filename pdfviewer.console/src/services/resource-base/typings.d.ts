@@ -94,7 +94,7 @@ declare namespace RESOURCEAPI {
       standard?: string;
       article?: string;
       exercise?: string;
-      meeting?: string;
+      conference?: string;
       upload?: string;
     };
     /** StatusEnum */
@@ -171,7 +171,7 @@ declare namespace RESOURCEAPI {
         | 'standard'
         | 'article'
         | 'exercise'
-        | 'meeting'
+        | 'conference'
         | 'upload';
       sources?: {
         title?: string;
@@ -312,7 +312,7 @@ declare namespace RESOURCEAPI {
         | 'standard'
         | 'article'
         | 'exercise'
-        | 'meeting'
+        | 'conference'
         | 'upload';
       sources?: {
         title?: string;
@@ -425,7 +425,7 @@ declare namespace RESOURCEAPI {
       | 'standard'
       | 'article'
       | 'exercise'
-      | 'meeting'
+      | 'conference'
       | 'upload';
     /** 来源 */
     sources?: {

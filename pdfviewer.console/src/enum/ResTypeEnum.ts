@@ -25,7 +25,7 @@ export default class extends BaseEnum {
   @Label('试题')
   static exercise = 'exercise'
   @Label('会议')
-  static meeting = 'meeting'
+  static conference = 'conference'
   @Label('自定义上传')
   static upload = 'upload'
 }

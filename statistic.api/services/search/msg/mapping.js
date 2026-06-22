@@ -1,11 +1,11 @@
 export const listSource = {
-    includes: ['text_cn_*', 'key_*', 'long_*', 'date_*', 'double_*', 'nested_*'],
-    excludes: ['s_string_*', 'embedding_*']
+    includes: ['s_string_*', 'text_cn_*', 'key_*', 'long_*', 'date_*', 'double_*', 'nested_*'],
+    excludes: ['embedding_*']
 }
 
 export const detailSource = {
-    includes: ['text_cn_*', 'key_*', 'long_*', 'date_*', 'double_*', 'nested_*'],
-    excludes: ['s_string_*', 'embedding_*']
+    includes: ['s_string_*', 'text_cn_*', 'key_*', 'long_*', 'date_*', 'double_*', 'nested_*'],
+    excludes: ['embedding_*']
 }
 
 export const defaultSearchFields = ['text_cn_smart_title^24', 'text_cn_title^12']
