@@ -7,6 +7,7 @@ import Enumify from '../../../extends/Enumify.js'
 
 export default class ResTypeEnum extends Enumify {
     static book = new ResTypeEnum('book', '图书')
+    static book_thesis = new ResTypeEnum('book_thesis', '图书章节')
     static thesis = new ResTypeEnum('thesis', '论文')
     static journal = new ResTypeEnum('journal', '期刊')
     static dataset = new ResTypeEnum('dataset', '数据')
@@ -18,6 +19,7 @@ export default class ResTypeEnum extends Enumify {
     static article = new ResTypeEnum('article', '文章')
     static exercise = new ResTypeEnum('exercise', '试题')
     static conference = new ResTypeEnum('conference', '会议')
+    static conference_thesis = new ResTypeEnum('conference_thesis', '会议论文')
     static mooc = new ResTypeEnum('mooc', '慕课')
     static upload = new ResTypeEnum('upload', '自定义上传')
     //文章下的二级分类
