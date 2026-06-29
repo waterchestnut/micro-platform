@@ -43,7 +43,7 @@ tags:
 | keywords | 关键词 |
 | language | 语言 |
 | journalTitle | 期刊标题 |
-| issues | 期次 |
+| issue | 期次 |
 | publisher | 出版社 |
 | author | 作者 |
 

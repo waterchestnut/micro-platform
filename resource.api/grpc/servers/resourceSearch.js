@@ -66,7 +66,7 @@ export function initService(server) {
                             source_keys: item.source_keys || [],
                             journalTitle: item.journalTitle || '',
                             publishDate: item.publishDate || '',
-                            issues: item.issues || '',
+                            issue: item.issue || '',
                             sources: item.sources ? item.sources.map(source => ({
                                 sourceKey: source.sourceKey || '',
                                 href: source.href || '',

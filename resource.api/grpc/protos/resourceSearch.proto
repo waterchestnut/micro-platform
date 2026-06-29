@@ -53,7 +53,7 @@ message ResourceItem {
   repeated string source_keys = 11;
   string journalTitle = 12;
   string publishDate = 13;
-  string issues = 14;
+  string issue = 14;
   repeated Source sources = 15;
   string publisher = 16;
   string coverUrl = 17;

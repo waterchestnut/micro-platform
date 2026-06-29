@@ -56,7 +56,7 @@ export class ResourceSearch extends BaseSearch {
             key_keywords: resInfo.keywords,
             key_category: resInfo.category,
             key_language: resInfo.language,
-            key_issues: resInfo.issues ?? null,
+            key_issue: resInfo.issue ?? null,
             key_journalTitle: resInfo.journalTitle ?? null,
             long_status: resInfo.status,
             text_cn_abstract: resInfo.abstract,

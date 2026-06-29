@@ -23,7 +23,7 @@ class ResDiscovery extends BaseHandler {
      * @param {string} [params.resType] - 资源类型筛选条件（可选）
      * @param {number} [params.maxCount] - 最大返回条数，默认10
      * @param {Object} curUserInfo - 当前用户信息
-     * @returns {Promise<Array>} 资源元数据列表，包含resCode、abstract、category、status、title、resType、publishDateStr、keywords、language、journalTitle、issues、publisher、author等字段
+     * @returns {Promise<Array>} 资源元数据列表，包含resCode、abstract、category、status、title、resType、publishDateStr、keywords、language、journalTitle、issue、publisher、author等字段
      * @throws {Error} 检索关键词为空时抛出异常
      */
     async searchResMetas(params, curUserInfo) {
@@ -50,7 +50,7 @@ class ResDiscovery extends BaseHandler {
             keywords: item.keywords,
             language: item.language,
             journalTitle: item.journalTitle,
-            issues: item.issues,
+            issue: item.issue,
             publisher: item.publisher,
             author: item.author
         })) || []
