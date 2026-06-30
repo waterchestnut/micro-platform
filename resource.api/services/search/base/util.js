@@ -14,6 +14,7 @@ export function formatDataList(dataList, options = {
     if (!dataList || !dataList.length) {
         return []
     }
+    // console.log('formatDataList', dataList)
     options.textMaxWords = options.textMaxWords || 500
     return dataList.map(item => {
         let retItem = {}
@@ -148,7 +149,19 @@ export function queryFormat(params) {
  */
 export function buildQuery(params, isAgg = false, aggFilter = {}, mapping) {
     const {searchFieldMapping, defaultSearchFields, filterFieldMapping, defaultFilters} = mapping
-    params[0].filter = Object.assign({}, defaultFilters, isAgg ? aggFilter : params[0].filter)
+    let sourceFilter = isAgg ? aggFilter : params[0].filter
+    let mergedFilter = {...defaultFilters}
+    let allUnionKeys = [...new Set([...unionKeys, ...Object.keys(unionMaps)])]
+    for (let key in sourceFilter) {
+        if (allUnionKeys.includes(key) && Object.prototype.hasOwnProperty.call(mergedFilter, key)) {
+            let existing = Array.isArray(mergedFilter[key]) ? mergedFilter[key] : [mergedFilter[key]]
+            let incoming = Array.isArray(sourceFilter[key]) ? sourceFilter[key] : [sourceFilter[key]]
+            mergedFilter[key] = existing.concat(incoming)
+        } else {
+            mergedFilter[key] = sourceFilter[key]
+        }
+    }
+    params[0].filter = mergedFilter
     let musts = []
     let index = 0
     params.forEach(item => {
@@ -198,7 +211,7 @@ function buildItemMatch(entity, mapping) {
             multi_match: {
                 query: entity.q,
                 fields: searchFieldMapping[entity.key] && searchFieldMapping[entity.key].match ? searchFieldMapping[entity.key].match : defaultSearchFields,
-                operator: 'and',
+                operator: entity.operator || 'and',
                 type: 'cross_fields'
             }
         }
