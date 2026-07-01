@@ -4,6 +4,8 @@ import BaseEnum, {Label, MXEnum} from './BaseEnum'
 export default class extends BaseEnum {
   @Label('图书')
   static book = 'book'
+  @Label('图书章节')
+  static book_thesis = 'book_thesis'
   @Label('论文')
   static thesis = 'thesis'
   @Label('期刊')
@@ -26,6 +28,10 @@ export default class extends BaseEnum {
   static exercise = 'exercise'
   @Label('会议')
   static conference = 'conference'
-  @Label('自定义上传')
+  @Label('会议论文')
+  static conference_thesis = 'conference_thesis'
+  @Label('慕课')
+  static mooc = 'mooc'
+  @Label('上传')
   static upload = 'upload'
 }
