@@ -16,13 +16,13 @@ export default class ResTypeEnum extends Enumify {
     static audio = new ResTypeEnum('audio', '音频')
     static image = new ResTypeEnum('image', '图片')
     static standard = new ResTypeEnum('standard', '标准')
-    static article = new ResTypeEnum('article', '文章')
+    static article = new ResTypeEnum('article', '招考信息')
     static exercise = new ResTypeEnum('exercise', '试题')
     static conference = new ResTypeEnum('conference', '会议')
     static conference_thesis = new ResTypeEnum('conference_thesis', '会议论文')
     static mooc = new ResTypeEnum('mooc', '慕课')
     static upload = new ResTypeEnum('upload', '自定义上传')
-    //文章下的二级分类
+    //招考信息下的二级分类
     static camp = new ResTypeEnum('camp', '夏令营')
     static enrollment = new ResTypeEnum('enrollment ', '招生')
     static admission = new ResTypeEnum('admission', '录取')

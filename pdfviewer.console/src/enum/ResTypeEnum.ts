@@ -20,7 +20,7 @@ export default class extends BaseEnum {
   static image = 'image'
   @Label('标准')
   static standard = 'standard'
-  @Label('文章')
+  @Label('招考信息')
   static article = 'article'
   @Label('试题')
   static exercise = 'exercise'
