@@ -36,6 +36,8 @@ declare namespace APPAPI {
     logoUrl?: string;
     /** 是否默认显示在首页 */
     default2Home?: boolean;
+    /** 是否为跨平台应用 */
+    isCross?: boolean;
   };
 
   type fullDefinitionModels = {
@@ -97,6 +99,7 @@ declare namespace APPAPI {
       toClients?: string[];
       logoUrl?: string;
       default2Home?: boolean;
+      isCross?: boolean;
     };
     /** HomeClient */
     HomeClient?: {
@@ -158,6 +161,7 @@ declare namespace APPAPI {
       toClients?: string[];
       logoUrl?: string;
       default2Home?: boolean;
+      isCross?: boolean;
       insertTime?: string;
       updateTime?: string;
       _id?: string;

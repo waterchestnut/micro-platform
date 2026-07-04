@@ -51,19 +51,13 @@ export async function postCoreHomeClientBatchSave(
   });
 }
 
-/** 首页应用列表 获取用户首页应用列表 返回值: Default Response GET /core/home/client/list */
+/** 首页应用列表 获取用户首页应用列表 GET /core/home/client/list */
 export async function getCoreHomeClientList(
   // 叠加生成的Param类型 (非body参数swagger默认没有生成对象)
   params: APPAPI.getCoreHomeClientListParams,
   options?: { [key: string]: any },
 ) {
-  return request<{
-    statusCode: number;
-    code: number;
-    msg?: string;
-    errorLevel?: string;
-    data?: APPAPI.HomeClient[];
-  }>('/core/home/client/list', {
+  return request<any>('/core/home/client/list', {
     method: 'GET',
     params: {
       ...params,
@@ -146,19 +140,13 @@ export async function postCoreHomeWidgetBatchSave(
   });
 }
 
-/** 首页小组件列表 获取用户首页小组件列表 返回值: Default Response GET /core/home/widget/list */
+/** 首页小组件列表 获取用户首页小组件列表 GET /core/home/widget/list */
 export async function getCoreHomeWidgetList(
   // 叠加生成的Param类型 (非body参数swagger默认没有生成对象)
   params: APPAPI.getCoreHomeWidgetListParams,
   options?: { [key: string]: any },
 ) {
-  return request<{
-    statusCode: number;
-    code: number;
-    msg?: string;
-    errorLevel?: string;
-    data?: APPAPI.HomeWidget[];
-  }>('/core/home/widget/list', {
+  return request<any>('/core/home/widget/list', {
     method: 'GET',
     params: {
       ...params,

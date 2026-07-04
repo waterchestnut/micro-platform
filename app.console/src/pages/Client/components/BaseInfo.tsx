@@ -262,6 +262,12 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
         tooltip='开启后，应用将默认展示到用户首页'
         initialValue={false}
       />
+      <ProFormSwitch
+        name='isCross'
+        label='是否为跨平台应用'
+        tooltip='如果直接引用联盟平台的网址，需要开启此选项'
+        initialValue={false}
+      />
       <ProFormList
         name='endpoints'
         label='访问端'
