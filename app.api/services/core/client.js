@@ -81,6 +81,7 @@ export async function addClient(curUserInfo, client) {
         clientName: client.clientName,
         description: client.description,
         default2Home: client.default2Home !== undefined ? client.default2Home : true,
+        isCross: client.isCross !== undefined ? client.isCross : false,
         operator: {userCode: curUserInfo.userCode, realName: curUserInfo.realName},
         status: 0,
         tags: client.tags
@@ -157,7 +158,8 @@ export async function updateClient(curUserInfo, clientCode, newClient) {
         toClients: newClient.toClients,
         order: newClient.order,
         logoUrl: newClient.logoUrl,
-        default2Home: newClient.default2Home
+        default2Home: newClient.default2Home,
+        isCross: newClient.isCross,
     }
 
     await saveUcenterClient(curUserInfo, {
@@ -308,7 +310,7 @@ export function formatPublicClients(clients) {
 export async function statClientByTag(operatorUserCode) {
     const matchStage = {
         $match: {
-            status: { $ne: -1 }
+            status: {$ne: -1}
         }
     }
     if (operatorUserCode) {
@@ -316,14 +318,14 @@ export async function statClientByTag(operatorUserCode) {
     }
     const pipeline = [
         matchStage,
-        { $unwind: { path: '$tags', preserveNullAndEmptyArrays: true } },
+        {$unwind: {path: '$tags', preserveNullAndEmptyArrays: true}},
         {
             $group: {
-                _id: { key: '$tags.key', value: '$tags.value' },
-                count: { $sum: 1 }
+                _id: {key: '$tags.key', value: '$tags.value'},
+                count: {$sum: 1}
             }
         },
-        { $sort: { count: -1 } }
+        {$sort: {count: -1}}
     ]
     const results = await clientDac.aggregate(pipeline)
     return results.map(item => ({
