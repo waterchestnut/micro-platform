@@ -28,6 +28,8 @@ declare namespace APPAPI {
     needAuth2Show?: boolean;
     /** 平台类型 */
     platformType?: 'xxzx' | 'union';
+    /** 是否默认显示在首页 */
+    default2Home?: boolean;
   };
 
   type Tag = {
