@@ -12,7 +12,7 @@ const docConfig = resource.config.docConfig
 const protoPath = 'grpc/clients/fileManage.proto'
 const docProto = loadProto(protoPath).doc
 
-export async function saveFile(curUserInfo, fileCode, fileInfo, extInfo, buffer, folder = '') {
+export async function saveFile(curUserInfo, fileCode, buffer, fileInfo = {}, extInfo = {}, folder = '') {
     /*console.log(ragConfig, ragProto.RagSearch)*/
     let client = new docProto.FileManage(docConfig.grpcHost,
         grpc.credentials.createInsecure(), {
@@ -51,6 +51,31 @@ export async function copyFile(curUserInfo, originalFileCode, fileInfo, folder =
             originalFileCode,
             operator: curUserInfo,
             fileInfos: JSON.stringify(fileInfo),
+            folder
+        }, function (err, response) {
+            if (err) {
+                return reject(err)
+            }
+            /*console.log('grpc ret:', response);*/
+            return resolve(JSON.parse(response.fileInfos))
+        })
+    })
+}
+
+export async function downloadFile(curUserInfo, url, fileInfo = {}, extInfo = {}, folder = '') {
+    /*console.log(ragConfig, ragProto.RagSearch)*/
+    let client = new docProto.FileManage(docConfig.grpcHost,
+        grpc.credentials.createInsecure(), {
+            'grpc.max_send_message_length': docConfig.maxMessageLength,
+            'grpc.max_receive_message_length': docConfig.maxMessageLength,
+        })
+    return new Promise((resolve, reject) => {
+        /*调用远程服务方法*/
+        client.downloadFile({
+            url,
+            operator: curUserInfo,
+            fileInfos: JSON.stringify(fileInfo),
+            extInfos: JSON.stringify(extInfo),
             folder
         }, function (err, response) {
             if (err) {

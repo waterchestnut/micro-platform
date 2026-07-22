@@ -15,6 +15,7 @@ package doc;
 service FileManage {
   rpc saveFile (SaveFileRequest) returns (SaveFileResponse) {}
   rpc copyFile (CopyFileRequest) returns (CopyFileResponse) {}
+  rpc downloadFile (DownloadFileRequest) returns (DownloadFileResponse) {}
 }
 
 // 结构化数据：使用message定义。
@@ -45,5 +46,17 @@ message CopyFileRequest {
 }
 
 message CopyFileResponse {
+  string fileInfos = 1;
+}
+
+message DownloadFileRequest {
+  string url = 1;
+  Operator operator = 2;
+  string fileInfos = 3;
+  string extInfos = 4;
+  string folder = 5;
+}
+
+message DownloadFileResponse {
   string fileInfos = 1;
 }
