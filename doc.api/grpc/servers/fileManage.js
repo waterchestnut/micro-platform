@@ -5,7 +5,7 @@
  */
 
 import {loadProto} from '../utils.js'
-import {saveFile, copyFile} from '../../services/core/fileInfo.js'
+import {saveFile, copyFile, downloadFile} from '../../services/core/fileInfo.js'
 // Protocol Buffers文件
 const protoPath = 'grpc/servers/fileManage.proto'
 const docProto = loadProto(protoPath).doc
@@ -32,6 +32,20 @@ export function initService(server) {
             try {
                 /*console.log(call.request)*/
                 let ret = await copyFile(call.request.originalFileCode, JSON.parse(call.request.fileInfos), call.request.folder, call.request.operator)
+                callback(null, {fileInfos: JSON.stringify(ret)})
+            } catch (e) {
+                callback(e)
+            }
+        },
+        downloadFile: async (call, callback) => {
+            try {
+                let ret = await downloadFile(
+                    call.request.url,
+                    call.request.fileInfos ? JSON.parse(call.request.fileInfos) : {},
+                    call.request.extInfos ? JSON.parse(call.request.extInfos) : {},
+                    call.request.folder,
+                    call.request.operator
+                )
                 callback(null, {fileInfos: JSON.stringify(ret)})
             } catch (e) {
                 callback(e)

@@ -11,6 +11,8 @@ import dayjs from 'dayjs'
 import StoreTypeEnum from '../../daos/core/enum/StoreTypeEnum.js'
 import crypto from 'crypto'
 import * as buffer from 'node:buffer'
+import fetch from 'node-fetch'
+import path from 'path'
 
 const tools = doc.tools
 const logger = doc.logger
@@ -121,6 +123,58 @@ export async function saveFile(fileInfo, extInfo, buffer, folder = 'general', cu
         mimetype: fileInfo.mimetype,
         fileName: fileInfo.fileName,
     }
+}
+
+/**
+ * @description 从URL下载文件并保存到本地存储
+ * @author xianyang
+ * @param {String} fileUrl 文件的完整URL地址
+ * @param {Object} fileInfo 文件元数据基本信息（可覆盖从URL推断的信息）
+ * @param {Object} extInfo 文件扩展信息
+ * @param {String} folder 基础文件夹
+ * @param {Object} curUserInfo 当前登录用户
+ * @returns {Promise<Object>} 保存后的文件元数据信息
+ */
+export async function downloadFile(fileUrl, fileInfo = {}, extInfo = {}, folder = 'general', curUserInfo = {}) {
+    if (!fileUrl) {
+        throw new Error('文件URL不能为空')
+    }
+
+    let response
+    try {
+        response = await fetch(fileUrl)
+    } catch (e) {
+        throw new Error(`文件下载失败: ${e.message}`)
+    }
+
+    if (!response.ok) {
+        throw new Error(`文件下载失败，HTTP状态码: ${response.status}`)
+    }
+
+    const buffer = Buffer.from(await response.arrayBuffer())
+
+    const urlPath = new URL(fileUrl).pathname
+    const urlFileName = path.basename(urlPath)
+    const contentType = response.headers.get('content-type') || ''
+
+    let fileName = fileInfo.fileName || urlFileName
+    let mimetype = fileInfo.mimetype || contentType.split(';')[0].trim() || 'application/octet-stream'
+
+    if (!fileInfo.fileSize) {
+        fileInfo.fileSize = buffer.length
+    }
+
+    return saveFile(
+        {
+            ...fileInfo,
+            fileName,
+            mimetype,
+        },
+        extInfo,
+        buffer,
+        folder,
+        curUserInfo
+    )
 }
 
 /**
