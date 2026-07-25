@@ -28,4 +28,8 @@ subscribe([kafkaConfig.topics.statistic.topic], kafkaConfig.topics.statistic.gro
 
         return 'done'
     },
-    client, {mode: MessagesStreamModes.COMMITTED, fallbackMode: MessagesStreamFallbackModes.EARLIEST})
+    client, {
+        mode: MessagesStreamModes.COMMITTED,
+        fallbackMode: MessagesStreamFallbackModes.EARLIEST,
+        maxBytes: 4 * 1024,
+    })

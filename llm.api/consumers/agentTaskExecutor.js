@@ -28,4 +28,8 @@ subscribe([kafkaConfig.topics.agentTask.topic], kafkaConfig.topics.agentTask.gro
 
         return 'done'
     },
-    client, {mode: MessagesStreamModes.COMMITTED, fallbackMode: MessagesStreamFallbackModes.EARLIEST})
+    client, {
+        mode: MessagesStreamModes.COMMITTED,
+        fallbackMode: MessagesStreamFallbackModes.EARLIEST,
+        maxBytes: 4 * 1024,
+    })

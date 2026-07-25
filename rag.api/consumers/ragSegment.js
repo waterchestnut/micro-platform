@@ -28,4 +28,8 @@ subscribe([kafkaConfig.topics.ragSegment.topic], kafkaConfig.topics.ragSegment.g
 
         return 'done'
     },
-    client, {mode: MessagesStreamModes.COMMITTED, fallbackMode: MessagesStreamFallbackModes.LATEST})
+    client, {
+        mode: MessagesStreamModes.COMMITTED,
+        fallbackMode: MessagesStreamFallbackModes.EARLIEST,
+        maxBytes: 4 * 1024,
+    })

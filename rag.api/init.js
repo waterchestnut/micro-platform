@@ -5,7 +5,5 @@
  */
 
 import './global.js'
-import {getAppLogger} from './logger/index.js'
+import './initLogger.js'
 import './daos/milvus/schema/index.js'
-
-rag.logger = getAppLogger()
