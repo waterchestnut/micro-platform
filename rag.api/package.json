@@ -25,7 +25,7 @@
     "@fastify/swagger-ui": "^5.2.1",
     "@grpc/grpc-js": "^1.12.6",
     "@grpc/proto-loader": "^0.7.13",
-    "@platformatic/kafka": "1.25.0",
+    "@platformatic/kafka": "2.8.0",
     "@scalar/fastify-api-reference": "^1.25.116",
     "@zilliz/milvus2-sdk-node": "2.6.7",
     "adm-zip": "^0.5.16",
