@@ -94,5 +94,7 @@ ragMaterialSchema.index({handleStatus: 1})
 ragMaterialSchema.index({'operator.userCode': 1})
 ragMaterialSchema.index({'tags.key': 1})
 ragMaterialSchema.index({'tags.value': 1})
+ragMaterialSchema.index({resCode: 1})
+ragMaterialSchema.index({'fileList.fileHashCode': 1})
 
 export default ragMaterialSchema
