@@ -40,7 +40,7 @@ export function encrypt(publicStr) {
 export function decrypt(privateStr) {
     try {
         const privateKey = fs.readFileSync(ucenter.baseDir + 'conf/private_key.pem', {encoding: 'utf8'})
-        return rsaDecrypt(privateStr, privateKey)
+        return decodeURIComponent(rsaDecrypt(privateStr, privateKey))
     } catch (err) {
         logger.error('rsa解密出错:')
         logger.error(err)
