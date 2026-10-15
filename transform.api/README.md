@@ -8,6 +8,7 @@
 - **OCR 识别**: 图片文字识别
 - **NLP 分析**: 自然语言处理 (spaCy)
 - **Excel 处理**: Excel 读取、转换、导出
+- **原理演示渲染**: 数学/物理/化学原理动画渲染 (matplotlib → mp4 + poster)，gRPC 接口 `Renderer.renderDemo`
 - **gRPC 服务**: 支持 gRPC 远程调用
 - **文档转换**: Word 文档处理
 

@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package rag;
+
+service Renderer {
+  rpc renderDemo (DemoRenderRequest) returns (DemoRenderResponse) {}
+}
+
+message DemoRenderRequest {
+  string kind = 1;      // 演示类型：projectile/force_analysis/lever/derivation/limit/wave/transform/reaction
+  string params = 2;    // JSON字符串：类型相关参数（v0/angleDeg/color/steps等）与通用参数（bg/color）
+  int32 width = 3;      // 像素，缺省640
+  int32 height = 4;     // 像素，缺省360
+  int32 fps = 5;        // 缺省20
+  float seconds = 6;    // 缺省6
+}
+
+message DemoRenderResponse {
+  bytes video = 1;      // mp4 (H.264, yuv420p)
+  bytes poster = 2;     // png 首帧封面
+  string meta = 3;      // JSON字符串：{kind,width,height,fps,seconds,videoBytes}
+}
