@@ -5,7 +5,8 @@
  */
 
 import {loadProto} from '../utils.js'
-import {addAgentTask, getAgentTaskAllDetail} from '../../services/core/agentTask.js'
+import {addAgentTask, getAgentTaskAllDetail, updateAgentTaskWithLock} from '../../services/core/agentTask.js'
+import {addAgentLog as addAgentLogService} from '../../services/core/agentLog.js'
 import {manualTriggerAgentTask} from '../../services/agent/index.js'
 // Protocol Buffers文件
 const protoPath = 'grpc/servers/agentController.proto'
@@ -38,6 +39,35 @@ export function initService(server) {
             try {
                 let data = await getAgentTaskAllDetail(call.request.agentCode);
                 callback(null, {data: JSON.stringify(data)});
+            } catch (e) {
+                callback(e)
+            }
+        },
+        addAgentLog: async (call, callback) => {
+            try {
+                let req = call.request
+                let operator = null
+                let extInfo = {}
+                if (req.operator) {
+                    operator = JSON.parse(req.operator)
+                }
+                if (req.extInfo) {
+                    extInfo = JSON.parse(req.extInfo)
+                }
+                let ret = await addAgentLogService({
+                    agentCode: req.agentCode,
+                    agentCodePath: req.agentCodePath,
+                    operator,
+                }, req.content, req.group || 'common', extInfo, operator)
+                callback(null, {count: ret ? 1 : 0})
+            } catch (e) {
+                callback(e)
+            }
+        },
+        updateAgentTask: async (call, callback) => {
+            try {
+                let ret = await updateAgentTaskWithLock(call.request.agentCode, JSON.parse(call.request.toUpdateInfo))
+                callback(null, {count: ret ? 1 : 0})
             } catch (e) {
                 callback(e)
             }

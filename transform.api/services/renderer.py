@@ -7,6 +7,7 @@
 import io
 import json
 import math
+import threading
 
 import numpy as np
 import matplotlib
@@ -332,12 +333,19 @@ def fig_ref(ax):
 # ---------------- 对外接口 ----------------
 DEFAULTS = {'width': 640, 'height': 360, 'fps': 20, 'seconds': 6.0}
 LIMITS = {'max_seconds': 15.0, 'min_seconds': 2.0, 'min_fps': 10, 'max_fps': 30, 'max_px': 1280 * 720}
+# matplotlib 的 pyplot 状态非线程安全，gRPC 多线程并发渲染会死锁/挂起，这里串行化
+_RENDER_LOCK = threading.Lock()
 
 
 def render_demo(kind, params=None, width=None, height=None, fps=None, seconds=None):
     """渲染一个原理演示动画，返回 {video: mp4 bytes, poster: png bytes, meta: json str}"""
     if kind not in TEMPLATES:
         raise RenderError('unknown demo kind: %s, allowed: %s' % (kind, ','.join(sorted(TEMPLATES))))
+    with _RENDER_LOCK:
+        return _render_demo_locked(kind, params, width, height, fps, seconds)
+
+
+def _render_demo_locked(kind, params, width, height, fps, seconds):
     w = int(width or DEFAULTS['width'])
     h = int(height or DEFAULTS['height'])
     fp = int(fps or DEFAULTS['fps'])
