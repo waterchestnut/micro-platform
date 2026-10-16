@@ -6,7 +6,9 @@
 """
 import io
 import json
+import logging
 import math
+import re
 import threading
 
 import numpy as np
@@ -37,6 +39,102 @@ TEMPLATES = {}
 
 class RenderError(Exception):
     pass
+
+
+# ---------------- 公式字符串归一化：模型按KaTeX子集输出 → matplotlib mathtext可靠渲染 ----------------
+
+_math_logger = logging.getLogger('renderer.math')
+
+_CJK_RE = re.compile(r'[\u4e00-\u9fff\u3000-\u303f\uff01-\uff5e]')
+
+_MATH_REWRITES = [
+    (re.compile(r'\\text\s*\{'), r'\\mathrm{'),
+    (re.compile(r'\\iff\b'), r'\\Longleftrightarrow'),
+    (re.compile(r'\\to\b'), r'\\rightarrow'),
+    (re.compile(r'\\left|\\right'), ''),
+    (re.compile(r'\\mathbb\s*\{([^{}]*)\}'), r'\1'),
+    (re.compile(r'\\mathcal\s*\{([^{}]*)\}'), r'\1'),
+    (re.compile(r'\\widehat\s*\{([^{}]*)\}'), r'\\hat{\1}'),
+    (re.compile(r'\\widetilde\s*\{([^{}]*)\}'), r'\\tilde{\1}'),
+    (re.compile(r'\\mathrm\s*\{\s*\}'), ''),
+    (re.compile(r'\\displaystyle'), ''),
+    (re.compile(r'\\,|\\;|\\:|\\!'), ' '),
+]
+
+
+def _mathtext_parse_ok(math_str):
+    try:
+        from matplotlib.mathtext import MathTextParser
+        if not hasattr(_mathtext_parse_ok, '_parser'):
+            _mathtext_parse_ok._parser = MathTextParser('path')
+        _mathtext_parse_ok._parser.parse(math_str, 72)
+        return True
+    except Exception:
+        return False
+
+
+_MATHTEXT_KNOWN = set("""frac dfrac sqrt sum prod int oint lim limsup liminf infty partial nabla cdot times div pm mp
+leq geq neq approx equiv in notin subset subseteq supset cup cap emptyset forall exists neg land lor
+rightarrow leftarrow Rightarrow Leftarrow Leftrightarrow longrightarrow longleftarrow leftrightarrow to mapsto
+langle rangle hat tilde bar vec overline underline dots ldots cdots prime angle bot top quad qquad
+alpha beta gamma delta epsilon varepsilon zeta eta theta vartheta iota kappa lambda mu nu xi pi varrho sigma tau
+upsilon phi varphi chi psi psi omega Gamma Delta Theta Lambda Xi Pi Sigma Upsilon Phi Psi Omega""".split())
+
+
+def _drop_unknown_macros(core):
+    def rep(m):
+        name = m.group(1)
+        body = m.group(2) or ''
+        if name in _MATHTEXT_KNOWN:
+            return m.group(0)
+        return body.strip('{}') if body else ' '
+    return re.sub(r'\\([a-zA-Z]+)\s*(\{[^{}]*\})?', rep, core)
+
+
+def normalize_math_step(s):
+    """把单条公式串归一化为可渲染的 mathtext（带$包裹）；无法渲染时降级为无反斜杠的纯文本"""
+    core = str(s).strip()
+    had_dollar = core.startswith('$')
+    core = core.strip('$').strip()
+    core = re.sub(r'\\begin\s*\{[^{}]*\}(?:\[[^\]]*\])?', ' ', core)
+    core = re.sub(r'\\end\s*\{[^{}]*\}', ' ', core)
+    core = core.replace('&', ' ')
+    core = re.sub(r'\\text\s*\{', r'\\mathrm{', core)
+    core = _CJK_RE.sub('', core)
+    core = re.sub(r'\\mathrm\s*\{\s*\}', '', core)
+    core = re.sub(r'\s+', ' ', core).strip()
+    if not core:
+        return ''
+    cand = '$' + core + '$'
+    if _mathtext_parse_ok(cand):
+        return cand
+    t = core
+    for pat, rep in _MATH_REWRITES:
+        t = pat.sub(rep, t)
+    cand = '$' + t + '$'
+    if _mathtext_parse_ok(cand):
+        return cand
+    t2 = _drop_unknown_macros(t)
+    cand = '$' + t2 + '$'
+    if _mathtext_parse_ok(cand):
+        return cand
+    plain = re.sub(r'\\[a-zA-Z]+|[{}$\\]', ' ', t2)
+    plain = re.sub(r'\s+', ' ', plain).strip()
+    _math_logger.warning('mathtext无法渲染，降级纯文本: %s', str(s)[:80])
+    return plain
+
+
+def normalize_math_steps(steps):
+    """steps数组归一化：按 \\\\ 换行拆分为多个渲染步骤"""
+    out = []
+    for s in steps:
+        for row in re.split(r'\\\\', str(s)):
+            if not row.strip():
+                continue
+            n = normalize_math_step(row)
+            if n:
+                out.append(n)
+    return out
 
 
 def template(fn):
@@ -164,10 +262,11 @@ def lever(ax, p, color, dur, fps):
 # ---------------- 4. 公式推导 derivation ----------------
 @template
 def derivation(ax, p, color, dur, fps):
-    steps = p.get('steps') or [r'$ax^2+bx+c=0$', r'$x^2+\frac{b}{a}x=-\frac{c}{a}$',
-                               r'$\left(x+\frac{b}{2a}\right)^2=\frac{b^2-4ac}{4a^2}$',
-                               r'$x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}$']
-    steps = steps[:6]
+    default_steps = [r'$ax^2+bx+c=0$', r'$x^2+\frac{b}{a}x=-\frac{c}{a}$',
+                     r'$\left(x+\frac{b}{2a}\right)^2=\frac{b^2-4ac}{4a^2}$',
+                     r'$x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}$']
+    raw = p.get('steps') or default_steps
+    steps = normalize_math_steps(raw)[:6] or default_steps
     ax.set_xlim(0, 10)
     ax.set_ylim(0, 2.2 * len(steps) + 1)
     texts, boxes = [], []
