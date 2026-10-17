@@ -265,6 +265,43 @@ accessToken 过期（且滑动续期失效）后，用 refreshToken 换取整套
 
 网关可将 `userInfo` 透传为下游请求头 `user-info`（base64），业务系统直接解析使用。token 无效返回 `4002`，无权限返回 `6000`。
 
+### 3.8 前端直连模式：登录态探测与账号一致性处理
+
+适用场景：第三方前端在页面加载时**直接跨域调用授权中心接口**探测登录态；当"授权中心登录用户 ≠ 第三方本地会话用户"时，以**授权中心为准**——先退出本地会话，再重新走授权码流程。
+
+```mermaid
+graph TD
+    A["第三方页面加载"] --> B["GET {baseUrl}/core/user/cur<br/>fetch + credentials:'include'"]
+    B --> C{"探测结果"}
+    C -- "code=4003 未登录/失效" --> D["跳转 /oauth/authorize<br/>标准授权码登录"]
+    C -- "code=0 已登录，用户A" --> E{"第三方本地有会话？"}
+    E -- 否 --> D
+    E -- "是，本地用户B" --> F{"A 与 B 一致？"}
+    F -- 一致 --> G["正常访问业务"]
+    F -- 不一致 --> H["1.调用本系统登出，清除本地会话<br/>2.再跳转 /oauth/authorize"]
+    H --> D
+    D --> I["授权中心免确认自动授权<br/>authCode 换 token，本地以用户A重建会话"]
+    I --> G
+    G --> J["用户操作时调用 /core/user/cur 滑动续期"]
+```
+
+关键说明：
+
+1. **以授权中心为准，无死循环**：不一致时丢弃本地会话，重新授权得到的是授权中心当前用户 A，本地重建为 A 的会话，下次探测即一致。若产品语义是"保留本地用户 B、让用户去授权中心切回 B"，本模式不适用——需先走 `GET /oauth/logout` 全局登出（会影响该浏览器在所有 SSO 系统的登录态）再让用户重新登录授权中心。
+2. **探测接口前提**：
+   - 第三方前端域名（Origin）须加入授权中心 `allowedOrigins` CORS 白名单（联系管理员配置），请求必须携带 `credentials:'include'`；
+   - **同主域说明**：浏览器"同站点（same-site）"按 **协议 + 主域（eTLD+1，即可注册域名）** 判定，授权中心登录 Cookie 默认 `SameSite=Lax`，只有 same-site 请求才会自动携带：
+     - ✅ 同主域：`https://app.example.com` 与 `https://auth.example.com`（主域同为 `example.com`）——跨 Origin 但同站点，fetch 可携带 Lax Cookie，探测有效；子域层级再深（如 `a.b.example.com`）也属同站点；
+     - ❌ 跨主域：`https://your-app.com` 与 `https://auth.example.com`——即使 CORS 白名单放行，Cookie 也不发送，探测恒返回 `4003`；
+     - ❌ 协议不同：`http://app.example.com` 与 `https://auth.example.com`——协议参与站点判定，不算同主域；
+     - 本地联调时 `localhost`/`127.0.0.1` 与线上授权域、不同后缀域名（如 `xxx.edu.cn` 对 `xxx.com`）均**不是**同主域，勿以本地探测结果推断线上行为；
+   - 探测仅在第三方与授权中心**同主域且同协议**时可靠。**跨主域部署不要使用前端探测**（JSONP 同理不可行：脚本子资源同样不携带 Lax Cookie），应直接走主流程"顶层跳转 `/oauth/authorize` + 后端换取 token 后比对 `userCode`"，该路径属顶层导航，Lax Cookie 正常发送，不受第三方 Cookie 限制影响；
+   - 结果判定：`code=0` 已登录（比对 `data.userCode`），`code=4003` 未登录或 token 失效。
+3. **顺序不可颠倒**：必须先完成本系统登出（服务端销毁会话、清 Cookie），再跳转 authorize；否则回跳后旧本地会话会与新用户再次比对不一致。
+4. **操作续期（滑动过期）**：用户在第三方系统内有操作时调用 `GET {baseUrl}/core/user/cur`（可节流，如每 5 分钟一次）即可延续授权中心会话——授权中心校验 token 时自动重置 Redis TTL 为 24 小时，**无需专门续期接口**。
+   - 标准换 token（不传 `reuseToken`）时，第三方 token 与授权中心会话 token 是两份凭证：前端探测/续期的是**会话 token**，第三方后端携带自己 accessToken 调用时延长的是**该 token**；
+   - 若需要两者同步续期，可在换取 token 时传 `reuseToken:true`，与授权中心会话共用同一 token。
+
 ---
 
 ## 4. 对接示例
