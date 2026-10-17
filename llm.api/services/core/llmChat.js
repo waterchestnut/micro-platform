@@ -222,10 +222,19 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             const choice = chunk.choices[0]
             if (!choice) continue
 
+            const delta = choice.delta || {}
+
+            // 处理普通内容和推理内容
+            if (delta.content || delta.reasoning_content) {
+                answerContent += delta.content || ''
+                answerReasoning += delta.reasoning_content || ''
+                options.streamCallback(JSON.stringify({role: 'assistant', ...delta, messageCode}))
+            }
+
             // 检查是否有工具调用
-            if (choice.delta?.tool_calls) {
+            if (delta.tool_calls) {
                 receivedToolCall = true
-                for (const toolCallDelta of choice.delta.tool_calls) {
+                for (const toolCallDelta of delta.tool_calls) {
                     if (toolCallDelta.index !== undefined) {
                         // 扩展或初始化工具调用数组
                         while (toolCalls.length <= toolCallDelta.index) {
@@ -249,13 +258,6 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                         }
                     }
                 }
-            } else {
-                // 处理普通内容和推理内容
-                const content = choice.delta?.content || ''
-                const reasoningContent = choice.delta?.reasoning_content || ''
-                answerContent += content
-                answerReasoning += reasoningContent
-                options.streamCallback(JSON.stringify({role: 'assistant', ...choice?.delta, messageCode}))
             }
         }
 

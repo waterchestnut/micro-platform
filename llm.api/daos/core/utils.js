@@ -50,8 +50,11 @@ const utils = {
         if (val?.$notRecursion) {
             delete val.$notRecursion
         }
-        if (tools.isString(val) && val.length === 24 && val.endsWith('Z') && val.includes('T')) {
-            val = new Date(val)
+        if (tools.isString(val) && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(val)) {
+            const parsed = new Date(val)
+            if (!isNaN(parsed.getTime())) {
+                val = parsed
+            }
         }
         return notNeedUpdate(val) ? {} : {[key]: val}
     },

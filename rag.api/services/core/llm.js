@@ -20,7 +20,7 @@ export async function generatePPT() {
         vector,
         limit: 15,
         output_fields: ['ragChunkCode', 'ragSegmentCode'],
-        filters: `ragCode = 'xuexi-cn-journal'`
+        filter: `ragCode == 'xuexi-cn-journal'`
     })
     /*console.log(JSON.stringify(vecRet))*/
     let ragSegmentCodeList = (vecRet.rows || vecRet)?.map(_ => _.ragSegmentCode)

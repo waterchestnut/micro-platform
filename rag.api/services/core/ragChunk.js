@@ -215,7 +215,7 @@ function checkRagChunkField(ragChunkInfo) {
     }
     checkCodeField(ragChunkInfo.ragChunkCode, '分句标识')
     if (ragChunkInfo.content) {
-        if (!/^.{10,500}$/g.test(ragChunkInfo.content)) {
+        if (ragChunkInfo.content.length < 10 || ragChunkInfo.content.length > 500) {
             throw new Error('内容至少10个字符，且总长度不能超过500个字符')
         }
     }

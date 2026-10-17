@@ -59,8 +59,10 @@ export default async function (fastify, opts) {
             'Content-Type': 'text/event-stream; charset=utf-8',
             Connection: 'keep-alive',
             'Cache-Control': 'no-cache,no-transform',
-            'Access-Control-Allow-Origin': request.headers.origin,
             'x-no-compression': 1
+        }
+        if (request.headers.origin) {
+            headers['Access-Control-Allow-Origin'] = request.headers.origin
         }
         stream.writeHead(200, headers)
         try {

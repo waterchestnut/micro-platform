@@ -46,7 +46,6 @@ export async function runWorkflow(
             body: JSON.stringify(requestBody),
             signal: controller.signal, // 绑定中断信号
         });
-        clearTimeout(timeoutId); // 清除定时器
         if (!response.ok) {
             const errorText = await response.text();
             throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
@@ -61,9 +60,10 @@ export async function runWorkflow(
                 const decoder = new TextDecoder();
                 let shouldSendThink = true; // 控制是否继续发送think内容
                 let buffer = ''; // 用于缓存不完整的数据块
+                let streamDone = false;
                 
                 try {
-                    while (true) {
+                    while (!streamDone) {
                         const { done, value } = await reader.read();
                         if (done) break;
                         
@@ -82,6 +82,7 @@ export async function runWorkflow(
                                 const data = line.slice(6).trim();
                                 if (data === '[DONE]') {
                                     console.log('Stream completed');
+                                    streamDone = true;
                                     break;
                                 }
                                 
@@ -147,8 +148,6 @@ export async function runWorkflow(
             return data;
         }
     } catch (error) {
-        clearTimeout(timeoutId);
-
         if (error.name === 'AbortError') {
             console.error('Request timed out:', url);
             throw new Error(`Request to Dify timed out after ${timeout}ms`);
@@ -161,6 +160,8 @@ export async function runWorkflow(
 
         console.error('Error running workflow:', error);
         throw error;
+    } finally {
+        clearTimeout(timeoutId);
     }
 }
 

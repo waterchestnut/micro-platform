@@ -14,7 +14,7 @@ const kafkaConfig = llm.config.kafka
 
 /* node .\consumers\agentTaskExecutor.js c1 */
 console.log(process.argv)
-const client = createClient(`agentTaskExecutor-${process.argv.slice(2) || ''}`)
+const client = createClient(`agentTaskExecutor-${process.argv[2] || ''}`)
 subscribe([kafkaConfig.topics.agentTask.topic], kafkaConfig.topics.agentTask.groupId,
     async ({topic, partition, msg}) => {
         try {
@@ -31,5 +31,5 @@ subscribe([kafkaConfig.topics.agentTask.topic], kafkaConfig.topics.agentTask.gro
     client, {
         mode: MessagesStreamModes.COMMITTED,
         fallbackMode: MessagesStreamFallbackModes.EARLIEST,
-        maxBytes: 4 * 1024,
+        maxBytes: 4 * 1024 * 1024,
     })

@@ -18,24 +18,13 @@ export function isFunction(fn) {
 /**
  * @description JSON字符串转化为对象
  * @param {String} str JSON字符串
- * @param {Boolean} [withFunc=false] 是否转换函数
  * @returns {Object} 转化后的对象
  * @function
  */
-export function parseJSON(str, withFunc) {
+export function parseJSON(str) {
     let obj = null
     try {
-        if (!withFunc) {
-            obj = JSON.parse(str)
-        } else {
-            obj = JSON.parse(str, function (key, value) {
-                if (typeof value === 'string' &&
-                    value.startsWith('function')) {
-                    return eval('(' + value + ')')
-                }
-                return value
-            })
-        }
+        obj = JSON.parse(str)
     } catch (e) {
     }
     return typeof obj === 'object' ? obj : null

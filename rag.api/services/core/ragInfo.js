@@ -189,7 +189,7 @@ function checkRagInfoField(ragInfo) {
     }
     checkCodeField(ragInfo.ragCode, '知识库标识')
     if (ragInfo.title) {
-        if (!/^.{2,512}$/g.test(ragInfo.title)) {
+        if (ragInfo.title.length < 2 || ragInfo.title.length > 512) {
             throw new Error('知识库标题至少2个字符，且总长度不能超过512个字符')
         }
     }

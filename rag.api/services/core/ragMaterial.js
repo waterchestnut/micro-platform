@@ -253,7 +253,7 @@ function checkRagMaterialField(ragMaterialInfo) {
     }
     checkCodeField(ragMaterialInfo.ragMaterialCode, '材料标识')
     if (ragMaterialInfo.resTitle) {
-        if (!/^.{2,512}$/g.test(ragMaterialInfo.resTitle)) {
+        if (ragMaterialInfo.resTitle.length < 2 || ragMaterialInfo.resTitle.length > 512) {
             throw new Error('标题至少2个字符，且总长度不能超过512个字符')
         }
     }

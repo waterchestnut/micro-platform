@@ -235,7 +235,7 @@ function checkRagSegmentField(ragSegmentInfo) {
     }
     checkCodeField(ragSegmentInfo.ragSegmentCode, '分段标识')
     if (ragSegmentInfo.content) {
-        if (!/^.{10,1500}$/g.test(ragSegmentInfo.content)) {
+        if (ragSegmentInfo.content.length < 10 || ragSegmentInfo.content.length > 1500) {
             throw new Error('内容至少10个字符，且总长度不能超过1500个字符')
         }
     }

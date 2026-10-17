@@ -16,12 +16,13 @@ const mongodbConfig = rag.config.mongodbConfig
 async function getConnection(config) {
     for (let i = 1; i <= 3; ++i) {
         try {
-            return await mongoose.createConnection(config.uri, config.options)
+            return await mongoose.createConnection(config.uri, config.options).asPromise()
         } catch (err) {
             rag.logger.error(`第${i}次connect to %s error: ${mongodbConfig.uri}，${err.message}`)
             if (i >= 3) {
                 process.exit(1)
             }
+            await new Promise(resolve => setTimeout(resolve, 2000 * i))
         }
     }
 }

@@ -14,7 +14,7 @@ const kafkaConfig = rag.config.kafka
 
 /* node .\consumers\ragSegment.js c1 */
 console.log(process.argv)
-const client = createClient(`ragSegment-${process.argv.slice(2) || ''}`)
+const client = createClient(`ragSegment-${process.argv[2] || ''}`)
 subscribe([kafkaConfig.topics.ragSegment.topic], kafkaConfig.topics.ragSegment.groupId,
     async ({topic, partition, msg}) => {
         try {
@@ -31,5 +31,5 @@ subscribe([kafkaConfig.topics.ragSegment.topic], kafkaConfig.topics.ragSegment.g
     client, {
         mode: MessagesStreamModes.COMMITTED,
         fallbackMode: MessagesStreamFallbackModes.EARLIEST,
-        maxBytes: 4 * 1024,
+        maxBytes: 4 * 1024 * 1024,
     })

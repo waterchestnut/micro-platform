@@ -13,7 +13,7 @@
  */
 export function checkCodeField(fieldValue, fieldName = '字段') {
     if (fieldValue) {
-        if (!/^[0-9a-z-_]{3,64}$/g.test(fieldValue)) {
+        if (!/^[0-9a-z_-]{3,64}$/.test(fieldValue)) {
             throw new Error(`${fieldName}只能由小写字母、-、下划线和数字组成，至少3个字符，总长度不能超过64个字符`)
         }
     }
