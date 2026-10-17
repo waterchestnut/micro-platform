@@ -43,7 +43,7 @@ export async function getClientToken(params) {
     if (!params.clientCode || !params.clientSecret) {
         return retSchema.FAIL_OAUTH_PARAM_MISS
     }
-    let visitCount = redisClient.addIncr(getRateCacheKey(params.clientCode), 24 * 60 * 60)
+    let visitCount = await redisClient.addIncr(await getRateCacheKey(params.clientCode), 24 * 60 * 60)
     if (visitCount > config.client.tokenLimit) {
         return retSchema.FAIL_OVERLY_OFTEN
     }
@@ -88,7 +88,7 @@ export async function refreshClientAccessToken(clientRefreshToken, deleteOld = t
         /* token失效 */
         return retSchema.FAIL_TOKEN_INVALID
     }
-    let visitCount = redisClient.addIncr(getRateCacheKey(tokenInfo.clientCode), 24 * 60 * 60)
+    let visitCount = await redisClient.addIncr(await getRateCacheKey(tokenInfo.clientCode), 24 * 60 * 60)
     if (visitCount > config.client.tokenLimit) {
         return retSchema.FAIL_OVERLY_OFTEN
     }
