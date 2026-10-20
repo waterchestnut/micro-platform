@@ -76,12 +76,13 @@ export class SkillManager {
      */
     getSkillsConfig() {
         const channelConfig = llmChannelDataSet[this.channel] || {}
+        /** 默认关闭，未显式配置的频道不启用技能与指令执行 */
         const defaultConfig = {
-            enabled: true,
+            enabled: false,
             skillNames: [],
             maxSkills: 3,
             threshold: 0.3,
-            enableSkillExecution: true,
+            enableSkillExecution: false,
             /** 加载模式：'candidates'(候选列表) | 'matched'(匹配加载) | 'full'(全部加载) */
             loadMode: 'candidates'
         }
@@ -310,10 +311,11 @@ export class SkillManager {
      * @param {string} skillName - Skill 名称
      * @param {string} commandName - 指令名称
      * @param {Object} parameters - 指令参数
+     * @param {Object} [execOptions] - 执行选项：{conversationCode}，供沙箱按会话复用
      * @returns {Promise<Object>}
      */
-    async executeSkillCommand(skillName, commandName, parameters = {}) {
-        const skill = await this.skills.find(item => item.name === skillName)
+    async executeSkillCommand(skillName, commandName, parameters = {}, execOptions = {}) {
+        const skill = this.skills.find(item => item.name === skillName)
         if (!skill) {
             throw new Error(`Skill ${skillName} 不存在`)
         }
@@ -327,7 +329,7 @@ export class SkillManager {
 
         // 根据指令类型执行不同的逻辑
         // 这里可以扩展为调用脚本、执行代码等
-        const result = skill.skillType === 'grpc' ? (await this.grpcSkillProvider.executeCommand(skill, command, parameters)) : (await this.localSkillProvider.executeCommand(skill, command, parameters))
+        const result = skill.skillType === 'grpc' ? (await this.grpcSkillProvider.executeCommand(skill, command, parameters)) : (await this.localSkillProvider.executeCommand(skill, command, parameters, execOptions))
 
         return {
             success: true,
@@ -452,7 +454,7 @@ export class SkillManager {
      * @returns {Promise<{prompt: string, skill: SkillDefinition|null, tools: Array}>}
      */
     async generateSkillDetailPrompt(skillName, options = {}) {
-        const skill = await this.skills.find(item => item.name === skillName)
+        const skill = this.skills.find(item => item.name === skillName)
 
         if (!skill) {
             return {prompt: '', skill: null, tools: []}

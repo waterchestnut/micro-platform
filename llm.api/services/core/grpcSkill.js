@@ -5,6 +5,7 @@
  */
 
 import grpcSkillDac from '../../daos/core/dac/grpcSkillDac.js'
+import {remember, cacheDel} from '../../daos/cache/l2Cache.js'
 import {listSkills} from '../../skill/providers/localSkillProvider.js'
 import {validateChannels} from '../../conf/llmChannel.js'
 import yaml from 'js-yaml'
@@ -130,6 +131,66 @@ export async function getGrpcSkillsByChannel(channel) {
     return grpcSkillDac.getTop(1000, {channels: channel, status: 0})
 }
 
+/** LRU 命名空间，写入技能时整片清掉 */
+export const GRPC_SKILL_SPACE = 'grpcSkill'
+
+/**
+ * @description 频道技能清单的缓存键
+ * @author xianyang
+ * @param {String} channel 频道名称
+ * @returns {String} 缓存键
+ */
+export function grpcSkillCacheKey(channel) {
+    return `skill:chan:${channel}`
+}
+
+/**
+ * @description 按频道取技能清单（LRU + redis 两级）
+ * 每次聊天都直查一次 Mongo 是纯浪费：技能清单只在后台改动时变，改动量以天计。
+ * 注意 redis 往返会把 Date 变成 ISO 字符串，消费方只能用纯数据字段。
+ * @author xianyang
+ * @param {String} channel 频道名称
+ * @returns {Promise<Object[]>} 技能记录列表
+ */
+export async function getCachedGrpcSkillsByChannel(channel) {
+    const cfg = llm.config.cache || {}
+    if (!cfg.skillEnabled || !channel) {
+        return getGrpcSkillsByChannel(channel)
+    }
+    try {
+        const {value, source} = await remember({
+            key: grpcSkillCacheKey(channel),
+            loader: () => getGrpcSkillsByChannel(channel),
+            options: {ttlSeconds: cfg.skillTtlSeconds, space: GRPC_SKILL_SPACE},
+        })
+        if (source !== 'origin') {
+            llm.logger.info(`频道 ${channel} 技能清单命中 ${source}，共 ${value?.length ?? 0} 条`)
+        }
+        return value || []
+    } catch (e) {
+        llm.logger.warn(`技能缓存读取异常，直接回源(${channel}): ${e.message}`)
+        return getGrpcSkillsByChannel(channel)
+    }
+}
+
+/**
+ * @description 技能有增删改启停时清掉全部频道缓存
+ * 改动可能同时影响多个频道（一条技能的 channels 可以是列表），
+ * 逐个频道失效容易漏，写入频率极低，整片清更稳。
+ * @author xianyang
+ * @returns {Promise<Number>} 清掉的 redis 键数
+ */
+export async function invalidateGrpcSkillCache() {
+    try {
+        const n = await cacheDel('skill:chan:*', GRPC_SKILL_SPACE)
+        llm.logger.info(`技能清单缓存已失效，清除 redis 键 ${n} 个`)
+        return n
+    } catch (e) {
+        llm.logger.warn(`技能缓存失效操作失败: ${e.message}`)
+        return 0
+    }
+}
+
 /**
  * @description 添加远程技能
  * @author xianyang
@@ -201,7 +262,7 @@ export async function addGrpcSkill(curUserInfo, grpcSkillInfo) {
         tags: grpcSkillInfo.tags,
     }
     let ret = await grpcSkillDac.add(newGrpcSkill)
-
+    await invalidateGrpcSkillCache()
     return ret
 }
 
@@ -269,7 +330,7 @@ export async function updateGrpcSkill(curUserInfo, skillCode, newGrpcSkillInfo) 
     }
 
     let ret = await grpcSkillDac.update(grpcSkillInfo)
-
+    await invalidateGrpcSkillCache()
     return ret
 }
 
@@ -285,7 +346,9 @@ export async function deleteGrpcSkill(curUserInfo, skillCode) {
         throw new Error('缺少技能标识')
     }
 
-    return grpcSkillDac.update({skillCode, status: -1})
+    const ret = await grpcSkillDac.update({skillCode, status: -1})
+    await invalidateGrpcSkillCache()
+    return ret
 }
 
 /**
@@ -300,7 +363,9 @@ export async function enableGrpcSkill(curUserInfo, skillCode) {
         throw new Error('缺少技能标识')
     }
 
-    return grpcSkillDac.update({skillCode, status: 0})
+    const ret = await grpcSkillDac.update({skillCode, status: 0})
+    await invalidateGrpcSkillCache()
+    return ret
 }
 
 /**
@@ -315,5 +380,7 @@ export async function disableGrpcSkill(curUserInfo, skillCode) {
         throw new Error('缺少技能标识')
     }
 
-    return grpcSkillDac.update({skillCode, status: 1})
+    const ret = await grpcSkillDac.update({skillCode, status: 1})
+    await invalidateGrpcSkillCache()
+    return ret
 }

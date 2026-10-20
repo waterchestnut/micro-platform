@@ -64,7 +64,13 @@ const answerCacheSchema = new Schema({
         type: Date, default: function () {
             return new Date()
         },
-        description: '最近更新时间'
+        description: '最后更新时间'
+    },
+    expireAt: {
+        type: Date, default: function () {
+            return new Date(Date.now() + 90 * 24 * 3600 * 1000)
+        },
+        description: '过期时刻，到点由 Mongo TTL 自动回收'
     },
 })
 
@@ -81,6 +87,13 @@ answerCacheSchema.index({'tags.key': 1})
 answerCacheSchema.index({'tags.value': 1})
 answerCacheSchema.index({channel: 1})
 answerCacheSchema.index({channel: 1, channelCacheKey: 1})
-answerCacheSchema.index({channel: 1, channelCacheKey: 1, llmModel: 1, queryHashCode: 1})
+answerCacheSchema.index({channel: 1, channelCacheKey: 1, llmModel: 1, queryHashCode: 1}, {unique: true})
+/**
+ * TTL 用独立字段 expireAt 而不是复用 insertTime：
+ * insertTime_1 在存量环境已是不带 TTL 的同名索引，Mongo 不会改既有索引的选项，
+ * 直接加 TTL 会撞 IndexOptionsConflict（同 §6.3 唯一索引的坑）。
+ * 老数据没有 expireAt，Mongo 不会误删，由压实任务回填后再开始按期回收。
+ */
+answerCacheSchema.index({expireAt: 1}, {expireAfterSeconds: 0})
 
 export default answerCacheSchema

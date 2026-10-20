@@ -18,31 +18,22 @@ import {
   Bubble,
   Sender,
   Think,
-  Sources,
   XProvider,
   BubbleListProps,
   Attachments,
   type AttachmentsProps,
-  ThoughtChain,
-  type ThoughtChainItemType,
   FileCardProps,
   FileCard,
   BubbleProps,
 } from '@ant-design/x'
-import {
-  CloudUploadOutlined,
-  CodeOutlined,
-  EditOutlined,
-  CheckCircleOutlined,
-} from '@ant-design/icons'
-import {type ComponentProps, XMarkdown} from '@ant-design/x-markdown'
+import {CloudUploadOutlined} from '@ant-design/icons'
+import {XMarkdown} from '@ant-design/x-markdown'
 import Latex from '@ant-design/x-markdown/plugins/Latex'
 import {UserOutlined, RobotOutlined, MessageOutlined, LinkOutlined} from '@ant-design/icons'
 import zhCN from 'antd/locale/zh_CN'
 import zhCN_X from '@ant-design/x/locale/zh_CN'
 import ThinkComponent from '@/pages/Chat/components/ThinkComponent'
 import CodeComponent from '@/pages/Chat/components/CodeComponent'
-import {getSupComponent} from '@/pages/Chat/components/SupComponent'
 import ConversationList, {
   type Conversation,
   ConversationListAction,
@@ -56,6 +47,7 @@ import CommonChatProvider, {
 } from '@/chatProviders/CommonChatProvider'
 import {MessageInfo, useXChat, XRequest} from '@ant-design/x-sdk'
 import {getMessageList} from '@/services/llm/message'
+import ProcessPanel from '@/pages/Chat/components/ProcessPanel'
 import {formatUploadFile, getDocHttpUrl, isArray, uuidV4} from '@/utils/util'
 
 type AttachmentItem = GetProp<AttachmentsProps, 'items'>[number];
@@ -184,6 +176,13 @@ const Index: React.FC = () => {
           attachments: _.answerAttachments,
           answerFeedback: _.answerFeedback,
           answerReasoning: _.answerReasoning,
+          // 协议 2 展示视图（message/list 的 process/progress）→ 历史回放同样带过程面板
+          fromCache: !!_.answerFromCache,
+          process: _.process,
+          sources: _.process?.sources || [],
+          toolCalls: (_.process?.toolCalls || []).map((t: any) => ({...t, status: 'done'})),
+          streamState: _.progress === 'abort' ? 'aborted' : _.progress === 'error' ? 'error' : 'done',
+          errorText: _.progress === 'error' ? _.error : undefined,
         },
         id: `${_.messageCode}-answer`,
         status: 'success',
@@ -226,12 +225,15 @@ const Index: React.FC = () => {
       if (error.name === 'AbortError') {
         return {
           ...messageInfo.message,
-          content: messageInfo.message.content + '\n\n请求已取消',
           role: 'ai',
+          streamState: 'aborted',
         } as CommonChatMessage
       }
       return {
-        content: '请求失败 ，请稍后重试!',
+        ...messageInfo.message,
+        content: messageInfo.message?.content || '',
+        errorText: '请求失败 请稍后再试!',
+        streamState: 'error',
         role: 'ai',
       } as CommonChatMessage
     },
@@ -379,61 +381,6 @@ const Index: React.FC = () => {
     setAttachmentItems(updatedFileList)
   }
 
-  const renderThoughtChain = ({children}: ComponentProps) => {
-    const steps: ThoughtChainItemType[] = [
-      {
-        key: '1',
-        title: '分析问题',
-        description: '理解用户问题并分析需求',
-        icon: <CodeOutlined/>,
-        collapsible: true,
-        content: (
-          <Flex gap='small' vertical>
-            <Think title='思考过程'>{children}</Think>
-          </Flex>
-        ),
-      },
-      {
-        key: '2',
-        title: '生成答案',
-        description: '根据分析结果生成回答',
-        icon: <EditOutlined/>,
-        collapsible: true,
-        status: 'success',
-        content: (
-          <Flex gap='small' vertical>
-            <ThoughtChain.Item
-              variant='solid'
-              status='success'
-              title='答案生成完成'
-              description='已为用户提供完整解答'
-            />
-          </Flex>
-        ),
-      },
-    ]
-    return <ThoughtChain items={steps} line='dashed'/>
-  }
-
-  const sourceItems = [
-    {
-      title: '1. Data source',
-      key: 1,
-      url: 'https://x.ant.design/components/overview',
-      description:
-        'Artificial Intelligence, often abbreviated as AI, is a broad branch of computer science concerned with building smart machines capable of performing tasks that typically require human intelligence.',
-    },
-    {
-      title: '2. Data source',
-      key: 2,
-      url: 'https://x.ant.design/components/overview',
-    },
-    {
-      title: '3. Data source',
-      key: 3,
-      url: 'https://x.ant.design/components/overview',
-    },
-  ]
 
   const getFileCardType = (file: any) => {
     let type = (file.type || '').split('/')[0]
@@ -490,8 +437,6 @@ const Index: React.FC = () => {
           components={{
             think: ThinkComponent,
             code: CodeComponent,
-            sup: getSupComponent(sourceItems),
-            thoughtchain: renderThoughtChain,
           }}
           config={{extensions: Latex()}}
           paragraphTag='div'
@@ -508,8 +453,6 @@ const Index: React.FC = () => {
                 components={{
                   think: ThinkComponent,
                   code: CodeComponent,
-                  sup: getSupComponent(sourceItems),
-                  thoughtchain: renderThoughtChain,
                 }}
                 config={{extensions: Latex()}}
                 paragraphTag='div'
@@ -534,17 +477,30 @@ const Index: React.FC = () => {
     () => ({
       ai: (data) => {
         let answerReasoning = data.extraInfo?.answerReasoning
+        const streamState = data.extraInfo?.streamState
         return {
           typing: true,
-          header: answerReasoning ? (
-            <Think
-              defaultExpanded={!data.content}
-              styles={{content: {maxHeight: '300px', overflow: 'auto'}}}
-              title={data.content ? '思考过程' : '思考中'}
-            >
-              <XMarkdown content={answerReasoning}/>
-            </Think>
-          ) : null,
+          header: (
+            <Flex vertical gap={4}>
+              {answerReasoning ? (
+                <Think
+                  defaultExpanded={!data.content}
+                  styles={{content: {maxHeight: '300px', overflow: 'auto'}}}
+                  title={data.content ? '思考续想' : '思考中'}
+                >
+                  <XMarkdown content={answerReasoning}/>
+                </Think>
+              ) : null}
+              <ProcessPanel
+                process={data.extraInfo?.process}
+                toolCalls={data.extraInfo?.toolCalls}
+                sources={data.extraInfo?.sources}
+                fromCache={data.extraInfo?.fromCache}
+              />
+              {streamState === 'aborted' ? <Typography.Text type='warning'>本轮回答已中断，内容不完整</Typography.Text> : null}
+              {streamState === 'error' ? <Typography.Text type='danger'>{data.extraInfo?.errorText || '请求失败，请稍后再试'}</Typography.Text> : null}
+            </Flex>
+          ),
           contentRender,
           loadingRender: () => (
             <Space>

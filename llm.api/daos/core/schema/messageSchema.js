@@ -68,6 +68,8 @@ const messageSchema = new Schema({
     inputs: {type: [Object], description: '格式化的输入内容'},
     messages: {type: [Object], description: '大模型的输入消息列表'},
     messageTokens: {type: Number, description: '输入Token数量'},
+    /** Token计数语义版本（v2起计入协议开销与多模态），来源：大模型服务上游仓 PR-1 */
+    tokenizerVersion: {type: String, description: 'Token计数语义版本，用于跨版本成本核对'},
     messagePriceUnit: {type: Number, description: '输入Token单价'},
     answer: {type: String, description: '大模型的输出内容'},
     answerTokens: {type: Number, description: '输出Token数量'},

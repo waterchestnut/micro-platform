@@ -11,6 +11,15 @@ import conversationSchema from './conversationSchema.js'
 import messageSchema from './messageSchema.js'
 import answerCacheSchema from './answerCacheSchema.js'
 import grpcSkillSchema from './grpcSkillSchema.js'
+import memoryEventSchema from './memoryEventSchema.js'
+import memoryCandidateSchema from './memoryCandidateSchema.js'
+import memoryAtomSchema from './memoryAtomSchema.js'
+import memoryEntitySchema from './memoryEntitySchema.js'
+import memoryJournalSchema from './memoryJournalSchema.js'
+import memoryProfileSchema from './memoryProfileSchema.js'
+import memoryNamespaceSchema from './memoryNamespaceSchema.js'
+import sessionCheckpointSchema from './sessionCheckpointSchema.js'
+import sandboxUsageSchema from './sandboxUsageSchema.js'
 
 const mongodbConfig = llm.config.mongodbConfig
 
@@ -39,3 +48,12 @@ export const Conversation = conn.model('Conversation', conversationSchema, 'conv
 export const Message = conn.model('Message', messageSchema, 'message')
 export const AnswerCache = conn.model('AnswerCache', answerCacheSchema, 'answerCache')
 export const GrpcSkill = conn.model('GrpcSkill', grpcSkillSchema, 'grpcSkill')
+export const MemoryEvent = conn.model('MemoryEvent', memoryEventSchema, 'memoryEvent')
+export const MemoryCandidate = conn.model('MemoryCandidate', memoryCandidateSchema, 'memoryCandidate')
+export const MemoryAtom = conn.model('MemoryAtom', memoryAtomSchema, 'memoryAtom')
+export const MemoryEntity = conn.model('MemoryEntity', memoryEntitySchema, 'memoryEntity')
+export const MemoryJournal = conn.model('MemoryJournal', memoryJournalSchema, 'memoryJournal')
+export const MemoryProfile = conn.model('MemoryProfile', memoryProfileSchema, 'memoryProfile')
+export const MemoryNamespace = conn.model('MemoryNamespace', memoryNamespaceSchema, 'memoryNamespace')
+export const SessionCheckpoint = conn.model('SessionCheckpoint', sessionCheckpointSchema, 'sessionCheckpoint')
+export const SandboxUsage = conn.model('SandboxUsage', sandboxUsageSchema, 'sandboxUsage')

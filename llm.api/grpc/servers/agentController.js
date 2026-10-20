@@ -5,7 +5,7 @@
  */
 
 import {loadProto} from '../utils.js'
-import {addAgentTask, getAgentTaskAllDetail, updateAgentTaskWithLock} from '../../services/core/agentTask.js'
+import {addAgentTask, getAgentTaskAllDetail, getAgentTaskListByFilter, updateAgentTaskWithLock} from '../../services/core/agentTask.js'
 import {addAgentLog as addAgentLogService} from '../../services/core/agentLog.js'
 import {manualTriggerAgentTask} from '../../services/agent/index.js'
 // Protocol Buffers文件
@@ -39,6 +39,14 @@ export function initService(server) {
             try {
                 let data = await getAgentTaskAllDetail(call.request.agentCode);
                 callback(null, {data: JSON.stringify(data)});
+            } catch (e) {
+                callback(e)
+            }
+        },
+        getAgentTaskListByFilter: async (call, callback) => {
+            try {
+                let list = await getAgentTaskListByFilter(call.request);
+                callback(null, {data: JSON.stringify(list)});
             } catch (e) {
                 callback(e)
             }

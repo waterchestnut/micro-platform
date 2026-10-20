@@ -38,6 +38,7 @@ import {useInterval} from 'usehooks-ts'
 import {checkResLiterature} from '@/services/resource/literature'
 import {history} from '@@/core/history'
 import {CopyWordIcon} from '@/icons/copyWord'
+import ProcessPanel from '@/pages/Viewer/components/ProcessPanel'
 import LiteratureChatProvider, {
   LiteratureChatInput,
   LiteratureChatMessage,
@@ -334,6 +335,15 @@ const AIAnalysisComponent: ForwardRefRenderFunction<AIAnalysisComponentAction, A
         message: {
           role: 'assistant',
           content: _.answer,
+          messageCode: _.messageCode,
+          answerFeedback: _.answerFeedback,
+          answerReasoning: _.answerReasoning,
+          fromCache: !!_.answerFromCache,
+          process: _.process,
+          sources: _.process?.sources || [],
+          toolCalls: (_.process?.toolCalls || []).map((t: any) => ({...t, status: 'done' as const})),
+          streamState: _.progress === 'abort' ? 'aborted' : _.progress === 'error' ? 'error' : 'done',
+          errorText: _.progress === 'error' ? _.error : undefined,
         },
         id: `${_.messageCode}-answer`,
         status: 'success',
@@ -342,8 +352,8 @@ const AIAnalysisComponent: ForwardRefRenderFunction<AIAnalysisComponentAction, A
           answerFeedback: _.answerFeedback
         }
       })
-      let queryContent = _.inputs || []
-      queryContent.push({type: 'text', text: _.query})
+      /*展开成副本再追加文本片段，避免污染接口返回的对象*/
+      const queryContent = [...(_.inputs || []), {type: 'text', text: _.query}]
       msgList.unshift({
         message: {
           role: 'user',
@@ -568,19 +578,50 @@ const AIAnalysisComponent: ForwardRefRenderFunction<AIAnalysisComponentAction, A
             },
             typing: i.status === 'loading' ? {step: 5, interval: 20, suffix: <>✨</>} : false,
             contentRender: (content, info) => {
-              if (typeof content === 'string') {
-                return renderMarkdown(content, info)
-              } else if (isArray(content) && content.length) {
-                return content.map((item: any, index: number) => {
-                  if (item.type === 'text') {
-                    return <div key={index}>{renderMarkdown(item.text, info)}</div>
-                  } else if (item.type === 'image_url') {
-                    return <div key={index}><img src={item.image_url.url} alt=''/></div>
-                  }
-                  return null
-                })
+              const body = (() => {
+                if (typeof content === 'string') {
+                  return renderMarkdown(content, info)
+                } else if (isArray(content) && content.length) {
+                  return content.map((item: any, index: number) => {
+                    if (item.type === 'text') {
+                      return <div key={index}>{renderMarkdown(item.text, info)}</div>
+                    } else if (item.type === 'image_url') {
+                      return <div key={index}><img src={item.image_url.url} alt=''/></div>
+                    }
+                    return null
+                  })
+                }
+                return ''
+              })()
+
+              if (i.message.role !== 'assistant') {
+                return body
               }
-              return ''
+
+              /*思考过程与执行轨迹来自协议 2 事件与历史视图的 process 字段，不使用占位样例*/
+              const msg = i.message
+              return (
+                <div style={{display: 'flex', flexDirection: 'column', gap: 4}}>
+                  {msg.answerReasoning ? (
+                    <Think
+                      defaultExpanded={!content}
+                      styles={{content: {maxHeight: '300px', overflow: 'auto'}}}
+                      title={content ? '思考过程' : '思考中'}
+                    >
+                      {renderMarkdown(msg.answerReasoning, info)}
+                    </Think>
+                  ) : null}
+                  <ProcessPanel
+                    process={msg.process}
+                    toolCalls={msg.toolCalls}
+                    sources={msg.sources}
+                    fromCache={msg.fromCache}
+                  />
+                  {msg.streamState === 'aborted' ? <Typography.Text type='warning'>本轮回答已被中断，内容不完整</Typography.Text> : null}
+                  {msg.streamState === 'error' ? <Typography.Text type='danger'>{msg.errorText || '请求失败，请稍后重试'}</Typography.Text> : null}
+                  {body}
+                </div>
+              )
             }
           }))}
           role={{

@@ -47,7 +47,9 @@ export class SkillChat {
             candidates: result.candidates,
             matchedSkills: result.skills,
             loadedDetails: [],
-            tools: result.tools
+            tools: result.tools,
+            /** 沙箱执行按会话复用沙箱要用它，见 skill/providers/localSkillProvider.js */
+            conversationCode: options.context?.conversationCode || ''
         }
 
         return {
@@ -123,6 +125,7 @@ export class SkillChat {
             skillContext.loadedDetails.push(candidate.name)
             if (detailResult.tools.length > 0) {
                 skillContext.tools.push(...detailResult.tools)
+                logger.info(`技能工具列表: ${detailResult.tools.map(t => t.function.name).join(', ')}`)
             }
 
             return {
@@ -158,7 +161,7 @@ export class SkillChat {
 
                 if (isSkillTool) {
                     // 执行 Skill 指令
-                    const result = await this.executeSingleSkillTool(toolName, functionCall.arguments, matchedSkills)
+                    const result = await this.executeSingleSkillTool(toolName, functionCall.arguments, matchedSkills, {conversationCode: skillContext.conversationCode})
                     results.push({
                         tool_call_id: toolCallId,
                         role: 'tool',
@@ -191,9 +194,10 @@ export class SkillChat {
      * @param {string} toolName - 工具名称
      * @param {string} argsJson - 参数 JSON
      * @param {Array} matchedSkills - 匹配的 Skills
+     * @param {Object} [execOptions] - 执行选项，目前只带 conversationCode（沙箱按会话复用）
      * @returns {Promise<Object>}
      */
-    async executeSingleSkillTool(toolName, argsJson, matchedSkills) {
+    async executeSingleSkillTool(toolName, argsJson, matchedSkills, execOptions = {}) {
         // 解析工具名：skillName_commandName
         const firstUnderscore = toolName.indexOf('_')
         if (firstUnderscore === -1) {
@@ -220,7 +224,7 @@ export class SkillChat {
         logger.info(`执行 Skill 工具: ${skillName}.${commandName}`, parameters)
 
         // 调用 skillManager 执行指令
-        const result = await this.skillManager.executeSkillCommand(skillName, commandName, parameters)
+        const result = await this.skillManager.executeSkillCommand(skillName, commandName, parameters, execOptions)
 
         return result
     }

@@ -1,264 +1,120 @@
 /**
- * @fileOverview Document Extractor Skill 执行脚本
- * @description 实现文档内容提取相关的自动化指令，调用 gRPC 服务
- * @module
+ * @fileOverview Document Extractor Skill 执行脚本（自包含版）
+ * @module skill/skills/document-extractor/scripts
+ * @description 这个脚本会被打包进 OpenSandbox 执行，因此**不得 import llm.api 内部模块**
+ * （旧版 `import {pdf2Text,...} from '../../../../grpc/clients/extractor.js'` 会把 gRPC 客户端、
+ * .proto、node_modules、llm.config 全拖进沙箱，那就不叫自包含）。
+ *
+ * 需要的能力改为**回连宿主 HTTP 接口** `/core/skill-host/extract`，凭据是每次执行签发的短期
+ * 能力 token，通过环境变量注入：
+ *   SKILL_HOST_BASE   宿主基地址（集群内 Service）
+ *   SKILL_CAP_TOKEN   能力 token（只含本次执行需要的能力，短期有效）
+ *
+ * 只用 Node 内置能力（fetch 在 Node 18+ 是全局），由 tools/skillBundle.js 的
+ * checkSelfContained 静态把关；违规 import 会在打包前就被拒。
  */
 
-import {pdf2Text, word2Text, excel2Text, html2Text} from '../../../../grpc/clients/extractor.js'
+const HOST = (process.env.SKILL_HOST_BASE || '').replace(/\/+$/, '')
+const TOKEN = process.env.SKILL_CAP_TOKEN || ''
+/** 宿主回连超时：比沙箱整体超时短，避免挂着不动 */
+const CALL_TIMEOUT_MS = Number(process.env.SKILL_HOST_TIMEOUT_MS) || 60000
 
-/**
- * @description 从 URL 获取文件内容并转换为 Uint8Array
- * @param {string} url - 文件 URL
- * @returns {Promise<Uint8Array>}
- */
-async function fetchFileFromUrl(url) {
-    try {
-        const response = await fetch(url)
-        if (!response.ok) {
-            throw new Error(`HTTP 错误: ${response.status} ${response.statusText}`)
-        }
-        
-        const arrayBuffer = await response.arrayBuffer()
-        return new Uint8Array(arrayBuffer)
-    } catch (error) {
-        throw new Error(`获取文件失败: ${error.message}`)
+const TYPES = {pdf: 'pdf', doc: 'word', docx: 'word', xls: 'excel', xlsx: 'excel', htm: 'html', html: 'html'}
+
+function guessType(url) {
+    const clean = String(url).split('?')[0].split('#')[0].toLowerCase()
+    const ext = clean.slice(clean.lastIndexOf('.') + 1)
+    return TYPES[ext] || ''
+}
+
+async function callHost(path, body) {
+    if (!HOST) {
+        throw new Error('缺少 SKILL_HOST_BASE：沙箱内无法回连宿主能力接口')
     }
+    if (!TOKEN) {
+        throw new Error('缺少 SKILL_CAP_TOKEN：本次执行没有被授予宿主能力')
+    }
+    const res = await fetch(`${HOST}${path}`, {
+        method: 'POST',
+        headers: {'content-type': 'application/json', authorization: `Bearer ${TOKEN}`},
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
+    })
+    const text = await res.text().catch(() => '')
+    if (!res.ok) {
+        let msg = text.slice(0, 200)
+        try {
+            msg = JSON.parse(text)?.msg || JSON.parse(text)?.error || msg
+        } catch { /* 非 JSON 响应保留原文片段 */ }
+        throw new Error(`宿主能力接口 ${path} 返回 ${res.status}：${msg}`)
+    }
+    return JSON.parse(text || '{}')
 }
 
 /**
- * @description 从 PDF 文档提取文本
- * @param {Object} params
- * @param {string} params.url - PDF 文件 URL
- * @param {string} [params.mode] - 可选，传入 'ocr' 启用 OCR 识别
- * @returns {Object}
+ * @description 统一入口：按 url 解析文档
+ * @param {String} fileType pdf|word|excel|html
+ * @param {Object} params {url, language}
+ * @returns {Promise<Object>} 解析结果
  */
+async function extractByType(fileType, params) {
+    const url = params.url || params.fileUrl
+    if (!url) {
+        throw new Error('缺少参数 url')
+    }
+    const ret = await callHost('/core/skill-host/extract', {
+        url,
+        fileType,
+        language: params.language || '',
+    })
+    return {
+        fileType,
+        chars: ret.chars ?? String(ret.text || '').length,
+        text: String(ret.text || ''),
+        source: url,
+    }
+}
+
 export async function extractFromPdf(params) {
-    const { url, mode } = params
-    
-    if (!url) {
-        throw new Error('缺少必要参数: url（文件 URL）')
-    }
-    
-    try {
-        // 从 URL 获取文件内容
-        const content = await fetchFileFromUrl(url)
-        
-        // pdf2Text 支持 'ocr' 或不传 mode
-        const modeParam = mode === 'ocr' ? 'ocr' : undefined
-        
-        const text = await pdf2Text(content, modeParam)
-        
-        return {
-            success: true,
-            command: 'extractFromPdf',
-            format: 'PDF',
-            text: text,
-            length: text.length,
-            ocrEnabled: mode === 'ocr',
-            message: `成功从 PDF 文档提取了 ${text.length} 个字符的文本内容`
-        }
-    } catch (error) {
-        return {
-            success: false,
-            command: 'extractFromPdf',
-            format: 'PDF',
-            error: error.message,
-            message: `PDF 文本提取失败: ${error.message}`
-        }
-    }
+    return await extractByType('pdf', params)
 }
 
-/**
- * @description 从 Word 文档提取文本
- * @param {Object} params
- * @param {string} params.url - Word 文件 URL
- * @returns {Object}
- */
 export async function extractFromWord(params) {
-    const { url } = params
-    
-    if (!url) {
-        throw new Error('缺少必要参数: url（文件 URL）')
-    }
-    
-    try {
-        // 从 URL 获取文件内容
-        const content = await fetchFileFromUrl(url)
-        
-        // word2Text 不支持 language 参数
-        const text = await word2Text(content)
-        
-        return {
-            success: true,
-            command: 'extractFromWord',
-            format: 'Word',
-            text: text,
-            length: text.length,
-            message: `成功从 Word 文档提取了 ${text.length} 个字符的文本内容`
-        }
-    } catch (error) {
-        return {
-            success: false,
-            command: 'extractFromWord',
-            format: 'Word',
-            error: error.message,
-            message: `Word 文本提取失败: ${error.message}`
-        }
-    }
+    return await extractByType('word', params)
 }
 
-/**
- * @description 从 Excel 表格提取文本
- * @param {Object} params
- * @param {string} params.url - Excel 文件 URL
- * @param {string} [params.format] - 可选，格式类型: 'xls', 'csv', 'xlsx'
- * @returns {Object}
- */
 export async function extractFromExcel(params) {
-    const { url, format } = params
-    
-    if (!url) {
-        throw new Error('缺少必要参数: url（文件 URL）')
-    }
-    
-    try {
-        // 从 URL 获取文件内容
-        const content = await fetchFileFromUrl(url)
-        
-        // excel2Text 支持 'xls', 'csv', 'xlsx' 作为 language 参数
-        const formatParam = ['xls', 'csv', 'xlsx'].includes(format) ? format : undefined
-        
-        const text = await excel2Text(content, formatParam)
-        
-        return {
-            success: true,
-            command: 'extractFromExcel',
-            format: 'Excel',
-            text: text,
-            length: text.length,
-            detectedFormat: formatParam || 'auto',
-            message: `成功从 Excel 表格提取了 ${text.length} 个字符的文本内容`
-        }
-    } catch (error) {
-        return {
-            success: false,
-            command: 'extractFromExcel',
-            format: 'Excel',
-            error: error.message,
-            message: `Excel 文本提取失败: ${error.message}`
-        }
-    }
+    return await extractByType('excel', params)
 }
 
-/**
- * @description 从 HTML 页面提取文本
- * @param {Object} params
- * @param {string} params.url - HTML 文件 URL
- * @returns {Object}
- */
 export async function extractFromHtml(params) {
-    const { url } = params
-    
-    if (!url) {
-        throw new Error('缺少必要参数: url（文件 URL）')
-    }
-    
-    try {
-        // 从 URL 获取文件内容
-        const content = await fetchFileFromUrl(url)
-        
-        // html2Text 不支持 language 参数
-        const text = await html2Text(content)
-        
-        return {
-            success: true,
-            command: 'extractFromHtml',
-            format: 'HTML',
-            text: text,
-            length: text.length,
-            message: `成功从 HTML 页面提取了 ${text.length} 个字符的文本内容`
-        }
-    } catch (error) {
-        return {
-            success: false,
-            command: 'extractFromHtml',
-            format: 'HTML',
-            error: error.message,
-            message: `HTML 文本提取失败: ${error.message}`
-        }
-    }
+    return await extractByType('html', params)
 }
 
 /**
- * @description 智能文档提取（自动识别格式）
- * @param {Object} params
- * @param {string} params.url - 文件 URL
- * @param {string} params.format - 文档格式（pdf, word, excel, html）
- * @param {string} [params.mode] - PDF 用 'ocr' 启用 OCR
- * @param {string} [params.subtype] - Excel 用 'xls'/'csv'/'xlsx' 指定格式
- * @returns {Object}
+ * @description 按扩展名自动选类型解析
+ * @param {Object} params {url, language}
+ * @returns {Promise<Object>} 解析结果
  */
 export async function smartExtract(params) {
-    const { url, format, mode, subtype } = params
-    
-    if (!url) {
-        throw new Error('缺少必要参数: url（文件 URL）')
+    const type = guessType(params.url || params.fileUrl || '')
+    if (!type) {
+        throw new Error(`无法从地址判断文件类型，请显式指定 fileType（${Object.values(TYPES).join('/')}）`)
     }
-    
-    if (!format) {
-        return {
-            success: false,
-            error: '缺少必要参数: format（请指定文档格式：pdf, word, excel, html）',
-            supportedFormats: ['pdf', 'word', 'excel', 'html']
-        }
-    }
-    
-    const formatLower = format.toLowerCase()
-    
-    switch (formatLower) {
-        case 'pdf':
-            return await extractFromPdf({ url, mode })
-        case 'word':
-        case 'doc':
-        case 'docx':
-            return await extractFromWord({ url })
-        case 'excel':
-        case 'xls':
-        case 'xlsx':
-        case 'csv':
-            // 对于 Excel，subtype 参数可以作为 format 传递
-            return await extractFromExcel({ url, format: subtype || formatLower })
-        case 'html':
-        case 'htm':
-            return await extractFromHtml({ url })
-        default:
-            return {
-                success: false,
-                error: `不支持的文档格式: ${format}`,
-                supportedFormats: ['pdf', 'word', 'excel', 'html']
-            }
-    }
+    return await extractByType(type, params)
 }
 
 /**
- * @description 执行 Skill 命令的入口函数
- * @param {string} commandName - 命令名称
- * @param {Object} parameters - 命令参数
- * @returns {Promise<Object>}
+ * @description 统一命令入口（沙箱 harness 优先调用它）
+ * @param {String} commandName 命令名
+ * @param {Object} parameters 参数
+ * @returns {Promise<Object>} 执行结果
  */
 export async function executeCommand(commandName, parameters = {}) {
-    switch (commandName) {
-        case 'extractFromPdf':
-            return await extractFromPdf(parameters)
-        case 'extractFromWord':
-            return await extractFromWord(parameters)
-        case 'extractFromExcel':
-            return await extractFromExcel(parameters)
-        case 'extractFromHtml':
-            return await extractFromHtml(parameters)
-        case 'smartExtract':
-            return await smartExtract(parameters)
-        default:
-            throw new Error(`未知命令: ${commandName}`)
+    const handlers = {extractFromPdf, extractFromWord, extractFromExcel, extractFromHtml, smartExtract}
+    const fn = handlers[commandName]
+    if (!fn) {
+        throw new Error(`未知命令: ${commandName}（可用：${Object.keys(handlers).join(', ')}）`)
     }
+    return await fn(parameters)
 }

@@ -4,7 +4,7 @@
  * @module
  */
 
-import {getGrpcSkillsByChannel} from '../../services/core/grpcSkill.js'
+import {getCachedGrpcSkillsByChannel} from '../../services/core/grpcSkill.js'
 import skillParser from '../skillParser.js'
 import {execCommand as execGrpcCommand} from '../../grpc/clients/grpcSkillExecutor.js'
 
@@ -24,7 +24,8 @@ export class GrpcSkillProvider {
      * @returns {Promise<void>}
      */
     async initialize() {
-        let list = await getGrpcSkillsByChannel(this.channel)
+        /** 走两级缓存：技能清单只在后台改动时变，不该每次聊天都回源一次 Mongo */
+        let list = await getCachedGrpcSkillsByChannel(this.channel)
         list?.forEach((item) => {
             if (item.skillMD) {
                 this.skillsIndex.set(item.skillName, {
@@ -33,6 +34,7 @@ export class GrpcSkillProvider {
                 })
             }
         })
+        this.initialized = true
     }
 
     /**
@@ -91,13 +93,16 @@ export class GrpcSkillProvider {
      * @returns {Promise<any>}
      */
     async executeCommand(skill, command, parameters) {
+        if (!this.initialized) {
+            await this.initialize()
+        }
         let skillInfo = this.skillsIndex.get(skill.name)
         if (!skillInfo) {
             return {
                 success: false,
                 command: command.name,
-                error: `技能 ${skillInfo.name} 不存在`,
-                message: `命令 ${skillInfo.name}.${command.name} 执行失败：技能 ${skillInfo.name} 不存在`,
+                error: `技能 ${skill.name} 不存在`,
+                message: `命令 ${skill.name}.${command.name} 执行失败：技能 ${skill.name} 不存在`,
             }
         }
         return await execGrpcCommand(skillInfo.grpcSkillInfo.grpcHost, skillInfo.name, command.name, parameters, this.curUserInfo)

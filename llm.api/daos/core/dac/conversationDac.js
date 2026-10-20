@@ -5,12 +5,26 @@
  */
 
 import {Conversation} from '../schema/index.js'
-import BaseDac from "./BaseDac.js"
-import * as tools from "../../../tools/index.js"
+import BaseDac from './BaseDac.js'
+import * as tools from '../../../tools/index.js'
 
 export class ConversationDac extends BaseDac {
     constructor(Model) {
         super(Model, 'conversationCode')
+    }
+
+    /**
+     * @description 按会话标识获取或创建u2u会话（$setOnInsert原子插入，防并发重复创建）
+     * @param {String} conversationCode 会话标识（由genConversationCode生成，与用户对一一对应）
+     * @param {Object} newInfo 会话信息
+     * @returns {Promise<Object>} 会话记录对象
+     */
+    async getOrCreateByConversationCode(conversationCode, newInfo) {
+        return this._Model.findOneAndUpdate(
+            {conversationCode},
+            {$setOnInsert: newInfo},
+            {upsert: true, new: true, setDefaultsOnInsert: true}
+        ).lean().exec()
     }
 
     assembleParams(options) {
@@ -46,8 +60,11 @@ export class ConversationDac extends BaseDac {
                 ]
             })
         }
+        if (tools.isExist(options.conversationType)) {
+            params.$and.push({conversationType: {$eq: options.conversationType}})
+        }
         if (tools.isExist(options.keywords)) {
-            let keywordReg = {$regex: new RegExpExt(options.keywords, 'i', true)};
+            let keywordReg = {$regex: new RegExpExt(options.keywords, 'i', true)}
             params.$and.push({
                 $or: [
                     {title: keywordReg},

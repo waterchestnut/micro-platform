@@ -4,7 +4,7 @@ import {
     getResSwaggerSchema
 } from '../../../daos/swaggerSchema/responseHandler.js'
 import {getDefaultResponseSchema} from '../../../plugins/format-reply.js'
-import {feedback, getMessages} from '../../../services/core/message.js'
+import {feedback, getMessagePage} from '../../../services/core/message.js'
 
 const messageSchema = {$ref: 'fullStoreModels#/properties/Message'}
 
@@ -12,7 +12,7 @@ export default async function (fastify, opts) {
 
     fastify.post('/list', {
         schema: {
-            description: '获取大模型会话消息列表',
+            description: '获取大模型会话消息列表，返回展示视图（不含发给模型的完整提示词，附带执行过程统计）',
             summary: '消息列表',
             body: {
                 type: 'object',
@@ -37,7 +37,7 @@ export default async function (fastify, opts) {
             response: {}
         }
     }, async function (request, reply) {
-        return await getMessages(request.reqParams.filter, request.reqParams.pageIndex, request.reqParams.pageSize, request.reqParams.options)
+        return await getMessagePage(request.reqParams.filter, request.reqParams.pageIndex, request.reqParams.pageSize, request.reqParams.options)
     })
 
     fastify.post('/feedback', {

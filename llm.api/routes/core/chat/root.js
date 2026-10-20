@@ -1,5 +1,8 @@
 import {execChat} from '../../../services/core/llmChat.js'
 import {serializeSSEEvent} from '../../../tools/sse.js'
+import {validateChannels} from '../../../conf/llmChannel.js'
+import {chatStreamBodySchema} from '../../../schemas/chatStreamSchema.js'
+import {auditBody} from '../../../tools/schemaAudit.js'
 
 const logger = llm.logger
 
@@ -9,42 +12,27 @@ export default async function (fastify, opts) {
         schema: {
             description: '大模型对话，以event-stream返回',
             summary: '大模型对话（流式）',
-            body: {
-                type: 'object',
-                properties: {
-                    query: {type: 'string', description: '用户问题'},
-                    conversationCode: {type: 'string', description: '会话标识'},
-                    options: {
-                        type: 'object',
-                        properties: {
-                            llmModel: {type: 'string', description: '大模型'},
-                            channel: {type: 'string', description: '大模型'},
-                            channelGroup: {type: 'string', description: '大模型'},
-                            llmParams: {
-                                type: 'object',
-                                properties: {
-                                    maxTokens: {type: 'number', description: '最大返回tokens数量'},
-                                },
-                                description: '大模型提示词等相关的参数',
-                                additionalProperties: {type: 'string'}
-                            },
-                            ragParams: {
-                                type: 'object',
-                                properties: {
-                                    resCode: {type: 'string', description: '资源标识'},
-                                    maxLength: {type: 'number', description: '最多返回资料片段数'},
-                                    maxTokens: {type: 'number', description: '最大输入材料tokens数量'},
-                                },
-                                description: '增强检索相关的参数',
-                                additionalProperties: {type: 'string'}
-                            },
-                        }
-                    }
-                }
-            },
+            body: chatStreamBodySchema,
             tags: ['llm']
         },
     }, async function (request, reply) {
+        if (!request.userInfo?.userCode) {
+            const err = new Error('缺少有效的用户身份（user-info）')
+            err.statusCode = 401
+            throw err
+        }
+
+        /*schema 收紧（R2-b）的前置观测：记录未声明字段，只告警不改行为、不记字段值*/
+        auditBody({body: request.body, schema: chatStreamBodySchema})
+
+        /*频道必须在配置中定义，否则 sysPrompt/skills/MCP 会静默走空配置*/
+        const reqChannel = request.reqParams?.options?.channel
+        if (reqChannel && validateChannels([reqChannel]).length) {
+            const err = new Error(`无效的频道: ${reqChannel}，该频道未在配置中定义`)
+            err.statusCode = 400
+            throw err
+        }
+
         const controller = new AbortController()
         const {signal} = controller
         request.raw.socket.on('close', () => {
@@ -65,16 +53,23 @@ export default async function (fastify, opts) {
             headers['Access-Control-Allow-Origin'] = request.headers.origin
         }
         stream.writeHead(200, headers)
+        let aborted = false
         try {
-            await execChat(request.userInfo, request.reqParams.query, request.reqParams.conversationCode, {
-                ...request.reqParams.options, signal, streamCallback: (content) => {
+            const ret = await execChat(request.userInfo, request.reqParams.query, request.reqParams.conversationCode, {
+                ...request.reqParams.options, signal, streamCallback: (content, eventType) => {
                     stream.write(serializeSSEEvent({
-                        event: 'delta',
+                        event: eventType || 'delta',
                         data: content
                     }))
                 }
             })
+            aborted = ret === 'aborted'
+            stream.write(serializeSSEEvent({
+                event: aborted ? 'abort' : 'done',
+                data: aborted ? 'aborted' : 'done'
+            }))
         } catch (err) {
+            console.error(err);
             stream.write(serializeSSEEvent({
                 event: 'error',
                 data: err.message || '处理出错，请稍等再试'

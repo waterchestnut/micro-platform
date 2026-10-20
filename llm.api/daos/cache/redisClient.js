@@ -110,6 +110,23 @@ let redisClient = {
             await client.pipeline().expire(key, seconds).exec()
         }
         return ret
+    },
+
+    /**
+     * 仅在键不存在时写入（SET NX EX），用于一次性令牌
+     * @author xianyang
+     * @param {String} key 缓存键
+     * @param {Object|String} value 值
+     * @param {Number} [seconds] 过期秒数
+     * @returns {Promise<Boolean>} 是否抢到（true 表示此前键不存在）
+     */
+    setIfAbsent: async function (key, value, seconds = 60) {
+        if (!key) {
+            return false
+        }
+        const payload = typeof value === 'string' ? value : JSON.stringify(value ?? '1')
+        const ret = await client.set(key, payload, 'EX', parseInt(seconds, 10) || 60, 'NX')
+        return ret === 'OK'
     }
 }
 

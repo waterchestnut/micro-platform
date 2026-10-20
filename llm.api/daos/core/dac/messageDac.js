@@ -43,6 +43,12 @@ export class MessageDac extends BaseDac {
         if (tools.isExist(options.query)) {
             params.$and.push({query: {$regex: new RegExpExt(options.query, 'i', true)}})
         }
+        if (tools.isExist(options.afterInsertTime)) {
+            params.$and.push({insertTime: {$gt: new Date(options.afterInsertTime)}})
+        }
+        if (tools.isExist(options.beforeInsertTime)) {
+            params.$and.push({insertTime: {$lt: new Date(options.beforeInsertTime)}})
+        }
         return params
     }
 }

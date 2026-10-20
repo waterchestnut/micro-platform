@@ -12,5 +12,6 @@ export default class AgentTypeEnum extends Enumify {
     static local = new AgentTypeEnum('local', '本地原子任务')
     static grpc = new AgentTypeEnum('grpc', '远程原子任务')
     static llm = new AgentTypeEnum('llm', '大模型调用原子任务')
+    static sandbox = new AgentTypeEnum('sandbox', '沙箱执行原子任务')
     static _ = this.closeEnum()
 }

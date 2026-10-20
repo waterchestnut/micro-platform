@@ -31,7 +31,7 @@ export async function updateAgentTaskWithLock(agentCode, toUpdateInfo) {
         lock = await redlock.acquire(['updateAgentTask:' + agentCode], 5000)
         return agentTaskDac.update(toUpdateInfo, {agentCode})
     } finally {
-        lock && (await lock.release())
+        await safeUnlock(lock)
     }
 }
 
@@ -42,7 +42,7 @@ export async function updateSubAgentTaskWithLock(agentCode, subAgentCode, toUpda
         lock = await redlock.acquire(['updateAgentTask:' + agentCode], 5000)
         return agentTaskDac.update({'subAgents.$[idx1]': toUpdateInfo}, {agentCode}, {arrayFilters: [{'idx1.agentCode': subAgentCode}]})
     } finally {
-        lock && (await lock.release())
+        await safeUnlock(lock)
     }
 }
 
@@ -83,7 +83,7 @@ export async function updateParentAgentTaskWithLock(parentCode, curAgentTaskInfo
             await agentTaskDac.update(toUpdateInfo, {agentCode: parentCode})
         }
     } finally {
-        lock && (await lock.release())
+        await safeUnlock(lock)
     }
 
     if (parentAgentTask && parentAgentTask.parentCode) {
@@ -165,7 +165,7 @@ export async function insertSubAgentTask(parentAgentCode, subTaskList, afterAgen
         await agentTaskDac.bulkUpdate(list)
         await agentTaskDac.update({subAgents: parentAgentInfo.subAgents}, {agentCode: parentAgentCode})
     } finally {
-        lock && (await lock.release())
+        await safeUnlock(lock)
     }
 
     if (parentAgentInfo?.agentType === 'sequential' && parentAgentInfo?.handleMode === 'queue') {
@@ -192,4 +192,48 @@ export async function getAgentTaskAllDetail(agentCode) {
     let taskList = await agentTaskDac.getTop(10000, options, {insertTime: 1})
     // logger.debug(JSON.stringify(taskList));
     return taskList
+}
+
+/**
+ * @description 批量获取任务列表
+ * @param {Object} filter
+ * @param {String[]} [filter.agentCodes] 筛选agentCode
+ * @param {String[]} [filter.inPathCodes] 筛选agentCodePath
+ * @return {Promise<Array|*[]>}
+ */
+export async function getAgentTaskListByFilter(filter = {}) {
+    let options = {
+        complexFilter: []
+    }
+    if (filter.agentCodes?.length) {
+        options.agentCode = filter.agentCodes
+    }
+    if (filter.inPathCodes?.length) {
+        options.complexFilter.push({agentCodePath: {$in: filter.inPathCodes}})
+    }
+    if (Object.keys(options).length < 2 && !options.complexFilter.length) {
+        return []
+    }
+    let total = await agentTaskDac.getCount(options)
+    if (!total) {
+        return []
+    }
+    return agentTaskDac.getTop(total, options, {insertTime: 1})
+}
+
+async function safeUnlock(lock) {
+    if (!lock) return
+
+    // 1. 如果锁已经过了客户端记录的生命周期，直接跳过，防止触发 redlock 的重试卡死
+    if (lock.expiration < Date.now()) {
+        console.warn('锁已过期，无需释放')
+        return
+    }
+
+    try {
+        await lock.release()
+    } catch (err) {
+        // 捕获可能由于已经释放过导致的报错
+        console.error('解锁失败或锁已被释放:', err.message)
+    }
 }

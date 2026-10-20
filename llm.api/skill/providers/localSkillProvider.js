@@ -9,6 +9,33 @@ import path from 'path'
 import skillParser from '../skillParser.js'
 
 const logger = llm.logger
+const config = llm.config
+
+/**
+ * @description 组装沙箱内执行 skill 所需的入参（抽成纯函数是为了能把"会话透传"这条链测住）
+ * @author xianyang
+ * @param {Object} params 入参
+ * @param {Object} params.skill skill 定义（至少要有 name/path）
+ * @param {Object} params.command 命令定义（至少要有 name）
+ * @param {Object} params.parameters 命令参数
+ * @param {Object} [params.execOptions] 上游透传的执行选项，目前用 conversationCode 做沙箱会话级复用
+ * @param {String} params.scriptText 脚本文本
+ * @param {Object} [params.sandboxConfig] 沙箱配置
+ * @returns {Object} executeSkillInSandbox 的入参
+ */
+export function buildSkillExecArgs(params = {}) {
+    const {skill, command, parameters, execOptions = {}, scriptText, sandboxConfig = {}} = params
+    return {
+        skillName: skill.name,
+        scriptText,
+        commandName: command.name,
+        parameters,
+        /** 能力按配置发放，不给默认全量：没登记的 skill 拿不到任何宿主能力 */
+        caps: sandboxConfig?.skillCaps?.[skill.name] || [],
+        /** 有会话就复用同一个沙箱；没有才临时建箱（避免每次都建、把池吃满） */
+        conversationCode: execOptions.conversationCode || '',
+    }
+}
 
 /**
  * @description Agent Skills 管理器类
@@ -152,23 +179,75 @@ export class LocalSkillProvider {
     }
 
     /**
+     * @description 校验脚本路径未越出 skills 根目录
+     * @param {string} skillName - Skill 名称
+     * @param {string} scriptsPath - 脚本绝对路径
+     * @returns {void}
+     */
+    assertScriptPath(skillName, scriptsPath) {
+        const known = this.skillsIndex.get(skillName)
+        if (!known) {
+            throw new Error(`Skill ${skillName} 未注册，拒绝执行`)
+        }
+        const root = path.resolve(path.join(this.skillsDir, this.skillsSubDir))
+        const target = path.resolve(scriptsPath)
+        if (target !== root && !target.startsWith(root + path.sep)) {
+            throw new Error(`Skill ${skillName} 脚本路径越界: ${target}`)
+        }
+    }
+
+    /**
      * @description 执行指令逻辑
+     *
+     * 两种模式由 `sandboxConfig.skillExecMode` 决定：
+     *   'sandbox'（推荐）：把脚本打包进 OpenSandbox 执行，脚本必须自包含
+     *     （只 import Node 内置模块，宿主能力通过短期 token 回连 /core/skill-host/*）；
+     *   'local'（默认，向后兼容）：仍在进程内 dynamic import。
+     * 两条路径**都先过 assertScriptPath**：未注册即拒、路径越界即拒。沙箱模式不是白名单的替代品，
+     * 它消除的是"模型可控代码进本进程"这一面，而"执行哪个文件"仍然由注册表决定。
      * @param {SkillDefinition} skill - Skill 定义
      * @param {SkillCommand} command - 指令定义
      * @param {Object} parameters - 参数
+     * @param {Object} [execOptions] - 执行选项：{conversationCode}，透传给沙箱做会话级复用
      * @returns {Promise<any>}
      */
-    async executeCommand(skill, command, parameters) {
+    async executeCommand(skill, command, parameters, execOptions = {}) {
+        if (!this.initialized) {
+            await this.initialize()
+        }
+        /*先校验归属与路径，避免越界路径被后续的 ENOENT 分支静默吞掉*/
+        const scriptsPath = path.join(skill.path, 'scripts', 'index.js')
+        this.assertScriptPath(skill.name, scriptsPath)
+        const mode = config.sandboxConfig?.skillExecMode || 'local'
+        if (mode === 'sandbox') {
+            let scriptText = null
+            try {
+                scriptText = await fs.readFile(scriptsPath, 'utf-8')
+            } catch (e) {
+                if (e.code === 'ENOENT') {
+                    /** 与 local 模式一致的兜底语义：没脚本就用默认实现，不让 skill 列表整体炸掉 */
+                    return {
+                        message: `执行了 ${skill.name}.${command.name}`,
+                        parameters,
+                        note: 'Skill 未提供执行脚本，使用默认实现',
+                    }
+                }
+                throw e
+            }
+            const {executeSkillInSandbox} = await import('../../services/sandbox/runner.js')
+            return await executeSkillInSandbox(
+                buildSkillExecArgs({skill, command, parameters, execOptions, scriptText, sandboxConfig: config.sandboxConfig})
+            )
+        }
         try {
-            // 尝试加载 skill 的 scripts/index.js
-            const scriptsPath = path.join(skill.path, 'scripts', 'index.js')
+            // 确认 skill 提供了执行脚本
             await fs.access(scriptsPath)
 
             // 将路径转换为 file:// URL（Windows 兼容）
             const fileUrl = 'file://' + scriptsPath.replace(/\\/g, '/')
 
-            // 动态导入脚本模块
-            const scriptModule = await import(fileUrl + '?t=' + Date.now()) // 添加时间戳避免缓存
+            // 动态导入脚本模块；调试期加时间戳以便改脚本即时生效，生产用稳定地址避免模块实例累积泄漏
+            const scriptModule = await import(config.debug ? `${fileUrl}?t=${Date.now()}` : fileUrl)
 
             if (scriptModule.executeCommand) {
                 // 使用统一的 executeCommand 入口

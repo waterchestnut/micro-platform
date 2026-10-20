@@ -93,11 +93,32 @@ export function getConfiguredChannels() {
 }
 
 /**
- * @description 校验频道是否在配置中定义
+ * @description 校验频道是否存在于配置中
  * @param {string[]} channels 频道列表
- * @returns {string[]} 无效的频道列表
+ * @returns {string[]} 无效频道列表
  */
 export function validateChannels(channels) {
     const configuredChannels = getConfiguredChannels()
     return channels.filter(channel => !configuredChannels.includes(channel))
+}
+
+/** 频道未配置 memory 段时的默认值：全关（memory-plan D2） */
+const DEFAULT_MEMORY = {
+    enabled: false,
+    /** 是否采集原始事件 */
+    capture: false,
+    /** 是否注入召回结果 */
+    recall: false,
+    /** 召回 token 预算，缺省回落 config.memory.recall.tokens */
+    recallTokens: undefined,
+}
+
+/**
+ * @description 取频道生效的记忆配置（频道未配置时返回默认关闭）
+ * @param {String} channel 频道标识
+ * @returns {Object} 合并默认后的频道记忆配置
+ */
+export function getChannelMemory(channel) {
+    const channelConfig = llmChannelDataSet[channel] || {}
+    return {...DEFAULT_MEMORY, ...(channelConfig.memory || {})}
 }

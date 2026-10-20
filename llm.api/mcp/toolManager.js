@@ -92,7 +92,8 @@ export class McpToolManager {
             })
 
         await Promise.all(tasks)
-        this.toolsCache.set(channel, tools)
+        /** 带时间戳存放：MCP 服务端加了工具或改了 schema 时，清单必须能自己过期重取，不能永久陈旧 */
+        this.toolsCache.set(channel, {tools, at: Date.now()})
         logger.info(`频道 ${channel} 缓存了 ${tools.length} 个MCP工具`)
     }
 
@@ -110,7 +111,28 @@ export class McpToolManager {
             }
         }
 
-        return this.toolsCache.get(channel) || []
+        const cached = this.toolsCache.get(channel)
+        const ttl = Number(llm.config.cache?.toolsTtlSeconds ?? 300) * 1000
+        if (cached && (!ttl || Date.now() - cached.at <= ttl)) {
+            return cached.tools
+        }
+        /** 过期或从未取过：重新 listTools，失败则沿用旧值而不是把工具清空 */
+        try {
+            await this.refreshToolsCache(channel)
+        } catch (e) {
+            logger.warn(`刷新频道 ${channel} 的MCP工具清单失败: ${e.message}`)
+            return cached?.tools || []
+        }
+        return this.toolsCache.get(channel)?.tools || []
+    }
+
+    /**
+     * @description 取缓存中的工具数组（不触发刷新），供状态查看使用
+     * @param {string} channel 频道名称
+     * @returns {Array} 工具定义列表
+     */
+    getCachedTools(channel) {
+        return this.toolsCache.get(channel)?.tools || []
     }
 
     /**
@@ -201,7 +223,7 @@ export class McpToolManager {
      * @returns {Object} 状态信息
      */
     getChannelStatus(channel) {
-        const tools = this.toolsCache.get(channel) || []
+        const tools = this.getCachedTools(channel)
         const clientStatuses = mcpClientManager.getAllStatus()
         const channelClients = clientStatuses.filter(status =>
             status.name.startsWith(`${channel}_`)

@@ -39,6 +39,10 @@ export class AnswerCacheDac extends BaseDac {
         if (options.queryHashCode) {
             params.$and.push({queryHashCode: {$eq: options.queryHashCode}})
         }
+        /** 压实任务找"没有过期时刻的存量"，{$eq: null} 同时覆盖缺字段与显式 null */
+        if (options.noExpireAt) {
+            params.$and.push({expireAt: {$eq: null}})
+        }
         return params
     }
 }

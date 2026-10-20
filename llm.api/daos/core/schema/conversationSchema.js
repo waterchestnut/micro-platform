@@ -65,7 +65,7 @@ const conversationSchema = new Schema({
  */
 conversationSchema.index({insertTime: 1})
 conversationSchema.index({updateTime: 1})
-conversationSchema.index({conversationCode: 1})
+conversationSchema.index({conversationCode: 1}, {unique: true})
 conversationSchema.index({'operator.userCode': 1})
 conversationSchema.index({'tags.key': 1})
 conversationSchema.index({'tags.value': 1})
