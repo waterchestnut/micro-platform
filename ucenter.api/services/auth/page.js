@@ -44,6 +44,51 @@ export async function loadPageConfig() {
     })
 }
 
+let loadRetryTimer = null
+let loadRetryTimes = 0
+let isLoading = false
+let pendingReload = false
+
+/**
+ * @description 安全加载路由权限配置，失败时指数退避后台重试，避免数据库不可用（如mongodb重启）时阻塞启动或导致进程异常
+ * @author menglb
+ * @returns {Promise<Boolean>} 本次是否加载成功
+ */
+export async function loadPageConfigSafe() {
+    if (isLoading) {
+        pendingReload = true
+        return false
+    }
+    isLoading = true
+    try {
+        await loadPageConfig()
+        loadRetryTimes = 0
+        return true
+    } catch (err) {
+        logger.error(`Failed to load page config: ${err}`)
+        scheduleLoadRetry()
+        return false
+    } finally {
+        isLoading = false
+        if (pendingReload) {
+            pendingReload = false
+            setImmediate(() => loadPageConfigSafe())
+        }
+    }
+}
+
+function scheduleLoadRetry() {
+    if (loadRetryTimer) return
+    const delay = Math.min(30000, 1000 * 2 ** Math.min(loadRetryTimes++, 5))
+    loadRetryTimer = setTimeout(() => {
+        loadRetryTimer = null
+        loadPageConfigSafe()
+    }, delay)
+    if (typeof loadRetryTimer.unref === 'function') {
+        loadRetryTimer.unref()
+    }
+}
+
 /**
  * @description 匹配页面配置信息
  * @author menglb

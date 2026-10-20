@@ -10,12 +10,13 @@ import {
     getAllStoreModels
 } from './daos/swaggerSchema/mongooseHandler.js'
 import {getAllEnumModels} from './daos/swaggerSchema/enumHandler.js'
-import {loadPageConfig} from './services/auth/page.js'
+import {loadPageConfigSafe} from './services/auth/page.js'
 
 // 加载权限配置
 import './watch/page-config.js'
 
-await loadPageConfig()
+// 加载失败时不再抛出异常阻塞启动，会在后台自动重试
+await loadPageConfigSafe()
 
 
 const __filename = fileURLToPath(import.meta.url)
