@@ -16,7 +16,7 @@ let restartTimes = 0
 startWatch()
 
 // mongodb重连后change stream可能已中断，全量刷新一次配置并重建监听，补齐断连期间丢失的变更
-PageConfig.connection.on('reconnected', () => {
+PageConfig.db.on('reconnected', () => {
     logger.info('MongoDB reconnected, reloading page config and restarting watch')
     loadPageConfigSafe()
     startWatch()
