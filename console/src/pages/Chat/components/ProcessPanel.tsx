@@ -60,7 +60,8 @@ const ProcessPanel = ({process, toolCalls, sources, fromCache}: ProcessPanelProp
       title: `调用工具 ${calls.length} 次`,
       description: process?.iterationCount && process.iterationCount > 1 ? `模型往返 ${process.iterationCount} 轮` : undefined,
       icon: <ThunderboltOutlined/>,
-      status: 'loading',
+      // 工具结果是执行完成后才下发的，没有"进行中"态；按 calls 派生状态，兜住未来的 pending。
+      status: calls.every((c) => c.status === 'done') ? ('success' as const) : ('loading' as const),
       collapsible: true,
       content: (
         <Collapse
