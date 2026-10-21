@@ -37,6 +37,13 @@ const defaultLlmVLConfigKey = process.env['LLM_DEFAULT_VL_CONFIG_KEY'] || 'qwenV
 const defaultChannel = process.env['LLM_DEFAULT_CHANNEL'] || 'micro_common'
 const defaultChannelGroup = 'none'
 
+/** 工具结果进 trace 的截断快照：让历史回放的 ProcessPanel 有内容可看。
+ *  完整留存另走 toolOverflows（预算裁剪时才存），这里只取前 4000 字符。 */
+function clipTraceResult(content, limit = 4000) {
+    const s = typeof content === 'string' ? content : JSON.stringify(content ?? '')
+    return s.length > limit ? s.slice(0, limit) + '...[truncated]' : s
+}
+
 /**
  * @description 执行用户通用聊天
  * @author xianyang
@@ -354,7 +361,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             skills: skillContext ? skillChat.getSkillStats(skillContext) : null,
             contextUsage,
             sources: ragSources,
-            toolCalls: toolCallTrace.map(t => ({id: t.id, name: t.name})),
+            /** 含 result：已在 trace 侧截到 4000 字符，历史回放的 ProcessPanel 靠它显示返回内容 */
+            toolCalls: toolCallTrace.map(t => ({id: t.id, name: t.name, result: t.result})),
             /** 全文留档到上限，超出部分只留量级说明，避免 message 文档无限膨胀 */
             toolOverflows: toolOverflows.map(o => ({
                 ref: o.ref,
@@ -578,21 +586,12 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                             : ret),
                     }
                 }))
-                if (memoryCalls.length) {
-                    toolCallTrace.push(...memoryCalls.map(tc => ({id: tc.id, name: tc.function?.name})))
-                }
                 /** 模型生成的代码只进沙箱；内部异常一律转成工具结果，不打断工具循环 */
                 const codeResults = await Promise.all(codeCalls.map(toolCall =>
                     executeCodeTool({
                         toolCall,
                         context: {conversationCode, userCode: curUserInfo?.userCode, channel},
                     })))
-                if (codeCalls.length) {
-                    toolCallTrace.push(...codeCalls.map(tc => ({id: tc.id, name: tc.function?.name})))
-                }
-                if (overflowCalls.length) {
-                    toolCallTrace.push(...overflowCalls.map(tc => ({id: tc.id, name: OVERFLOW_TOOL_NAME})))
-                }
 
                 // 执行工具调用（区分 MCP 工具和 Skill 工具）
                 const otherResults = otherCalls.length
@@ -619,7 +618,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                      */
                     if (isOverflowTool(toolName)) {
                         messages.push(toolResult)
-                        toolCallTrace.push({id: toolResult.tool_call_id, name: toolName})
+                        toolCallTrace.push({id: toolResult.tool_call_id, name: toolName, result: clipTraceResult(toolResult.content)})
                         continue
                     }
                     /**
@@ -645,7 +644,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                         logger.info(`工具结果已裁剪 ${toolName || '-'}: ${cut.originalTokens} → ${cut.keptTokens} tokens`)
                     }
                     messages.push(cut.message)
-                    toolCallTrace.push({id: toolResult.tool_call_id, name: toolName})
+                    toolCallTrace.push({id: toolResult.tool_call_id, name: toolName, result: clipTraceResult(toolResult.content)})
 
                     /*协议 1 的旧客户端会把 data.content 无条件拼进答案，因此仅在协议 2 或显式开启时下发*/
                     if (emitToolResults && options.streamCallback) {

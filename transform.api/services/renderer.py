@@ -18,7 +18,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib import rcParams  # noqa: E402
 import matplotlib.animation as animation  # noqa: E402
-from matplotlib.patches import Rectangle, Polygon, FancyArrowPatch  # noqa: E402
+from matplotlib.patches import Rectangle, Polygon, FancyArrowPatch, FancyBboxPatch, Arc  # noqa: E402
 from matplotlib.transforms import Affine2D  # noqa: E402
 
 try:
@@ -27,8 +27,9 @@ try:
 except Exception:  # 退化为 PATH 中的 ffmpeg
     pass
 
-rcParams['font.family'] = 'DejaVu Sans'
+rcParams['font.family'] = ['DejaVu Sans', 'Noto Sans CJK SC', 'Noto Sans SC', 'Microsoft YaHei', 'SimHei', 'PingFang SC']
 rcParams['axes.unicode_minus'] = False
+logging.getLogger('matplotlib.font_manager').setLevel(logging.ERROR)
 
 INK = '#1F2937'
 GRID = '#E5E7EB'
@@ -423,6 +424,313 @@ def reaction(ax, p, color, dur, fps):
         return [lA, lB, mark]
 
     return animation.FuncAnimation(fig_ref(ax), update, frames=frames, interval=1000 // fps, blit=False)
+
+
+# ---------------- 通用帧序列 custom ----------------
+
+CUSTOM_MAX_FRAMES = 6
+CUSTOM_MAX_ELS = 14
+_PATH_D_RE = re.compile(r'^[MLQCZmlqcz\s\d.\-,]+$')
+
+
+def _set_artist_alpha(artist, alpha):
+    try:
+        artist.set_alpha(alpha)
+    except Exception:
+        pass
+    patch = getattr(artist, 'arrow_patch', None)
+    if patch is not None:
+        try:
+            patch.set_alpha(alpha)
+        except Exception:
+            pass
+
+
+def _clean_color(v):
+    v = str(v or '').strip()
+    if re.match(r'^#[0-9a-fA-F]{3,8}$', v):
+        return v
+    if re.match(r'^rgba?\([\d.,\s]+\)$', v):
+        return v
+    return None
+
+
+def _clean_fill(v):
+    if v in (None, '', 'none'):
+        return None
+    return _clean_color(v)
+
+
+def _num(v, lo=0.0, hi=100.0):
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    if x != x:
+        return None
+    return max(lo, min(hi, x))
+
+
+def _svg_path_to_mpl(d):
+    """SVG path 子集（M/L/Q/C/Z，绝对坐标）→ matplotlib (verts, codes)"""
+    try:
+        tokens = re.findall(r'[MLQCZ]|-?\d*\.?\d+', d.upper())
+    except Exception:
+        return None
+    items = []
+    for t in tokens:
+        if t in ('M', 'L', 'Q', 'C', 'Z'):
+            items.append(t)
+        else:
+            try:
+                items.append(float(t))
+            except ValueError:
+                return None
+    from matplotlib.path import Path as MplPath
+    verts, codes = [], []
+    i = 0
+    cur = None
+
+    def take(n):
+        nonlocal i
+        vals = items[i:i + n]
+        if len(vals) != n or any(isinstance(v, str) for v in vals):
+            return None
+        i += n
+        return vals
+
+    while i < len(items):
+        it = items[i]
+        if isinstance(it, str):
+            cur = it
+            i += 1
+        if cur == 'Z':
+            if verts:
+                verts.append(verts[0])
+                codes.append(MplPath.CLOSEPOLY)
+            cur = None
+            continue
+        if cur is None:
+            return None
+        if cur == 'M':
+            v = take(2)
+            if not v:
+                return None
+            verts.append((v[0], v[1]))
+            codes.append(MplPath.MOVETO if not codes else MplPath.LINETO)
+            cur = 'L'
+        elif cur == 'L':
+            v = take(2)
+            if not v:
+                return None
+            verts.append((v[0], v[1]))
+            codes.append(MplPath.LINETO)
+        elif cur == 'Q':
+            v = take(4)
+            if not v:
+                return None
+            verts += [(v[0], v[1]), (v[2], v[3])]
+            codes += [MplPath.CURVE3, MplPath.CURVE3]
+        elif cur == 'C':
+            v = take(6)
+            if not v:
+                return None
+            verts += [(v[0], v[1]), (v[2], v[3]), (v[4], v[5])]
+            codes += [MplPath.CURVE4, MplPath.CURVE4, MplPath.CURVE4]
+        else:
+            return None
+    if len(verts) < 2:
+        return None
+    return verts, codes
+
+
+def _clean_element(e):
+    if not isinstance(e, dict):
+        return None
+    t = e.get('type')
+    color = _clean_color(e.get('color'))
+    fill = _clean_fill(e.get('fill'))
+    if t == 'line':
+        f = e.get('from')
+        to = e.get('to')
+        if not (isinstance(f, list) and len(f) == 2 and isinstance(to, list) and len(to) == 2):
+            return None
+        x1, y1, x2, y2 = _num(f[0]), _num(f[1]), _num(to[0]), _num(to[1])
+        if None in (x1, y1, x2, y2):
+            return None
+        return {'type': 'line', 'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2,
+                'arrow': bool(e.get('arrow')), 'dashed': e.get('style') == 'dashed', 'color': color or INK}
+    if t == 'rect':
+        x, y = _num(e.get('x')), _num(e.get('y'))
+        w, h = _num(e.get('w'), 0, 100), _num(e.get('h'), 0, 100)
+        if None in (x, y, w, h):
+            return None
+        w, h = min(w, 100 - x), min(h, 100 - y)
+        if w < 1 or h < 1:
+            return None
+        return {'type': 'rect', 'x': x, 'y': y, 'w': w, 'h': h,
+                'rx': _num(e.get('rx'), 0, 10) or 0, 'fill': fill, 'color': color or INK}
+    if t == 'circle':
+        cx, cy, r = _num(e.get('cx')), _num(e.get('cy')), _num(e.get('r'), 0.5, 50)
+        if None in (cx, cy, r):
+            return None
+        return {'type': 'circle', 'cx': cx, 'cy': cy, 'r': r, 'fill': fill, 'color': color or INK}
+    if t == 'arc':
+        cx, cy, r = _num(e.get('cx')), _num(e.get('cy')), _num(e.get('r'), 0.5, 50)
+        a1, a2 = _num(e.get('a1'), -360, 360), _num(e.get('a2'), -360, 360)
+        if None in (cx, cy, r, a1, a2):
+            return None
+        return {'type': 'arc', 'cx': cx, 'cy': cy, 'r': r, 'a1': a1, 'a2': a2, 'color': color or INK}
+    if t == 'text':
+        s = normalize_math_step(str(e.get('s') or ''))[:48]
+        x, y = _num(e.get('x')), _num(e.get('y'))
+        if not s or None in (x, y):
+            return None
+        size = _num(e.get('size'), 1, 10) or 4
+        return {'type': 'text', 'x': x, 'y': y, 's': s, 'size': size, 'color': color or INK}
+    if t == 'path':
+        d = str(e.get('d') or '').strip()
+        if not d or len(d) > 400 or not _PATH_D_RE.match(d):
+            return None
+        parsed = _svg_path_to_mpl(d)
+        if not parsed:
+            return None
+        return {'type': 'path', 'verts': parsed[0], 'codes': parsed[1], 'fill': fill, 'color': color or INK}
+    if t == 'poly':
+        pts = e.get('points')
+        if not isinstance(pts, list) or len(pts) < 3 or len(pts) > 20:
+            return None
+        cl = []
+        for pt in pts:
+            if not (isinstance(pt, list) and len(pt) == 2):
+                return None
+            x, y = _num(pt[0]), _num(pt[1])
+            if None in (x, y):
+                return None
+            cl.append((x, y))
+        return {'type': 'poly', 'points': cl, 'fill': fill, 'color': color or INK}
+    return None
+
+
+def _clean_custom(params):
+    if not isinstance(params, dict):
+        return None
+    raw = params.get('frames')
+    if not isinstance(raw, list) or len(raw) < 2:
+        return None
+    frames = []
+    for f in raw[:CUSTOM_MAX_FRAMES]:
+        if not isinstance(f, dict):
+            return None
+        els = f.get('elements') if isinstance(f.get('elements'), list) else []
+        clean_els = []
+        for e in els[:CUSTOM_MAX_ELS]:
+            c = _clean_element(e)
+            if c:
+                clean_els.append(c)
+        if not clean_els:
+            return None
+        frames.append({'caption': str(f.get('caption') or '')[:24], 'static': bool(f.get('static')), 'elements': clean_els})
+    return frames if len(frames) >= 2 else None
+
+
+@template
+def custom(ax, p, color, dur, fps):
+    from matplotlib.path import Path as MplPath
+    from matplotlib.patches import PathPatch
+    frames = _clean_custom(p)
+    if not frames:
+        raise RenderError('custom demo requires frames: 2~%d 帧，每帧 elements 1~%d 个图元' % (CUSTOM_MAX_FRAMES, CUSTOM_MAX_ELS))
+    ax.set_xlim(0, 10)
+    ax.set_ylim(0, 6)
+    title = str(p.get('title') or '')[:20]
+    if title:
+        ax.text(0.3, 5.72, title, color=INK, fontsize=13, va='center', fontweight='bold')
+    cax = fig_ref(ax).add_axes([0.04, 0.17, 0.92, 0.72])
+    cax.set_xlim(0, 100)
+    cax.set_ylim(100, 0)
+    cax.set_aspect('equal', adjustable='box')
+    cax.axis('off')
+
+    def add_els(els):
+        artists = []
+        for e in els:
+            t = e['type']
+            if t == 'line':
+                if e['arrow']:
+                    a = cax.annotate('', xy=(e['x2'], e['y2']), xytext=(e['x1'], e['y1']),
+                                     arrowprops=dict(arrowstyle='-|>', color=e['color'], lw=1.6,
+                                                     shrinkA=0, shrinkB=0, linestyle='--' if e['dashed'] else '-'))
+                else:
+                    a, = cax.plot([e['x1'], e['x2']], [e['y1'], e['y2']], color=e['color'], lw=1.6,
+                                  linestyle='--' if e['dashed'] else '-')
+                artists.append(a)
+            elif t == 'rect':
+                box = FancyBboxPatch((e['x'], e['y']), e['w'], e['h'],
+                                     boxstyle='round,pad=0,rounding_size=%s' % max(0.01, e['rx']),
+                                     facecolor=e['fill'] or 'none', edgecolor=e['color'], lw=1.4)
+                cax.add_patch(box)
+                artists.append(box)
+            elif t == 'circle':
+                cir = plt.Circle((e['cx'], e['cy']), e['r'], facecolor=e['fill'] or 'none',
+                                 edgecolor=e['color'], lw=1.4)
+                cax.add_patch(cir)
+                artists.append(cir)
+            elif t == 'arc':
+                arc = Arc((e['cx'], e['cy']), e['r'] * 2, e['r'] * 2, theta1=min(e['a1'], e['a2']),
+                          theta2=max(e['a1'], e['a2']), edgecolor=e['color'], lw=1.4)
+                cax.add_patch(arc)
+                artists.append(arc)
+            elif t == 'text':
+                txt = cax.text(e['x'], e['y'], e['s'], color=e['color'],
+                               fontsize=6 + e['size'] * 1.5, ha='center', va='center')
+                artists.append(txt)
+            elif t == 'path':
+                pp = PathPatch(MplPath(e['verts'], e['codes']), facecolor=e['fill'] or 'none',
+                               edgecolor=e['color'], lw=1.4)
+                cax.add_patch(pp)
+                artists.append(pp)
+            elif t == 'poly':
+                pg = plt.Polygon(e['points'], closed=True, facecolor=e['fill'] or 'none',
+                                 edgecolor=e['color'], lw=1.4)
+                cax.add_patch(pg)
+                artists.append(pg)
+        return artists
+
+    frame_artists = []
+    for f in frames:
+        arts = add_els(f['elements'])
+        for a in arts:
+            _set_artist_alpha(a, 0)
+        frame_artists.append((arts, f['static']))
+    static_always = []
+    moving = []
+    for fi, (arts, is_static) in enumerate(frame_artists):
+        if is_static:
+            static_always.extend(arts)
+        else:
+            moving.append((fi, arts))
+    for a in static_always:
+        _set_artist_alpha(a, 1)
+
+    n = len(frames)
+    total = max(n * 6, int(dur * fps))
+    seg = total / n
+    caption = ax.text(5, 0.42, '', color=INK, fontsize=11.5, ha='center', va='center')
+    dots = [ax.plot(5 - (n - 1) * 0.35 + i * 0.7, 0.95, 'o', ms=5,
+                    color=color if i == 0 else '#C7CBD4')[0] for i in range(n)]
+
+    def update(i):
+        cur = min(n - 1, int(i // seg))
+        for fi, arts in moving:
+            for a in arts:
+                _set_artist_alpha(a, 1 if fi == cur else 0)
+        caption.set_text('%d/%d %s' % (cur + 1, n, frames[cur]['caption']))
+        for di, dot in enumerate(dots):
+            dot.set_color(color if di == cur else '#C7CBD4')
+        return []
+
+    return animation.FuncAnimation(fig_ref(ax), update, frames=total, interval=1000 // fps, blit=False)
 
 
 def fig_ref(ax):
