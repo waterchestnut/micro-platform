@@ -14,6 +14,7 @@ micro-platform/
 ├── rag.console/                # 知识库控制台
 ├── statistic.console/          # 日志统计控制台
 ├── pdfviewer.console/          # 文献解读器
+├── fileviewer.console/         # 通用文件预览（docx/pptx/xlsx/pdf/图片，纯前端）
 │
 ├── llm.api/                    # 大模型服务 (Node.js Fastify)
 ├── ucenter.api/                # 用户与授权服务 (Node.js Fastify)
