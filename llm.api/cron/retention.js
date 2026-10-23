@@ -1,5 +1,5 @@
 /**
- * @fileOverview 数据留存/压实定时进程（独立进程模式，参照 xxzx.callin.api/src/cron）
+ * @fileOverview 数据留存/压实定时进程（独立进程模式）
  * @module cron/retention
  * @description 为什么独立进程：API 进程里挂 cron（fastify 插件）会让每个副本都注册同一任务，
  * 靠 redis 锁去重只是不出错，不是架构——发布重启会打断长任务、任务耗时反压 API 的

@@ -1,6 +1,6 @@
 # fileviewer.console
 
-通用文件在线预览控制台（从 xxzx 产品线迁移）。基于 Vue 3 + Vite + TypeScript，用 `@flyfish-group/file-viewer3` 纯前端渲染，支持 docx/pptx/xlsx/pdf/图片等常见办公与文档格式。
+通用文件在线预览控制台。基于 Vue 3 + Vite + TypeScript，用 `@flyfish-group/file-viewer3` 纯前端渲染，支持 docx/pptx/xlsx/pdf/图片等常见办公与文档格式。
 
 与 `pdfviewer.console` 的分工：pdfviewer 是带 AI 解读的文献阅读器；fileviewer 是轻量的通用格式预览器（无后端转换依赖）。
 
