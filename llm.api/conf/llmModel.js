@@ -189,3 +189,21 @@ export function resolveModelKey(key, fallbackKey = defaultModelKey) {
 export function getModelConfig(key, fallbackKey = defaultModelKey) {
     return relayModels[resolveModelKey(key, fallbackKey)]
 }
+
+/**
+ * @description 按「请求 > 频道声明 > 全局默认」选定本次档位
+ * @author xianyang
+ * @param {Object} params 选择参数
+ * @param {String} [params.llmModel] 请求显式指定的模型名（历史供应商名会自动归一到档位）
+ * @param {Object} [params.channelConfig] 频道配置项（conf/llmChannel.js 的一个频道，可声明 model / visionModel）
+ * @param {Boolean} [params.hasInputs] 本次是否带多模态输入（图片等）
+ * @returns {String} 一定存在于 relayModels 的档位 key
+ * @description 带图时绝不采用频道声明的文本档（否则图片会被喂给不支持视觉的模型），
+ * 只认频道单独的 visionModel 或请求显式指定的档位；声明的档位拼错时回落全局默认，
+ * 由 test/conf/llmChannelModels.test.js 在 CI 里拦住。
+ */
+export function pickModelKey({llmModel, channelConfig = {}, hasInputs = false} = {}) {
+    const declared = hasInputs ? channelConfig.visionModel : channelConfig.model
+    const fallback = hasInputs ? defaultVisionModelKey : defaultModelKey
+    return resolveModelKey(llmModel || declared, fallback)
+}

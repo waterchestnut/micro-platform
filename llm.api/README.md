@@ -105,9 +105,23 @@ LLM_DEFAULT_CONFIG_KEY=relay_common_pro       # 全局默认档位
 LLM_DEFAULT_VL_CONFIG_KEY=relay_qwen_vl_pro   # 带图默认档位
 ```
 
-调用侧（`POST /core/chat/*` 的 `options.llmModel`、agent 任务的 `params.llmModel`）取档位的**优先级**：
-请求指定的 `llmModel` > 频道在 `conf/llmChannel.js` 里声明的 `model` > 全局默认（带图自动走视觉档）。
+调用侧（`POST /core/chat/*` 的 `options.llmModel`、agent 任务的 `params.llmParams/llmModel`）取档位的**优先级**：
 
+```
+请求显式 llmModel  >  频道声明（文本看 model，带图只看 visionModel）  >  全局默认
+```
+
+频道档位写在 `conf/llmChannel.js`，当前分工：
+
+| 频道 | model（文本） | visionModel（带图） | 理由 |
+|---|---|---|---|
+| `micro_common` | `relay_common_pro` | `relay_qwen_vl_pro` | 入口频道，MCP/Skills/工具链最重；要压成本可整体改 `relay_common_flash` |
+| `pdfviewer_literature` | `relay_common_pro` | `relay_qwen_vl_pro` | 整篇文献 + 检索段吃窗口，必须 Pro 档 |
+| `code_assistant` | `relay_qwen_pro` | `relay_qwen_vl_pro` | 代码生成/审查用千问族 Pro，指令遵循与长输出更稳 |
+
+- 带图请求**不会**落到频道声明的文本档（只认 `visionModel`，没声明则走全局视觉默认），避免把图片喂给不支持视觉的模型；
+- 声明写错（档位不存在、`visionModel` 不是视觉族）由 `test/conf/llmChannelModels.test.js` 在 CI 拦住，
+  运行期则由 `pickModelKey()` 回落全局默认而不是报错；
 - 历史模型名（`qwenPlus`、`qwenVLPlus`、`deepseek31`、`qwen3xin`、`doubao16`、`kimik2`、`hunyuanLarge`）仍可用：
   `resolveModelKey()` 会归一到对应档位，库里存的旧 `llmModel` 值也照常可查；
 - 换后端供应商、加新模型只改中转站的渠道与 `relay_*_model`，本服务代码与 `.env` 结构都不动；
