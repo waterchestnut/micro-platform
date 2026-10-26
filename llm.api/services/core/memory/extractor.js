@@ -8,6 +8,7 @@
 
 import {OpenAI} from 'openai'
 import {buildExtractMessages, parseExtractResult} from './extract.js'
+import {resolveModelKey} from '../../../conf/llmModel.js'
 
 const config = llm.config
 const logger = llm.logger
@@ -21,7 +22,8 @@ function getClient(modelKey) {
     if (clientCache.has(modelKey)) {
         return clientCache.get(modelKey)
     }
-    const cfg = config.models?.[modelKey]
+    /** 历史供应商名归一到「族×档」；未知 key 保持原值，让下面的报错仍然指向调用方传的名字 */
+    const cfg = config.models?.[resolveModelKey(modelKey, modelKey)]
     if (!cfg) {
         throw new Error(`记忆抽取模型配置不存在: ${modelKey}`)
     }
@@ -42,7 +44,7 @@ function getClient(modelKey) {
  * @returns {Object} create 参数
  */
 export function buildExtractBody(modelKey, messages) {
-    const cfg = config.models?.[modelKey] || {}
+    const cfg = config.models?.[resolveModelKey(modelKey, modelKey)] || {}
     const ecfg = config.memory?.extract || {}
     const body = {
         model: cfg.model,

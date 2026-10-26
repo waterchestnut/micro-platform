@@ -7,6 +7,7 @@ import BaseHandler from './base.js'
 import {OpenAI} from 'openai'
 import {addAgentLog} from '../../core/agentLog.js'
 import {updateAgentTaskWithLock} from '../../core/agentTask.js'
+import {resolveModelKey} from '../../../conf/llmModel.js'
 
 const tools = llm.tools
 const logger = llm.logger
@@ -19,7 +20,16 @@ class LlmChat extends BaseHandler {
     }
 
     async exec(agentTaskInfo) {
-        let llmConfig = configModels[agentTaskInfo.params.llmModel]
+        /**
+         * 任务参数里的模型名先归一到「族×档」：留空或仍是历史供应商名（qwenPlus 等）时落到对应档位，
+         * 不让一条已在队列里的任务因为模型改名而整条失败。
+         */
+        const givenModel = agentTaskInfo.params.llmModel
+        const modelKey = resolveModelKey(givenModel)
+        if (givenModel && givenModel !== modelKey) {
+            logger().warn(`agent 任务模型名 ${givenModel} 归一到档位 ${modelKey}`)
+        }
+        const llmConfig = configModels[modelKey]
         const openai = new OpenAI({
             apiKey: llmConfig.apiKey,
             baseURL: llmConfig.baseURL,

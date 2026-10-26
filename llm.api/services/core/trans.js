@@ -10,7 +10,8 @@ import retSchema from '../../daos/retSchema.js'
 const tools = llm.tools
 const logger = llm.logger
 const config = llm.config
-const llmConfig = config.models.deepseek31
+/** 文本翻译：常规档够用（中转站通用族 Flash） */
+const llmConfig = config.models.relay_common_flash
 
 /**
  * @description 检测文本是否为非中文，若是则翻译为简体中文，返回整段翻译和逐句翻译
@@ -158,7 +159,8 @@ export async function pictureTrans(imgUrl, options = {}) {
         }
     }
 
-    let llmConfig = config.models.qwenVLPlus
+    /** 图片 OCR + 翻译：视觉族 Pro（视觉模型里要认字，给足窗口） */
+    let llmConfig = config.models.relay_qwen_vl_pro
     const openai = new OpenAI({
         apiKey: llmConfig.apiKey,
         baseURL: llmConfig.baseURL,

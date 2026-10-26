@@ -8,6 +8,7 @@ import {OpenAI} from 'openai'
 import retSchema from '../../daos/retSchema.js'
 import conversationDac from '../../daos/core/dac/conversationDac.js'
 import llmChannelDataSet, {getChannelMemory} from '../../conf/llmChannel.js'
+import {resolveModelKey} from '../../conf/llmModel.js'
 import tmplParse from 'json-templates'
 import {llmRagSearch} from '../../grpc/clients/resourceRag.js'
 import messageDac from '../../daos/core/dac/messageDac.js'
@@ -32,8 +33,9 @@ import {resolveMemory, safeWorkspaceId} from './memory/policy.js'
 const tools = llm.tools
 const logger = llm.logger
 const config = llm.config
-const defaultLlmConfigKey = process.env['LLM_DEFAULT_CONFIG_KEY'] || 'qwenPlus'
-const defaultLlmVLConfigKey = process.env['LLM_DEFAULT_VL_CONFIG_KEY'] || 'qwenVLPlus'
+/** 全局默认档位：文本走 relay_common_pro，带图走视觉档（可被频道 model 或请求 llmModel 覆盖） */
+const defaultLlmConfigKey = process.env['LLM_DEFAULT_CONFIG_KEY'] || 'relay_common_pro'
+const defaultLlmVLConfigKey = process.env['LLM_DEFAULT_VL_CONFIG_KEY'] || 'relay_qwen_vl_pro'
 const defaultChannel = process.env['LLM_DEFAULT_CHANNEL'] || 'micro_common'
 const defaultChannelGroup = 'none'
 
@@ -68,15 +70,19 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     return 'done'*/
 
     let defaultKey = options?.inputs?.length ? defaultLlmVLConfigKey : defaultLlmConfigKey
-    const llmConfig = config.models[options.llmModel] || config.models[defaultKey]
     const channel = options.channel || defaultChannel
     const channelGroup = options.channelGroup || defaultChannelGroup
     const llmChannelData = llmChannelDataSet[channel] || {}
+    /**
+     * 档位优先级：请求的 llmModel > 频道在 conf/llmChannel.js 里声明的 model > 本次默认
+     * （带图默认走视觉档）；历史供应商名由 resolveModelKey 归一到对应档位。
+     */
+    const llmModel = resolveModelKey(options.llmModel || llmChannelData.model, defaultKey)
+    const llmConfig = config.models[llmModel]
     /** 频道灰度与请求级逃生门在入口一次性合成，下游召回/采集/工具读同一份，避免各处漏判 */
     const channelMemory = resolveMemory(getChannelMemory(channel), options.memory)
     /** PR-16 ③：工作区分区（严格隔离）。schema 已挡非法形态，这里二次防御；缺省 null=全局分区=现状 */
     const memoryWorkspace = safeWorkspaceId(options?.memory?.workspaceId)
-    const llmModel = options.llmModel || defaultKey
     const tokenizerOptions = getTokenizerOptions(llmConfig)
     /** 本仓 models 表未配 contextWindow 时预算取 Infinity（不裁剪，等于迁移前行为）；配了即自动生效 */
     const contextBudget = llmConfig?.contextWindow

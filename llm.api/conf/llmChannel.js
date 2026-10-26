@@ -2,6 +2,10 @@
  * @fileOverview 大模型对话频道的设置
  * @author xianyang
  * @module
+ *
+ * 频道可选字段 model：该频道的默认档位（值取 conf/llmModel.js 里的 relay_<族>_<档>）。
+ * 档位优先级为「请求的 llmModel > 频道 model > 全局默认（文本 relay_common_pro / 带图 relay_qwen_vl_pro）」，
+ * 这样重活（长文、代码）与轻活（摘要、清洗）可以按频道分档，不必每处都传模型名。
  */
 
 const llmChannelDataSet = {

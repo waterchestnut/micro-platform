@@ -3,6 +3,8 @@
  * @module conf/system.config
  */
 import dotenv from 'dotenv'
+import {relayModels, legacyModelAliases} from './llmModel.js'
+
 // Read the .env file
 dotenv.config()
 
@@ -116,8 +118,8 @@ export default {
         store: process.env['memory_store'] || 'mongoLexical',
         /** 抽取用模型与预算，与主聊天完全隔离；走 Kafka 异步，不占聊天延迟 */
         extract: {
-            model: process.env['memory_extract_model'] || 'qwen3xin',
-            fallbackModel: process.env['memory_extract_fallbackModel'] || 'deepseek31',
+            model: process.env['memory_extract_model'] || 'relay_common_flash',
+            fallbackModel: process.env['memory_extract_fallbackModel'] || 'relay_common_low',
             maxTokens: parseInt(process.env['memory_extract_maxTokens'] || 2048),
             timeoutMs: parseInt(process.env['memory_extract_timeoutMs'] || 60000),
             maxRetries: parseInt(process.env['memory_extract_maxRetries'] || 2),
@@ -215,6 +217,8 @@ export default {
         slackTokens: parseInt(process.env['context_slackTokens'] || 4096),
         /** 历史回放的默认最大轮次 */
         historyMaxTurns: parseInt(process.env['context_historyMaxTurns'] || 10),
+        /** 会话预览/摘要用的档位（memory.api 生成预览文本时取这一档，不跟用户所选档位走） */
+        previewModel: process.env['context_previewModel'] || 'relay_common_pro',
     },
     /**
      * 会话执行检查点（PR-9）：默认关闭。
@@ -305,90 +309,12 @@ export default {
         maxSecondsPerSandbox: parseInt(process.env['sandboxQuota_maxSecondsPerSandbox'] || 3600),
         pricePerSecond: parseFloat(process.env['sandboxQuota_pricePerSecond'] || '0.0002'),
     },
-    /** 执行大模型调用的模型配置 */
+    /** 执行大模型调用的模型配置：中转站「族 × 档」+ 历史别名（定义见 conf/llmModel.js） */
     models: {
-        /** 本地部署的通义千问3 */
-        qwen3xin: {
-            /** openai兼容的接口基地址 */
-            baseURL: process.env['LLM_QWEN3XIN_URI'],
-            /** openai兼容的接口key */
-            apiKey: process.env['LLM_QWEN3XIN_APIKEY'],
-            model: process.env['LLM_QWEN3XIN_MODEL'],
-            maxTokens: 8192,
-            temperature: 0.7,
-            stream: false
-        },
-        /** 豆包1.6 */
-        doubao16: {
-            /** openai兼容的接口基地址 */
-            baseURL: process.env['LLM_DOUBAO16_URI'],
-            /** openai兼容的接口key */
-            apiKey: process.env['LLM_DOUBAO16_APIKEY'],
-            model: process.env['LLM_DOUBAO16_MODEL'],
-            maxTokens: 32768,
-            temperature: 0.7,
-            stream: false,
-            enableThinking: {thinking: {type: 'enabled'}}
-        },
-        /** deepseekV3.1 */
-        deepseek31: {
-            /** openai兼容的接口基地址 */
-            baseURL: process.env['LLM_DEEPSEEK31_URI'],
-            /** openai兼容的接口key */
-            apiKey: process.env['LLM_DEEPSEEK31_APIKEY'],
-            model: process.env['LLM_DEEPSEEK31_MODEL'],
-            maxTokens: 32768,
-            temperature: 0.7,
-            stream: false,
-            enableThinking: {thinking: {type: 'enabled'}}
-        },
-        /** kimi-k2 */
-        kimik2: {
-            /** openai兼容的接口基地址 */
-            baseURL: process.env['LLM_KIMIK2_URI'],
-            /** openai兼容的接口key */
-            apiKey: process.env['LLM_KIMIK2_APIKEY'],
-            model: process.env['LLM_KIMIK2_MODEL'],
-            maxTokens: 32768,
-            temperature: 0.7,
-            stream: false,
-            enableThinking: {thinking: {type: 'enabled'}}
-        },
-        /** 百炼平台的通义千问3 */
-        qwenPlus: {
-            /** openai兼容的接口基地址 */
-            baseURL: process.env['LLM_QWENPLUS_URI'],
-            /** openai兼容的接口key */
-            apiKey: process.env['LLM_QWENPLUS_APIKEY'],
-            model: process.env['LLM_QWENPLUS_MODEL'],
-            maxTokens: 60000,
-            temperature: 0.7,
-            stream: false,
-            enableThinking: {enable_thinking: true}
-        },
-        /** 百炼平台的通义千问3视觉模型 */
-        qwenVLPlus: {
-            /** openai兼容的接口基地址 */
-            baseURL: process.env['LLM_QWENVLPLUS_URI'],
-            /** openai兼容的接口key */
-            apiKey: process.env['LLM_QWENVLPLUS_APIKEY'],
-            model: process.env['LLM_QWENVLPLUS_MODEL'],
-            maxTokens: 60000,
-            temperature: 0.7,
-            stream: false,
-            enableThinking: {enable_thinking: true}
-        },
-        /** 腾讯云平台的混元大模型 */
-        hunyuanLarge: {
-            /** openai兼容的接口基地址 */
-            baseURL: process.env['LLM_HUNYUANLARGE_URI'],
-            /** openai兼容的接口key */
-            apiKey: process.env['LLM_HUNYUANLARGE_APIKEY'],
-            model: process.env['LLM_HUNYUANLARGE_MODEL'],
-            maxTokens: 32768,
-            temperature: 0.7,
-            stream: false
-        },
+        /** 12 个档位：relay_<族>_<档>，族 common/qwen/deepseek/qwen_vl，档 pro/flash/low */
+        ...relayModels,
+        /** 历史供应商名（qwenPlus、deepseek31 …）指向对应档位，老调用方与库里老数据不用改 */
+        ...Object.fromEntries(Object.entries(legacyModelAliases).map(([legacy, target]) => [legacy, relayModels[target]])),
     },
     /** 资源服务的配置 */
     resourceConfig: {
