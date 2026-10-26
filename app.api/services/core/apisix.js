@@ -14,12 +14,29 @@ const config = app.config
 const apisixConfig = config.apisixConfig
 
 /**
+ * @description 判断本实例是否该维护该 clientCode 的路由（共享 APISIX 时按前缀分工，避免互相覆盖 upstreams/CORS）
+ * @param {String} clientCode 应用标识
+ * @returns {Boolean} true = 由本实例推送
+ */
+function ownsRoute(clientCode) {
+    const prefixes = apisixConfig.routePrefixes
+    if (!prefixes?.length) {
+        return true
+    }
+    return prefixes.some(prefix => clientCode === prefix || clientCode.startsWith(`${prefix}-`))
+}
+
+/**
  * @description 更新应用的路由
  * @author xianyang
  * @param {String} clientCode 应用标识
  * @returns {Promise<Boolean>} 更新是否成功
  */
 export async function updateApisixRoute(clientCode) {
+    if (!ownsRoute(clientCode)) {
+        logger.info(`跳过路由推送：clientCode ${clientCode} 不在本实例负责的前缀 [${apisixConfig.routePrefixes.join(',')}] 内`)
+        return false
+    }
     let clientInfo = await clientDac.getByCode(clientCode)
     if (!clientInfo?.upstreams?.length) {
         return false

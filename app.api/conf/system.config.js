@@ -89,5 +89,12 @@ export default {
         authUpstream: process.env['APISIX_UCENTER_UPSTREAM'],
         /** CORS允许的源正则表达式列表 */
         allowOriginsRegex: process.env['APISIX_CORS_REGEX'].split(','),
+        /**
+         * 本实例只维护这些前缀的 clientCode 路由（共享同一个 APISIX 时防止覆盖别处的路由），逗号分隔；
+         * 留空 = 维护全部路由。例：只让业务侧注册 cw2pc-* 时填 APISIX_ROUTE_PREFIXES=cw2pc
+         */
+        routePrefixes: process.env['APISIX_ROUTE_PREFIXES']
+            ? process.env['APISIX_ROUTE_PREFIXES'].split(',').map(s => s.trim()).filter(Boolean)
+            : [],
     },
 }
