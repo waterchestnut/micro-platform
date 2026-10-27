@@ -31,6 +31,10 @@ export async function execAgentTask(agentTaskInfo, grpcHost, chunkCallback) {
             if (response.logExt) {
                 logExt = JSON.parse(response.logExt)
             }
+            /*兼容旧版uint32协议：服务端-1会被溢出编码为4294967295，归一化为-1，保证落库与父任务聚合判错正确*/
+            if (response.handleStatus === 4294967295) {
+                response.handleStatus = -1
+            }
             handleStatus = response.handleStatus
             chunkCallback({...response, handleRet, logExt})
         })

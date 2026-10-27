@@ -23,7 +23,7 @@ message execAgentTaskRequest {
 }
 
 message execAgentTaskResponse {
-  uint32 handleStatus = 1;
+  int32 handleStatus = 1;
   string logContent = 2;
   string logGroup = 3;
   string handleRet = 4;

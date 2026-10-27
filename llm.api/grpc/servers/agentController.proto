@@ -35,7 +35,7 @@ message triggerAgentTaskRequest {
 }
 
 message triggerAgentTaskResponse {
-  uint32 handleStatus = 1;
+  int32 handleStatus = 1;
   string handleRet = 2;
   string errorMsg = 3;
 }
