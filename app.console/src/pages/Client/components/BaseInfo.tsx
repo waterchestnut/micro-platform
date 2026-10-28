@@ -372,6 +372,7 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
       <ProFormTextArea
         name='description'
         label='应用描述'
+        initialValue={''}
       />
       <ProFormList
         name='tags'
