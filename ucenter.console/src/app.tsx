@@ -1,4 +1,5 @@
 import {Footer, AvatarDropdown, AvatarName} from '@/components'
+import {getRuntimeBranding} from '@/utils/runtimeBranding'
 import {LinkOutlined} from '@ant-design/icons'
 import type {Settings as LayoutSettings} from '@ant-design/pro-components'
 import {SettingDrawer} from '@ant-design/pro-components'
@@ -158,6 +159,7 @@ export const layout: RunTimeLayoutConfig = ({initialState, setInitialState}) => 
       isEmbedded() ? 'side' : 'mix',
     /*appList: [{title: '测试', url: 'https://www.bing.com'}],*/
     logo: isEmbedded() ? '/logo.svg' : '/logo_white.svg',
+    ...getRuntimeBranding(),
   }
 }
 
