@@ -56,6 +56,7 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
           status: 'done',
           url: getDocHttpUrl(info.logoUrl)
         }] : []
+        info.description = info.description || ''
         formRef?.current?.setFieldsValue(info)
       } else {
         formRef?.current?.resetFields()
