@@ -131,7 +131,8 @@ export default defineConfig({
    * @name <head> 中额外的 script
    * @description 配置 <head> 中额外的 script
    */
-  headScripts: [
+  favicons: ['/favicon.svg'],
+headScripts: [
     // 部署级品牌 env（值=baked 占位符，运行期 99-modify-config.sh 按 Deployment env 替换为真实标题/Logo）
     {content: `APP_TITLE='${process.env.APP_TITLE || 'CW2PC_APP_TITLE'}';APP_LOGO='${process.env.APP_LOGO || 'CW2PC_APP_LOGO'}';APP_ICP='${process.env.APP_ICP || 'CW2PC_APP_ICP'}';APP_COPYRIGHT='${process.env.APP_COPYRIGHT || 'CW2PC_APP_COPYRIGHT'}';`},
     // 解决首次加载时白屏的问题
