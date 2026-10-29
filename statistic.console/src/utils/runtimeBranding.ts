@@ -14,3 +14,13 @@ export function getRuntimeBranding(): {title?: string; logo?: string} {
     if (logo) branding.logo = logo
     return branding
 }
+
+/** 页脚备案号/版权的部署级覆盖：与 APP_TITLE 同占位符通道（Deployment env APP_ICP/APP_COPYRIGHT） */
+export function getRuntimeFooter(): {icp?: string; copyrightHolder?: string} {
+    const branding: {icp?: string; copyrightHolder?: string} = {}
+    const icp = clean((window as any).APP_ICP)
+    const holder = clean((window as any).APP_COPYRIGHT)
+    if (icp) branding.icp = icp
+    if (holder) branding.copyrightHolder = holder
+    return branding
+}

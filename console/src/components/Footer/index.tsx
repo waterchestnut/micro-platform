@@ -1,4 +1,4 @@
-import {GithubOutlined} from '@ant-design/icons'
+import {getRuntimeFooter} from '@/utils/runtimeBranding'
 import {DefaultFooter} from '@ant-design/pro-components'
 import React from 'react'
 import {useLocation} from '@umijs/max'
@@ -23,18 +23,13 @@ const Footer: React.FC<FooterProps> = (props) => {
       }}
       links={[
         {
-          key: 'fastify',
-          title: 'fastify',
-          href: 'https://fastify.dev',
-          blankTarget: true,
-        },
-        {
-          key: 'github',
-          title: <GithubOutlined/>,
-          href: 'https://github.com',
+          key: 'icp',
+          title: getRuntimeFooter().icp || 'xxxxxxx',
+          href: 'https://beian.miit.gov.cn/',
           blankTarget: true,
         },
       ]}
+      copyright={`${new Date().getFullYear()} ${getRuntimeFooter().copyrightHolder || 'xxxx 版权所有'}`}
     />
   )
 }
