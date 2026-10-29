@@ -9,6 +9,7 @@ import EmbedPDF, {
 import {getAIIconPaths} from '@/icons/ai'
 import {getTransIconPaths} from '@/icons/trans'
 import {uuidV4} from '@/utils/util'
+import {getTheme} from '@/utils/runtimeTheme'
 import {useModel} from '@@/exports'
 import {getArrowLeftIconPaths} from '@/icons/arrowLeft'
 import {history} from '@umijs/max'
@@ -82,11 +83,12 @@ export default function PDFViewer(props: PDFViewerProps) {
             preference: 'light',
             light: {
               accent: {
-                primary: '#08979c',        // Main brand color
-                primaryHover: '#006d75',   // Hover state
-                primaryActive: '#00474f',  // Click state
-                primaryLight: '#8fcfc8',   // Subtle backgrounds (e.g., selection)
-                primaryForeground: '#fff'  // Text on top of primary color
+                // 随主题切换（docs/08 §5.4）：theme.json.pdfEngine 缺省时回落现网旧值
+                primary: getTheme().pdfEngine?.primary || '#08979c',        // Main brand color
+                primaryHover: getTheme().pdfEngine?.primaryHover || '#006d75',   // Hover state
+                primaryActive: getTheme().pdfEngine?.primaryActive || '#00474f',  // Click state
+                primaryLight: getTheme().pdfEngine?.primaryLight || '#8fcfc8',   // Subtle backgrounds (e.g., selection)
+                primaryForeground: getTheme().pdfEngine?.primaryForeground || '#fff'  // Text on top of primary color
               }
             },
           },

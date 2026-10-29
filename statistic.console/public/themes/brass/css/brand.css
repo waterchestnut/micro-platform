@@ -1,0 +1,11 @@
+/* 由 cw2pc-workspace/scripts/sync-brand.mjs 生成——主题 brass（烫金铜 Letterpress Brass），勿手改；真源 brand/themes/ */
+:root {
+  --brand-primary: #916E40;
+  --brand-primary-hover: #9E855F;
+  --brand-primary-light: #B8925A;
+  --brand-accent: #B8925A;
+  --brand-accent-dark: #6B4D2A;
+  --brand-selected: #E9E1D0;
+  --brand-selected-text: #6B4D2A;
+  --brand-primary-rgb: 145, 110, 64;
+}

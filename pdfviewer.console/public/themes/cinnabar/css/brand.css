@@ -1,0 +1,11 @@
+/* 由 cw2pc-workspace/scripts/sync-brand.mjs 生成——主题 cinnabar（朱砂印红 Cinnabar Red），勿手改；真源 brand/themes/ */
+:root {
+  --brand-primary: #F5222D;
+  --brand-primary-hover: #FF4D4F;
+  --brand-primary-light: #FF7875;
+  --brand-accent: #FF4D4F;
+  --brand-accent-dark: #A8071A;
+  --brand-selected: #FFCCC7;
+  --brand-selected-text: #A8071A;
+  --brand-primary-rgb: 245, 34, 45;
+}

@@ -1,0 +1,11 @@
+/* 由 cw2pc-workspace/scripts/sync-brand.mjs 生成——主题 legacy-teal（现网青 Legacy Teal），勿手改；真源 brand/themes/ */
+:root {
+  --brand-primary: #08979C;
+  --brand-primary-hover: #23A8A8;
+  --brand-primary-light: #23A8A8;
+  --brand-accent: #9C084D;
+  --brand-accent-dark: #9C5708;
+  --brand-selected: #67C2BC;
+  --brand-selected-text: #fff;
+  --brand-primary-rgb: 8, 151, 156;
+}

@@ -1,0 +1,11 @@
+/* 由 cw2pc-workspace/scripts/sync-brand.mjs 生成——主题 press-green（印版绿 Plate Green），勿手改；真源 brand/themes/ */
+:root {
+  --brand-primary: #2D8A65;
+  --brand-primary-hover: #4A9675;
+  --brand-primary-light: #4A9675;
+  --brand-accent: #4A9675;
+  --brand-accent-dark: #1C6349;
+  --brand-selected: #BDC9C3;
+  --brand-selected-text: #1C6349;
+  --brand-primary-rgb: 45, 138, 101;
+}

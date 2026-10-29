@@ -1,6 +1,9 @@
 /**
- * loading 占位
- * 解决首次加载时白屏的问题
+ * loading 占位（解决首次加载时白屏的问题）——主题化模板
+ * 由 cw2pc-workspace/scripts/sync-brand.mjs 按各主题色板渲染 #916E40：
+ *   缺省主题 → public/scripts/loading.js（烘焙默认件）
+ *   其余主题 → public/themes/<id>/scripts/loading.js（容器启动 99-modify-config.sh 按 APP_THEME 覆盖）
+ * logo 走 /logo.svg 稳定 URL——与 spinner 同一批 cp 覆盖，天然随主题。勿直接改产物，模板改这里。
  */
  (function () {
   const _root = document.querySelector('#root');
@@ -43,7 +46,7 @@
           margin: 0;
           padding: 0;
           color: rgba(0, 0, 0, 0.65);
-          color: #1890ff;
+          color: #916E40;
           font-size: 14px;
           font-variant: tabular-nums;
           line-height: 1.5;
@@ -54,7 +57,6 @@
             cubic-bezier(0.78, 0.14, 0.15, 0.86);
           transition: -webkit-transform 0.3s
             cubic-bezier(0.78, 0.14, 0.15, 0.86);
-          transition: transform 0.3s cubic-bezier(0.78, 0.14, 0.15, 0.86);
           transition: transform 0.3s cubic-bezier(0.78, 0.14, 0.15, 0.86),
             -webkit-transform 0.3s cubic-bezier(0.78, 0.14, 0.15, 0.86);
           -webkit-font-feature-settings: "tnum";
@@ -80,7 +82,7 @@
           display: block;
           width: 9px;
           height: 9px;
-          background-color: #1890ff;
+          background-color: #916E40;
           border-radius: 100%;
           -webkit-transform: scale(0.75);
           -ms-transform: scale(0.75);
@@ -180,6 +182,7 @@
         height: 100%;
         min-height: 362px;
       ">
+        <img src="/logo.svg" alt="logo" style="height: 36px; margin-bottom: 8px;"/>
         <div class="page-loading-warp">
           <div class="ant-spin ant-spin-lg ant-spin-spinning">
             <span class="ant-spin-dot ant-spin-dot-spin">
