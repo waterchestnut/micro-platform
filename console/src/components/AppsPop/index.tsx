@@ -43,6 +43,15 @@ const useStyles = createStyles(({token, css}) => {
   }
 })
 
+const getDefaultLogoUrl = (clientInfo: APPAPI.ClientPublic) => {
+  let visitPath = clientInfo.endpoints?.find((_: APPAPI.ClientPublic) => _.endpointType === 'pc')?.visitPath
+  try {
+    return `${new URL(visitPath).origin}/logo.svg`
+  } catch (e) {
+    return undefined
+  }
+}
+
 const AppsPop: React.FC<AppsPopProps> = (props) => {
   const {appsPopOpened, setAppsPopOpened} = useModel('appsPop')
   const {initialState} = useModel('@@initialState')
@@ -157,7 +166,7 @@ const AppsPop: React.FC<AppsPopProps> = (props) => {
           >
             <div style={{display: 'flex', alignItems: 'flex-start', gap: 12}}>
               <Avatar
-                src={item.logoUrl ? getDocHttpUrl(item.logoUrl) : undefined}
+                src={item.logoUrl ? getDocHttpUrl(item.logoUrl) : getDefaultLogoUrl(item)}
                 shape='square'
                 size={48}
                 style={{flexShrink: 0}}
