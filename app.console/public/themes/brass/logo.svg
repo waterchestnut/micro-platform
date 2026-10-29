@@ -1,0 +1,3 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<g transform="translate(-136.1,-106.0) scale(1.5)"><rect x="112.0" y="112.0" width="128.0" height="128.0" rx="26" fill="#B8925A"/><rect x="112.0" y="272.0" width="128.0" height="128.0" rx="26" fill="#123024"/><rect x="272.0" y="272.0" width="128.0" height="128.0" rx="26" fill="none" stroke="#123024" stroke-width="12"/><g transform="rotate(8 336 176)"><rect x="272.0" y="112.0" width="128.0" height="128.0" rx="26" fill="#FFFFFF" stroke="#B8925A" stroke-width="12"/></g><circle cx="336.0" cy="176.0" r="10.0" fill="#B8925A"/></g>
+</svg>

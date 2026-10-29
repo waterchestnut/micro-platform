@@ -6,5 +6,6 @@ export interface ThemePack {
   layout?: {colorPrimary?: string; token?: Record<string, any>}
   cssVars?: Record<string, string>
   pdfEngine?: Record<string, string>
+  logoIris?: string
   hasAssetOverride?: boolean
 }
