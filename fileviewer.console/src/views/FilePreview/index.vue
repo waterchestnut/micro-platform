@@ -347,7 +347,7 @@ onMounted(() => {
 }
 
 .btn-download {
-  background: #2D8A65;
+  background: var(--brand-primary, #916E40);
 }
 
 .btn-download:hover {
@@ -385,7 +385,7 @@ onMounted(() => {
   width: 36px;
   height: 36px;
   border: 3px solid #e0e0e0;
-  border-top-color: #2D8A65;
+  border-top-color: var(--brand-primary, #916E40);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }

@@ -110,8 +110,8 @@ export default defineConfig({
   antd: {
     theme: {
       token: {
-        colorPrimary: '#08979c',
-        colorLink: '#08979c',
+        colorPrimary: '#916E40',
+        colorLink: '#916E40',
       }
     }
   },

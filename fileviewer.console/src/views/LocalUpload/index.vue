@@ -103,7 +103,7 @@ function onDrop(e: DragEvent) {
 
 .upload-area:hover,
 .upload-area.dragging {
-  border-color: #2D8A65;
+  border-color: var(--brand-primary, #916E40);
   background: #f6ffed;
 }
 
@@ -167,8 +167,8 @@ function onDrop(e: DragEvent) {
 }
 
 .rechoose-btn:hover {
-  border-color: #2D8A65;
-  color: #2D8A65;
+  border-color: var(--brand-primary, #916E40);
+  color: var(--brand-primary, #916E40);
 }
 
 .viewer-wrapper {
@@ -199,7 +199,7 @@ function onDrop(e: DragEvent) {
   width: 36px;
   height: 36px;
   border: 3px solid #e0e0e0;
-  border-top-color: #2D8A65;
+  border-top-color: var(--brand-primary, #916E40);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
