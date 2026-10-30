@@ -1,4 +1,6 @@
 import {Footer, AvatarDropdown, AvatarName} from '@/components'
+import SelectLang from '@/components/SelectLang'
+import '@/utils/wujieLocaleSync'
 import {getRuntimeBranding} from '@/utils/runtimeBranding'
 import {LinkOutlined} from '@ant-design/icons'
 import type {Settings as LayoutSettings} from '@ant-design/pro-components'
@@ -49,7 +51,7 @@ export async function getInitialState(): Promise<{
 // ProLayout 支持的api https://procomponents.ant.design/components/layout
 export const layout: RunTimeLayoutConfig = ({initialState, setInitialState}) => {
   return {
-    actionsRender: () => [/*<Question key="doc"/>, <SelectLang key="SelectLang"/>*/],
+    actionsRender: () => (isEmbedded() ? [] : [<SelectLang key="SelectLang"/>]),
     avatarProps: isEmbedded() ? undefined : {
       src: initialState?.currentUser?.avatarUrl ? getDocHttpUrl(initialState?.currentUser?.avatarUrl) : undefined,
       title: <AvatarName/>,

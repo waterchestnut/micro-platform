@@ -98,7 +98,7 @@ const Register: React.FC = () => {
       }
 
       if (res?.code === 0) {
-        successMessage('注册成功！请登录')
+        successMessage(intl.formatMessage({id:'pages.register.success',defaultMessage:'注册成功！请登录'}))
         // 跳转到登录页
         setTimeout(() => {
           history.replace(`/user/login${history.location.search}`)
@@ -106,11 +106,11 @@ const Register: React.FC = () => {
         return
       }
       // 如果失败去设置错误信息
-      setRegisterState({status: 'error', type, msg: res?.msg || '注册失败'})
+      setRegisterState({status: 'error', type, msg: res?.msg || intl.formatMessage({id:'pages.register.failed',defaultMessage:'注册失败'})})
       refreshCaptcha()
     } catch (error) {
       console.log(error)
-      errorMessage('注册失败，请重试！')
+      errorMessage(intl.formatMessage({id:'pages.register.retry',defaultMessage:'注册失败，请重试！'}))
       refreshCaptcha()
     }
   }
@@ -159,11 +159,11 @@ const Register: React.FC = () => {
               maxWidth: '75vw',
             }}
             logo={<img alt='logo' src='/logo.svg'/>}
-            title='用户注册'
+            title={intl.formatMessage({id:'pages.register.userRegister',defaultMessage:'用户注册'})}
             subTitle={intl.formatMessage({id: 'pages.layouts.userLayout.title'})}
             submitter={{
               searchConfig: {
-                submitText: '注册'
+                submitText: intl.formatMessage({id:'pages.register.submit',defaultMessage:'注册'})
               }
             }}
             onFinish={async (values) => {
@@ -177,11 +177,11 @@ const Register: React.FC = () => {
               items={[
                 {
                   key: 'mobile',
-                  label: '手机号注册',
+                  label: intl.formatMessage({id:'pages.register.phoneTab',defaultMessage:'手机号注册'}),
                 },
                 {
                   key: 'email',
-                  label: '邮箱注册',
+                  label: intl.formatMessage({id:'pages.register.emailTab',defaultMessage:'邮箱注册'}),
                 },
               ]}
             />
@@ -200,15 +200,15 @@ const Register: React.FC = () => {
                     prefix: <MobileOutlined/>,
                   }}
                   name='mobile'
-                  placeholder='手机号'
+                  placeholder={intl.formatMessage({id:'pages.login.phoneNumber.ph',defaultMessage:'手机号'})}
                   rules={[
                     {
                       required: true,
-                      message: '请输入手机号！',
+                      message: intl.formatMessage({id:'pages.login.phoneNumber.required2',defaultMessage:'请输入手机号！'}),
                     },
                     {
                       pattern: mobilePattern,
-                      message: '手机号格式错误！',
+                      message: intl.formatMessage({id:'pages.login.phoneNumber.invalid2',defaultMessage:'手机号格式错误！'}),
                     },
                   ]}
                 />
@@ -217,14 +217,14 @@ const Register: React.FC = () => {
                   fieldProps={{
                     size: 'large',
                     prefix: <SafetyOutlined/>,
-                    suffix: <div className={styles.captcha} title='点击刷新验证码' onClick={refreshCaptcha}
+                    suffix: <div className={styles.captcha} title={intl.formatMessage({id:'pages.login.captcha.refresh',defaultMessage:'点击刷新验证码'})} onClick={refreshCaptcha}
                                  dangerouslySetInnerHTML={{__html: captchaHtml}}/>
                   }}
-                  placeholder='图形码'
+                  placeholder={intl.formatMessage({id:'pages.login.imageCaptcha.placeholder',defaultMessage:'图形码'})}
                   rules={[
                     {
                       required: true,
-                      message: '请输入图形码!',
+                      message: intl.formatMessage({id:'pages.login.imageCaptcha.required',defaultMessage:'请输入图形码!'}),
                     },
                   ]}
                 />
@@ -236,18 +236,18 @@ const Register: React.FC = () => {
                   captchaProps={{
                     size: 'large',
                   }}
-                  placeholder='短信验证码'
+                  placeholder={intl.formatMessage({id:'pages.smsCode.ph',defaultMessage:'短信验证码'})}
                   captchaTextRender={(timing, count) => {
                     if (timing) {
                       return `${count} 秒后重发`
                     }
-                    return '获取验证码'
+                    return intl.formatMessage({id:'pages.login.getCode',defaultMessage:'获取验证码'})
                   }}
                   name='smsCode'
                   rules={[
                     {
                       required: true,
-                      message: '请输入验证码！',
+                      message: intl.formatMessage({id:'pages.login.captcha.req',defaultMessage:'请输入验证码！'}),
                     },
                   ]}
                   onGetCaptcha={async () => {
@@ -258,22 +258,22 @@ const Register: React.FC = () => {
                       const currentCaptchaKey = captchaKey
                       if (!mobile || !captcha || !currentCaptchaKey) {
                         if (!currentCaptchaKey) {
-                          message.error('请先获取图形验证码')
+                          message.error(intl.formatMessage({id:'pages.login.captchaFirst',defaultMessage:'请先获取图形验证码'}))
                           refreshCaptcha()
-                          throw new Error('请先获取图形验证码')
+                          throw new Error(intl.formatMessage({id:'pages.login.captchaFirst',defaultMessage:'请先获取图形验证码'}))
                         } else {
-                          message.error('请填写手机号和图形验证码')
-                          throw new Error('请填写手机号和图形验证码')
+                          message.error(intl.formatMessage({id:'pages.login.mobileAndCaptcha',defaultMessage:'请填写手机号和图形验证码'}))
+                          throw new Error(intl.formatMessage({id:'pages.login.mobileAndCaptcha',defaultMessage:'请填写手机号和图形验证码'}))
                         }
                       }
 
                       const res = await phoneRegisterVerify(mobile, currentCaptchaKey, captcha)
                       if (res.code === 0) {
-                        message.success('验证码已发送')
+                        message.success(intl.formatMessage({id:'pages.login.codeSent',defaultMessage:'验证码已发送'}))
                       } else {
-                        message.error(res.msg || '获取验证码失败')
+                        message.error(res.msg || intl.formatMessage({id:'pages.login.codeSendFailed',defaultMessage:'获取验证码失败'}))
                         refreshCaptcha()
-                        throw new Error(res.msg || '获取验证码失败')
+                        throw new Error(res.msg || intl.formatMessage({id:'pages.login.codeSendFailed',defaultMessage:'获取验证码失败'}))
                       }
                     } catch (errorInfo) {
                       console.log('校验失败:', errorInfo)
@@ -288,7 +288,7 @@ const Register: React.FC = () => {
                     size: 'large',
                     prefix: <UserOutlined/>,
                   }}
-                  placeholder='姓名（可选）'
+                  placeholder={intl.formatMessage({id:'pages.register.namePlaceholder',defaultMessage:'姓名（可选）'})}
                 />
                 <ProFormText.Password
                   name='pwd'
@@ -296,11 +296,11 @@ const Register: React.FC = () => {
                     size: 'large',
                     prefix: <LockOutlined/>,
                   }}
-                  placeholder='密码'
+                  placeholder={intl.formatMessage({id:'pages.login.bind.password',defaultMessage:'密码'})}
                   rules={[
                     {
                       required: true,
-                      message: '请输入密码！',
+                      message: intl.formatMessage({id:'pages.register.pwdRequired',defaultMessage:'请输入密码！'}),
                     },
                     {
                       validator: (_, value) => {
@@ -320,11 +320,11 @@ const Register: React.FC = () => {
                     size: 'large',
                     prefix: <LockOutlined/>,
                   }}
-                  placeholder='确认密码'
+                  placeholder={intl.formatMessage({id:'pages.register.confirmPwd',defaultMessage:'确认密码'})}
                   rules={[
                     {
                       required: true,
-                      message: '请确认密码！',
+                      message: intl.formatMessage({id:'pages.register.confirmPwdRequired',defaultMessage:'请确认密码！'}),
                     },
                     {
                       validator: (_, value) => {
@@ -332,7 +332,7 @@ const Register: React.FC = () => {
                         if (!value || pwd === value) {
                           return Promise.resolve()
                         }
-                        return Promise.reject(new Error('两次输入的密码不一致！'))
+                        return Promise.reject(new Error(intl.formatMessage({id:'pages.register.pwdMismatch',defaultMessage:'两次输入的密码不一致！'})))
                       },
                     },
                   ]}
@@ -348,15 +348,15 @@ const Register: React.FC = () => {
                     prefix: <MailOutlined/>,
                   }}
                   name='email'
-                  placeholder='电子邮箱'
+                  placeholder={intl.formatMessage({id:'pages.login.email.placeholder',defaultMessage:'电子邮箱'})}
                   rules={[
                     {
                       required: true,
-                      message: '请输入邮箱！',
+                      message: intl.formatMessage({id:'pages.login.email.required',defaultMessage:'请输入邮箱！'}),
                     },
                     {
                       pattern: emailPattern,
-                      message: '邮箱格式错误！',
+                      message: intl.formatMessage({id:'pages.login.email.invalid',defaultMessage:'邮箱格式错误！'}),
                     },
                   ]}
                 />
@@ -365,14 +365,14 @@ const Register: React.FC = () => {
                   fieldProps={{
                     size: 'large',
                     prefix: <SafetyOutlined/>,
-                    suffix: <div className={styles.captcha} title='点击刷新验证码' onClick={refreshCaptcha}
+                    suffix: <div className={styles.captcha} title={intl.formatMessage({id:'pages.login.captcha.refresh',defaultMessage:'点击刷新验证码'})} onClick={refreshCaptcha}
                                  dangerouslySetInnerHTML={{__html: captchaHtml}}/>
                   }}
-                  placeholder='图形码'
+                  placeholder={intl.formatMessage({id:'pages.login.imageCaptcha.placeholder',defaultMessage:'图形码'})}
                   rules={[
                     {
                       required: true,
-                      message: '请输入图形码!',
+                      message: intl.formatMessage({id:'pages.login.imageCaptcha.required',defaultMessage:'请输入图形码!'}),
                     },
                   ]}
                 />
@@ -384,18 +384,18 @@ const Register: React.FC = () => {
                   captchaProps={{
                     size: 'large',
                   }}
-                  placeholder='邮箱验证码'
+                  placeholder={intl.formatMessage({id:'pages.tab.email',defaultMessage:'邮箱验证码'})}
                   captchaTextRender={(timing, count) => {
                     if (timing) {
                       return `${count} 秒后重发`
                     }
-                    return '获取验证码'
+                    return intl.formatMessage({id:'pages.login.getCode',defaultMessage:'获取验证码'})
                   }}
                   name='emailCode'
                   rules={[
                     {
                       required: true,
-                      message: '请输入验证码！',
+                      message: intl.formatMessage({id:'pages.login.captcha.req',defaultMessage:'请输入验证码！'}),
                     },
                   ]}
                   onGetCaptcha={async () => {
@@ -406,22 +406,22 @@ const Register: React.FC = () => {
                       const currentCaptchaKey = captchaKey
                       if (!email || !captcha || !currentCaptchaKey) {
                         if (!currentCaptchaKey) {
-                          message.error('请先获取图形验证码')
+                          message.error(intl.formatMessage({id:'pages.login.captchaFirst',defaultMessage:'请先获取图形验证码'}))
                           refreshCaptcha()
-                          throw new Error('请先获取图形验证码')
+                          throw new Error(intl.formatMessage({id:'pages.login.captchaFirst',defaultMessage:'请先获取图形验证码'}))
                         } else {
-                          message.error('请填写邮箱和图形验证码')
-                          throw new Error('请填写邮箱和图形验证码')
+                          message.error(intl.formatMessage({id:'pages.register.emailAndCaptcha',defaultMessage:'请填写邮箱和图形验证码'}))
+                          throw new Error(intl.formatMessage({id:'pages.register.emailAndCaptcha',defaultMessage:'请填写邮箱和图形验证码'}))
                         }
                       }
 
                       const res = await emailRegisterVerify(email, currentCaptchaKey, captcha)
                       if (res.code === 0) {
-                        message.success('验证码已发送')
+                        message.success(intl.formatMessage({id:'pages.login.codeSent',defaultMessage:'验证码已发送'}))
                       } else {
-                        message.error(res.msg || '获取验证码失败')
+                        message.error(res.msg || intl.formatMessage({id:'pages.login.codeSendFailed',defaultMessage:'获取验证码失败'}))
                         refreshCaptcha()
-                        throw new Error(res.msg || '获取验证码失败')
+                        throw new Error(res.msg || intl.formatMessage({id:'pages.login.codeSendFailed',defaultMessage:'获取验证码失败'}))
                       }
                     } catch (errorInfo) {
                       console.log('校验失败:', errorInfo)
@@ -436,7 +436,7 @@ const Register: React.FC = () => {
                     size: 'large',
                     prefix: <UserOutlined/>,
                   }}
-                  placeholder='姓名（可选）'
+                  placeholder={intl.formatMessage({id:'pages.register.namePlaceholder',defaultMessage:'姓名（可选）'})}
                 />
                 <ProFormText.Password
                   name='pwd'
@@ -444,11 +444,11 @@ const Register: React.FC = () => {
                     size: 'large',
                     prefix: <LockOutlined/>,
                   }}
-                  placeholder='密码'
+                  placeholder={intl.formatMessage({id:'pages.login.bind.password',defaultMessage:'密码'})}
                   rules={[
                     {
                       required: true,
-                      message: '请输入密码！',
+                      message: intl.formatMessage({id:'pages.register.pwdRequired',defaultMessage:'请输入密码！'}),
                     },
                     {
                       validator: (_, value) => {
@@ -468,11 +468,11 @@ const Register: React.FC = () => {
                     size: 'large',
                     prefix: <LockOutlined/>,
                   }}
-                  placeholder='确认密码'
+                  placeholder={intl.formatMessage({id:'pages.register.confirmPwd',defaultMessage:'确认密码'})}
                   rules={[
                     {
                       required: true,
-                      message: '请确认密码！',
+                      message: intl.formatMessage({id:'pages.register.confirmPwdRequired',defaultMessage:'请确认密码！'}),
                     },
                     {
                       validator: (_, value) => {
@@ -480,7 +480,7 @@ const Register: React.FC = () => {
                         if (!value || pwd === value) {
                           return Promise.resolve()
                         }
-                        return Promise.reject(new Error('两次输入的密码不一致！'))
+                        return Promise.reject(new Error(intl.formatMessage({id:'pages.register.pwdMismatch',defaultMessage:'两次输入的密码不一致！'})))
                       },
                     },
                   ]}

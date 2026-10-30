@@ -4,6 +4,9 @@ import {useRoute} from 'vue-router'
 import {getAccessToken} from '@/utils/authority'
 import {FileViewerLifecycleContext} from '@flyfish-group/file-viewer3'
 import {init as initPptxPreview} from 'pptx-preview'
+import {useI18n} from '@/i18n'
+
+const { t } = useI18n()
 
 interface ViewerCapabilities {
   download: boolean
@@ -227,7 +230,7 @@ onMounted(() => {
   <div class="file-preview">
     <div v-if="downloading" class="loading-state">
       <div class="spinner"></div>
-      <p>正在下载文件，请稍候…</p>
+      <p>{{ t('preview.downloading') }}</p>
     </div>
     <div v-else-if="downloadError" class="error-state">
       <p class="error-icon">!</p>
@@ -237,7 +240,7 @@ onMounted(() => {
       <div v-if="isPptx" ref="pptxContainerRef" class="pptx-container">
         <div v-if="pptxLoading" class="loading-state">
           <div class="spinner"></div>
-          <p>正在加载 PPTX 文件…</p>
+          <p>{{ t('viewer.pptxLoading') }}</p>
         </div>
       </div>
       <template v-else>
@@ -278,8 +281,8 @@ onMounted(() => {
       </div>
     </div>
     <div v-else class="empty-state">
-      <p>请提供文件链接或资源编码</p>
-      <p class="hint">示例: /preview/?url=https://example.com/file.docx 或 /preview/{fileCode}?fileName=xxx</p>
+      <p>{{ t('preview.needSource') }}</p>
+      <p class="hint">{{ t('preview.example') }}</p>
     </div>
   </div>
 </template>

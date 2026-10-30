@@ -2,6 +2,7 @@
 import { ref, watch, nextTick } from 'vue'
 import { isEmbedded } from '@/utils/embed'
 import { init as initPptxPreview } from 'pptx-preview'
+import { useI18n } from '@/i18n'
 
 const file = ref<File>()
 const dragging = ref(false)
@@ -39,14 +40,17 @@ function onFileChange(e: Event) {
 }
 
 function onDrop(e: DragEvent) {
-  dragging.value = false
+   dragging.value = false
   const f = e.dataTransfer?.files?.item(0)
   if (f) file.value = f
 }
+
+const { lang, t, toggle } = useI18n()
 </script>
 
 <template>
   <div class="upload-page">
+    <button v-if="!isEmbedded()" class="lang-toggle" @click="toggle">{{ lang === 'zh-CN' ? 'English' : '中文' }}</button>
     <div v-if="!file" class="upload-area"
       :class="{ dragging }"
       @dragenter.prevent="dragging = true"
@@ -57,21 +61,21 @@ function onDrop(e: DragEvent) {
       <input type="file" class="file-input" @change="onFileChange" />
       <div class="upload-hint">
         <p class="upload-icon">+</p>
-        <p>点击选择文件或将文件拖拽到此区域</p>
-        <p class="upload-desc">支持 Office、PDF、图片、音视频等常见格式</p>
+        <p>{{ t('upload.pickHint') }}</p>
+        <p class="upload-desc">{{ t('upload.formats') }}</p>
       </div>
     </div>
     <div v-else class="preview-area">
       <div class="file-info">
         <span class="file-name">{{ file.name }}</span>
         <span class="file-size">（{{ (file.size / 1024 / 1024).toFixed(2) }} MB）</span>
-        <button class="rechoose-btn" @click="file = undefined">重新选择</button>
+        <button class="rechoose-btn" @click="file = undefined">{{ t('upload.rechoose') }}</button>
       </div>
       <div class="viewer-wrapper">
         <div v-if="isPptx" ref="pptxContainerRef" class="pptx-container">
           <div v-if="pptxLoading" class="loading-state">
             <div class="spinner"></div>
-            <p>正在加载 PPTX 文件…</p>
+            <p>{{ t('viewer.pptxLoading') }}</p>
           </div>
         </div>
         <file-viewer v-else :file="file" :options="{ toolbar: true }" />
@@ -81,6 +85,19 @@ function onDrop(e: DragEvent) {
 </template>
 
 <style scoped>
+.lang-toggle {
+  position: fixed;
+  top: 12px;
+  right: 16px;
+  z-index: 10;
+  border: 1px solid var(--brand-primary, #2D8A65);
+  color: var(--brand-primary, #2D8A65);
+  background: #fff;
+  border-radius: 4px;
+  padding: 2px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
 .upload-page {
   flex: 1;
   display: flex;

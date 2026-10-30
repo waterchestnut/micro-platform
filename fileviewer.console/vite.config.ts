@@ -29,6 +29,7 @@ export default defineConfig(({ mode }) => {
   window.APP_TITLE='${env.APP_TITLE || 'CW2PC_APP_TITLE'}';
   window.APP_LOGO='${env.APP_LOGO || 'CW2PC_APP_LOGO'}';
   window.APP_THEME='${env.APP_THEME || 'CW2PC_APP_THEME'}';
+  window.APP_LANG='${env.APP_LANG || ''}';
   document.addEventListener('DOMContentLoaded', function () {
     var t = window.APP_TITLE;
     if (typeof t === 'string' && t && !t.startsWith('CW2PC_')) document.title = t;

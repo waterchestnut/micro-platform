@@ -169,7 +169,7 @@ const AppsPop: React.FC<AppsPopProps> = (props) => {
                 src={item.logoUrl ? getDocHttpUrl(item.logoUrl) : getDefaultLogoUrl(item)}
                 shape='square'
                 size={48}
-                style={{flexShrink: 0}}
+                style={{flexShrink: 0, borderRadius: '12px'}}
               />
               <div style={{flex: 1, minWidth: 0}}>
                 <div

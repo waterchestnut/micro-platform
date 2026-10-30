@@ -1,4 +1,6 @@
 import {AvatarDropdown, AvatarName, Footer} from '@/components'
+import SelectLang from '@/components/SelectLang'
+import '@/utils/wujieLocaleSync'
 import {getRuntimeBranding} from '@/utils/runtimeBranding'
 import {HomeOutlined, LinkOutlined, MenuOutlined} from '@ant-design/icons'
 import type {Settings as LayoutSettings} from '@ant-design/pro-components'
@@ -120,7 +122,7 @@ export async function getInitialState(): Promise<{
 // ProLayout 支持的api https://procomponents.ant.design/components/layout
 export const layout: RunTimeLayoutConfig = ({initialState, setInitialState}) => {
   return {
-    actionsRender: () => [<ChatLink/>,/*<Question key="doc" />, <SelectLang key="SelectLang" />*/],
+    actionsRender: () => [<SelectLang key="SelectLang"/>],
     menu: {
       // 每当 initialState?.currentUser?.userid 发生修改时重新执行 request
       params: {

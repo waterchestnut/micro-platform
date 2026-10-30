@@ -164,7 +164,7 @@ const Login: React.FC = () => {
       }
       //console.log(res) // 保留 console.log
       // 如果失败去设置用户错误信息
-      setUserLoginState({status: 'error', type, msg: res?.msg || '用户名或密码错误'}) // 错误信息保持不变
+      setUserLoginState({status: 'error', type, msg: res?.msg || intl.formatMessage({id:'pages.login.accountLogin.error',defaultMessage:'用户名或密码错误'})}) // 错误信息保持不变
       refreshCaptcha()
     } catch (error) {
       const defaultLoginFailureMessage = intl.formatMessage({
@@ -183,7 +183,7 @@ const Login: React.FC = () => {
     if (refreshToken) {
       setCookie('param-refreshToken', refreshToken)
     }
-    successMessage('微信登录成功！')
+    successMessage(intl.formatMessage({id:'pages.login.wechat.success',defaultMessage:'微信登录成功！'}))
     const urlParams = new URL(window.location.href).searchParams
     // @ts-ignore
     location.href = urlParams.get('retUrl') || PLATFORM_BASE || '/'
@@ -197,7 +197,7 @@ const Login: React.FC = () => {
     const loginUrl = UCENTER_API_BASE + '/public-bin/carsi/login'
     const popup = window.open(loginUrl, 'carsiLogin', `width=${w},height=${h},left=${left},top=${top}`)
     if (!popup) {
-      message.warning('请允许浏览器弹窗后重试')
+      message.warning(intl.formatMessage({id:'pages.login.carsi.popupBlocked',defaultMessage:'请允许浏览器弹窗后重试'}))
       return
     }
 
@@ -214,7 +214,7 @@ const Login: React.FC = () => {
       if (e.data?.type === 'carsiLogin') {
         cleanup()
         if (e.data.success) {
-          successMessage('CARSI登录成功')
+          successMessage(intl.formatMessage({id:'pages.login.carsi.success',defaultMessage:'CARSI登录成功'}))
           const urlParams = new URL(window.location.href).searchParams
           // @ts-ignore
           location.href = urlParams.get('retUrl') || PLATFORM_BASE || '/'
@@ -340,7 +340,7 @@ const Login: React.FC = () => {
                         borderRadius: '50%',
                         cursor: 'pointer',
                       }}
-                      title='CARSI登录'
+                      title={intl.formatMessage({id:'pages.login.carsiLogin',defaultMessage:'CARSI登录'})}
                       onClick={handleCarsiLogin}
                     >
                       {/*<ReconciliationOutlined className={styles.iconStyles} style={{color: '#1677FF'}}/>*/}
@@ -359,7 +359,7 @@ const Login: React.FC = () => {
                       borderRadius: '50%',
                       cursor: 'pointer',
                     }}
-                    title='微信扫码登录'
+                    title={intl.formatMessage({id:'pages.login.wechatLogin',defaultMessage:'微信扫码登录'})}
                     onClick={() => setWechatModalOpen(true)}
                   >
                     <WechatOutlined className={styles.iconStyles} style={{color: '#FF6A10'}}/>
@@ -392,7 +392,7 @@ const Login: React.FC = () => {
                 },
                 {
                   key: 'email',
-                  label: '邮箱验证码登录',
+                  label: intl.formatMessage({id:'pages.login.emailLogin.tab',defaultMessage:'邮箱验证码登录'}),
                 },
               ]}
             />
@@ -442,7 +442,7 @@ const Login: React.FC = () => {
                       message: (
                         <FormattedMessage
                           id='pages.login.password.required'
-                          defaultMessage='请输入密码！'
+                          defaultMessage={intl.formatMessage({id:'pages.register.pwdRequired',defaultMessage:'请输入密码！'})}
                         />
                       ),
                     },
@@ -453,14 +453,14 @@ const Login: React.FC = () => {
                   fieldProps={{
                     size: 'large',
                     prefix: <SafetyOutlined/>,
-                    suffix: <div className={styles.captcha} title='点击刷新验证码' onClick={refreshCaptcha}
+                    suffix: <div className={styles.captcha} title={intl.formatMessage({id:'pages.login.captcha.refresh',defaultMessage:'点击刷新验证码'})} onClick={refreshCaptcha}
                                  dangerouslySetInnerHTML={{__html: captchaHtml}}/>
                   }}
-                  placeholder='图形码'
+                  placeholder={intl.formatMessage({id:'pages.login.imageCaptcha.placeholder',defaultMessage:'图形码'})}
                   rules={[
                     {
                       required: true,
-                      message: '请输入图形码!',
+                      message: intl.formatMessage({id:'pages.login.imageCaptcha.required',defaultMessage:'请输入图形码!'}),
                     },
                   ]}
                 />
@@ -485,7 +485,7 @@ const Login: React.FC = () => {
                       message: (
                         <FormattedMessage
                           id='pages.login.phoneNumber.required'
-                          defaultMessage='请输入手机号！'
+                          defaultMessage={intl.formatMessage({id:'pages.login.phoneNumber.required2',defaultMessage:'请输入手机号！'})}
                         />
                       ),
                     },
@@ -494,7 +494,7 @@ const Login: React.FC = () => {
                       message: (
                         <FormattedMessage
                           id='pages.login.phoneNumber.invalid'
-                          defaultMessage='手机号格式错误！'
+                          defaultMessage={intl.formatMessage({id:'pages.login.phoneNumber.invalid2',defaultMessage:'手机号格式错误！'})}
                         />
                       ),
                     },
@@ -505,14 +505,14 @@ const Login: React.FC = () => {
                   fieldProps={{
                     size: 'large',
                     prefix: <SafetyOutlined/>,
-                    suffix: <div className={styles.captcha} title='点击刷新验证码' onClick={refreshCaptcha}
+                    suffix: <div className={styles.captcha} title={intl.formatMessage({id:'pages.login.captcha.refresh',defaultMessage:'点击刷新验证码'})} onClick={refreshCaptcha}
                                  dangerouslySetInnerHTML={{__html: captchaHtml}}/>
                   }}
-                  placeholder='图形码'
+                  placeholder={intl.formatMessage({id:'pages.login.imageCaptcha.placeholder',defaultMessage:'图形码'})}
                   rules={[
                     {
                       required: true,
-                      message: '请输入图形码!',
+                      message: intl.formatMessage({id:'pages.login.imageCaptcha.required',defaultMessage:'请输入图形码!'}),
                     },
                   ]}
                 />
@@ -547,7 +547,7 @@ const Login: React.FC = () => {
                       message: (
                         <FormattedMessage
                           id='pages.login.captcha.required'
-                          defaultMessage='请输入验证码！'
+                          defaultMessage={intl.formatMessage({id:'pages.login.captcha.req',defaultMessage:'请输入验证码！'})}
                         />
                       ),
                     },
@@ -564,23 +564,23 @@ const Login: React.FC = () => {
                       // 基本的值检查（虽然 validateFields 会处理，但以防万一）
                       if (!mobile || !captcha || !currentCaptchaKey) {
                         if (!currentCaptchaKey) {
-                          message.error('请先获取图形验证码')
+                          message.error(intl.formatMessage({id:'pages.login.captchaFirst',defaultMessage:'请先获取图形验证码'}))
                           refreshCaptcha()
-                          throw new Error('请先获取图形验证码')
+                          throw new Error(intl.formatMessage({id:'pages.login.captchaFirst',defaultMessage:'请先获取图形验证码'}))
                         } else {
-                          message.error('请填写手机号和图形验证码')
-                          throw new Error('请填写手机号和图形验证码')
+                          message.error(intl.formatMessage({id:'pages.login.mobileAndCaptcha',defaultMessage:'请填写手机号和图形验证码'}))
+                          throw new Error(intl.formatMessage({id:'pages.login.mobileAndCaptcha',defaultMessage:'请填写手机号和图形验证码'}))
                         }
                       }
 
                       // 调用验证码接口
                       const res = await phoneLoginVerify(mobile, currentCaptchaKey, captcha)
                       if (res.code === 0) {
-                        message.success('验证码已发送')
+                        message.success(intl.formatMessage({id:'pages.login.codeSent',defaultMessage:'验证码已发送'}))
                       } else {
-                        message.error(res.msg || '获取验证码失败')
+                        message.error(res.msg || intl.formatMessage({id:'pages.login.codeSendFailed',defaultMessage:'获取验证码失败'}))
                         refreshCaptcha() // 失败时刷新图形验证码
-                        throw new Error(res.msg || '获取验证码失败')
+                        throw new Error(res.msg || intl.formatMessage({id:'pages.login.codeSendFailed',defaultMessage:'获取验证码失败'}))
                       }
                     } catch (errorInfo) {
                       // validateFields 校验失败会到这里
@@ -601,15 +601,15 @@ const Login: React.FC = () => {
                     prefix: <MailOutlined/>,
                   }}
                   name='email'
-                  placeholder='电子邮箱'
+                  placeholder={intl.formatMessage({id:'pages.login.email.placeholder',defaultMessage:'电子邮箱'})}
                   rules={[
                     {
                       required: true,
-                      message: '请输入邮箱！',
+                      message: intl.formatMessage({id:'pages.login.email.required',defaultMessage:'请输入邮箱！'}),
                     },
                     {
                       pattern: emailPattern,
-                      message: '邮箱格式错误！',
+                      message: intl.formatMessage({id:'pages.login.email.invalid',defaultMessage:'邮箱格式错误！'}),
                     },
                   ]}
                 />
@@ -618,14 +618,14 @@ const Login: React.FC = () => {
                   fieldProps={{
                     size: 'large',
                     prefix: <SafetyOutlined/>,
-                    suffix: <div className={styles.captcha} title='点击刷新验证码' onClick={refreshCaptcha}
+                    suffix: <div className={styles.captcha} title={intl.formatMessage({id:'pages.login.captcha.refresh',defaultMessage:'点击刷新验证码'})} onClick={refreshCaptcha}
                                  dangerouslySetInnerHTML={{__html: captchaHtml}}/>
                   }}
-                  placeholder='图形码'
+                  placeholder={intl.formatMessage({id:'pages.login.imageCaptcha.placeholder',defaultMessage:'图形码'})}
                   rules={[
                     {
                       required: true,
-                      message: '请输入图形码!',
+                      message: intl.formatMessage({id:'pages.login.imageCaptcha.required',defaultMessage:'请输入图形码!'}),
                     },
                   ]}
                 />
@@ -660,7 +660,7 @@ const Login: React.FC = () => {
                       message: (
                         <FormattedMessage
                           id='pages.login.captcha.required'
-                          defaultMessage='请输入验证码！'
+                          defaultMessage={intl.formatMessage({id:'pages.login.captcha.req',defaultMessage:'请输入验证码！'})}
                         />
                       ),
                     },
@@ -677,23 +677,23 @@ const Login: React.FC = () => {
                       // 基本的值检查（虽然 validateFields 会处理，但以防万一）
                       if (!email || !captcha || !currentCaptchaKey) {
                         if (!currentCaptchaKey) {
-                          message.error('请先获取图形验证码')
+                          message.error(intl.formatMessage({id:'pages.login.captchaFirst',defaultMessage:'请先获取图形验证码'}))
                           refreshCaptcha()
-                          throw new Error('请先获取图形验证码')
+                          throw new Error(intl.formatMessage({id:'pages.login.captchaFirst',defaultMessage:'请先获取图形验证码'}))
                         } else {
-                          message.error('请填写邮箱号和图形验证码')
-                          throw new Error('请填写邮箱号和图形验证码')
+                          message.error(intl.formatMessage({id:'pages.login.emailAndCaptcha',defaultMessage:'请填写邮箱号和图形验证码'}))
+                          throw new Error(intl.formatMessage({id:'pages.login.emailAndCaptcha',defaultMessage:'请填写邮箱号和图形验证码'}))
                         }
                       }
 
                       // 调用验证码接口
                       const res = await emailLoginVerify(email, currentCaptchaKey, captcha)
                       if (res.code === 0) {
-                        message.success('验证码已发送')
+                        message.success(intl.formatMessage({id:'pages.login.codeSent',defaultMessage:'验证码已发送'}))
                       } else {
-                        message.error(res.msg || '获取验证码失败')
+                        message.error(res.msg || intl.formatMessage({id:'pages.login.codeSendFailed',defaultMessage:'获取验证码失败'}))
                         refreshCaptcha() // 失败时刷新图形验证码
-                        throw new Error(res.msg || '获取验证码失败')
+                        throw new Error(res.msg || intl.formatMessage({id:'pages.login.codeSendFailed',defaultMessage:'获取验证码失败'}))
                       }
                     } catch (errorInfo) {
                       // validateFields 校验失败会到这里

@@ -98,10 +98,10 @@ const Forget: React.FC = () => {
       setSmsSending(true)
       const res = await getSmsCode(mobile, phoneCaptchaKey, captcha)
       if (res.code === 0) {
-        message.success('验证码已发送')
+        message.success(intl.formatMessage({id:'pages.login.codeSent',defaultMessage:'验证码已发送'}))
         startCountdown(setSmsCountdown)
       } else {
-        message.error(res.msg || '获取验证码失败')
+        message.error(res.msg || intl.formatMessage({id:'pages.login.codeSendFailed',defaultMessage:'获取验证码失败'}))
         refreshPhoneCaptcha()
       }
     } catch (e: any) {
@@ -120,10 +120,10 @@ const Forget: React.FC = () => {
       setEmailSending(true)
       const res = await getEmailCode(email, emailCaptchaKey, captcha)
       if (res.code === 0) {
-        message.success('验证码已发送')
+        message.success(intl.formatMessage({id:'pages.login.codeSent',defaultMessage:'验证码已发送'}))
         startCountdown(setEmailCountdown)
       } else {
-        message.error(res.msg || '获取验证码失败')
+        message.error(res.msg || intl.formatMessage({id:'pages.login.codeSendFailed',defaultMessage:'获取验证码失败'}))
         refreshEmailCaptcha()
       }
     } catch (e: any) {
@@ -144,11 +144,11 @@ const Forget: React.FC = () => {
 
       const pwdCheck = checkPasswordComplexity(newPwd)
       if (!pwdCheck.success) {
-        setErrorInfo(pwdCheck.message || '密码不符合要求')
+        setErrorInfo(pwdCheck.message || intl.formatMessage({id:'pages.forget.pwdWeak',defaultMessage:'密码不符合要求'}))
         return
       }
       if (newPwd !== confirmPwd) {
-        setErrorInfo('两次输入的密码不一致')
+        setErrorInfo(intl.formatMessage({id:'pages.forget.pwdMismatch',defaultMessage:'两次输入的密码不一致'}))
         return
       }
 
@@ -161,14 +161,14 @@ const Forget: React.FC = () => {
       }
 
       if (res.code === 0) {
-        successMessage('密码重置成功，请重新登录')
+        successMessage(intl.formatMessage({id:'pages.forget.success',defaultMessage:'密码重置成功，请重新登录'}))
         history.replace('/user/login')
       } else {
-        setErrorInfo(res.msg || '重置失败，请重试')
+        setErrorInfo(res.msg || intl.formatMessage({id:'pages.forget.failed',defaultMessage:'重置失败，请重试'}))
       }
     } catch (e: any) {
       if (e?.errorFields) return
-      errorMessage('操作失败，请重试')
+      errorMessage(intl.formatMessage({id:'pages.common.opFailed',defaultMessage:'操作失败，请重试'}))
     } finally {
       setSubmitting(false)
     }
@@ -196,12 +196,12 @@ const Forget: React.FC = () => {
             contentStyle={{minWidth: 380, maxWidth: '75vw'}}
             logo={<img alt='logo' src='/logo.svg'/>}
             title='微平台'
-            subTitle='重置密码'
+            subTitle={intl.formatMessage({id:'pages.forget.subTitle',defaultMessage:'重置密码'})}
             submitter={{
               resetButtonProps: {style: {display: 'none'}},
               submitButtonProps: {loading: submitting},
               onSubmit: handleSubmit,
-              searchConfig: {submitText: '重置密码'}
+              searchConfig: {submitText: intl.formatMessage({id:'pages.forget.subTitle',defaultMessage:'重置密码'})}
             }}
           >
             <Tabs
@@ -209,8 +209,8 @@ const Forget: React.FC = () => {
               onChange={(key) => { setType(key); setErrorInfo(''); form.resetFields() }}
               centered
               items={[
-                {key: 'phone', label: '手机验证码'},
-                {key: 'email', label: '邮箱验证码'},
+                {key: 'phone', label: intl.formatMessage({id:'pages.tab.phone',defaultMessage:'手机验证码'})},
+                {key: 'email', label: intl.formatMessage({id:'pages.tab.email',defaultMessage:'邮箱验证码'})},
               ]}
             />
 
@@ -221,10 +221,10 @@ const Forget: React.FC = () => {
                 <ProFormText
                   name='mobile'
                   fieldProps={{size: 'large', prefix: <MobileOutlined/>}}
-                  placeholder='手机号'
+                  placeholder={intl.formatMessage({id:'pages.login.phoneNumber.ph',defaultMessage:'手机号'})}
                   rules={[
-                    {required: true, message: '请输入手机号'},
-                    {pattern: mobilePattern, message: '手机号格式错误'},
+                    {required: true, message: intl.formatMessage({id:'pages.login.phoneNumber.required1',defaultMessage:'请输入手机号'})},
+                    {pattern: mobilePattern, message: intl.formatMessage({id:'pages.login.phoneNumber.invalid1',defaultMessage:'手机号格式错误'})},
                   ]}
                 />
                 <ProFormText
@@ -233,13 +233,13 @@ const Forget: React.FC = () => {
                     size: 'large', prefix: <SafetyOutlined/>,
                     suffix: (
                       <div className={styles.captcha}
-                           title='点击刷新验证码'
+                           title={intl.formatMessage({id:'pages.login.captcha.refresh',defaultMessage:'点击刷新验证码'})}
                            onClick={refreshPhoneCaptcha}
                            dangerouslySetInnerHTML={{__html: phoneCaptchaHtml}}/>
                     )
                   }}
-                  placeholder='图形验证码'
-                  rules={[{required: true, message: '请输入图形验证码'}]}
+                  placeholder={intl.formatMessage({id:'pages.login.imageCaptchaVerify.placeholder',defaultMessage:'图形验证码'})}
+                  rules={[{required: true, message: intl.formatMessage({id:'pages.login.imageCaptchaVerify.required',defaultMessage:'请输入图形验证码'})}]}
                 />
                 <ProFormText
                   name='smsCode'
@@ -251,12 +251,12 @@ const Forget: React.FC = () => {
                       <Button type='link' size='small' loading={smsSending}
                               onClick={handleGetSmsCode}
                               style={{padding: 0, marginRight: -8}}>
-                        获取验证码
+{intl.formatMessage({id:'pages.login.getCode',defaultMessage:'获取验证码'})}
                       </Button>
                     )
                   }}
-                  placeholder='短信验证码'
-                  rules={[{required: true, message: '请输入短信验证码'}]}
+                  placeholder={intl.formatMessage({id:'pages.smsCode.ph',defaultMessage:'短信验证码'})}
+                  rules={[{required: true, message: intl.formatMessage({id:'pages.forget.codePh',defaultMessage:'请输入短信验证码'})}]}
                 />
               </>
             )}
@@ -266,10 +266,10 @@ const Forget: React.FC = () => {
                 <ProFormText
                   name='email'
                   fieldProps={{size: 'large', prefix: <MailOutlined/>}}
-                  placeholder='电子邮箱'
+                  placeholder={intl.formatMessage({id:'pages.login.email.placeholder',defaultMessage:'电子邮箱'})}
                   rules={[
-                    {required: true, message: '请输入邮箱'},
-                    {pattern: emailPattern, message: '邮箱格式错误'},
+                    {required: true, message: intl.formatMessage({id:'pages.login.email.required3',defaultMessage:'请输入邮箱'})},
+                    {pattern: emailPattern, message: intl.formatMessage({id:'pages.login.email.invalid2',defaultMessage:'邮箱格式错误'})},
                   ]}
                 />
                 <ProFormText
@@ -278,13 +278,13 @@ const Forget: React.FC = () => {
                     size: 'large', prefix: <SafetyOutlined/>,
                     suffix: (
                       <div className={styles.captcha}
-                           title='点击刷新验证码'
+                           title={intl.formatMessage({id:'pages.login.captcha.refresh',defaultMessage:'点击刷新验证码'})}
                            onClick={refreshEmailCaptcha}
                            dangerouslySetInnerHTML={{__html: emailCaptchaHtml}}/>
                     )
                   }}
-                  placeholder='图形验证码'
-                  rules={[{required: true, message: '请输入图形验证码'}]}
+                  placeholder={intl.formatMessage({id:'pages.login.imageCaptchaVerify.placeholder',defaultMessage:'图形验证码'})}
+                  rules={[{required: true, message: intl.formatMessage({id:'pages.login.imageCaptchaVerify.required',defaultMessage:'请输入图形验证码'})}]}
                 />
                 <ProFormText
                   name='emailCode'
@@ -296,12 +296,12 @@ const Forget: React.FC = () => {
                       <Button type='link' size='small' loading={emailSending}
                               onClick={handleGetEmailCode}
                               style={{padding: 0, marginRight: -8}}>
-                        获取验证码
+{intl.formatMessage({id:'pages.login.getCode',defaultMessage:'获取验证码'})}
                       </Button>
                     )
                   }}
-                  placeholder='邮箱验证码'
-                  rules={[{required: true, message: '请输入邮箱验证码'}]}
+                  placeholder={intl.formatMessage({id:'pages.tab.email',defaultMessage:'邮箱验证码'})}
+                  rules={[{required: true, message: intl.formatMessage({id:'pages.forget.emailCodeRequired',defaultMessage:'请输入邮箱验证码'})}]}
                 />
               </>
             )}
@@ -309,14 +309,14 @@ const Forget: React.FC = () => {
             <ProFormText.Password
               name='newPassword'
               fieldProps={{size: 'large', prefix: <LockOutlined/>}}
-              placeholder='新密码（8-32位，需含大小写字母、数字、符号中的至少三项）'
-              rules={[{required: true, message: '请输入新密码'}]}
+              placeholder={intl.formatMessage({id:'pages.forget.newPwdPlaceholder',defaultMessage:'新密码（8-32位，需含大小写字母、数字、符号中的至少三项）'})}
+              rules={[{required: true, message: intl.formatMessage({id:'pages.forget.newPwdRequired',defaultMessage:'请输入新密码'})}]}
             />
             <ProFormText.Password
               name='confirmPassword'
               fieldProps={{size: 'large', prefix: <LockOutlined/>}}
-              placeholder='确认新密码'
-              rules={[{required: true, message: '请再次输入新密码'}]}
+              placeholder={intl.formatMessage({id:'pages.forget.confirmPwd',defaultMessage:'确认新密码'})}
+              rules={[{required: true, message: intl.formatMessage({id:'pages.forget.confirmAgain',defaultMessage:'请再次输入新密码'})}]}
             />
 
             <div style={{marginBottom: 24, display: 'flex'}}>

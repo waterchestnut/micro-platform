@@ -1,4 +1,5 @@
 import {Modal, Spin, Result, Button, Input, Space, Tabs} from 'antd'
+import {getIntl} from '@umijs/max'
 import {ReloadOutlined, UserOutlined, LockOutlined, SafetyOutlined, MobileOutlined, MailOutlined} from '@ant-design/icons'
 import React, {useEffect, useRef, useState} from 'react'
 import {
@@ -122,7 +123,7 @@ const WechatLoginModal: React.FC<WechatLoginModalProps> = ({open, onCancel, onSu
       }
       if (authRes.code !== 0) {
         setStatus('error')
-        setErrorMsg(authRes.msg || '获取微信登录链接失败')
+        setErrorMsg(authRes.msg || getIntl().formatMessage({id:'pages.wechat.authUrlFailed',defaultMessage:'获取微信登录链接失败'}))
         return
       }
       setAuthUrl(authRes.data.authUrl)
@@ -131,7 +132,7 @@ const WechatLoginModal: React.FC<WechatLoginModalProps> = ({open, onCancel, onSu
       startPolling(authRes.data.state)
     } catch (err) {
       setStatus('error')
-      setErrorMsg('网络异常，请重试')
+      setErrorMsg(getIntl().formatMessage({id:'pages.wechat.netError',defaultMessage:'网络异常，请重试'}))
     }
   }
 
@@ -151,10 +152,10 @@ const WechatLoginModal: React.FC<WechatLoginModalProps> = ({open, onCancel, onSu
       if (res.code === 0) {
         onSuccess(res.data.accessToken, res.data.refreshToken)
       } else {
-        errorMessage(res.msg || '注册失败')
+        errorMessage(res.msg || getIntl().formatMessage({id:'pages.register.failed',defaultMessage:'注册失败'}))
       }
     } catch (err) {
-      errorMessage('注册失败，请重试')
+      errorMessage(getIntl().formatMessage({id:'pages.register.retry2',defaultMessage:'注册失败，请重试'}))
     }
   }
 
@@ -193,7 +194,7 @@ const WechatLoginModal: React.FC<WechatLoginModalProps> = ({open, onCancel, onSu
     try {
       const res = await getSmsCode(bindPhone, bindPhoneCaptchaKey, bindPhoneCaptcha)
       if (res.code !== 0) {
-        errorMessage(res.msg || '获取验证码失败')
+        errorMessage(res.msg || getIntl().formatMessage({id:'pages.login.codeSendFailed',defaultMessage:'获取验证码失败'}))
         refreshPhoneCaptcha()
       }
     } catch (err) {
@@ -206,7 +207,7 @@ const WechatLoginModal: React.FC<WechatLoginModalProps> = ({open, onCancel, onSu
     try {
       const res = await getEmailCode(bindEmail, bindEmailCaptchaKey, bindEmailCaptcha)
       if (res.code !== 0) {
-        errorMessage(res.msg || '获取验证码失败')
+        errorMessage(res.msg || getIntl().formatMessage({id:'pages.login.codeSendFailed',defaultMessage:'获取验证码失败'}))
         refreshEmailCaptcha()
       }
     } catch (err) {
@@ -236,16 +237,16 @@ const WechatLoginModal: React.FC<WechatLoginModalProps> = ({open, onCancel, onSu
 
       const res = await bindWechatWithLogin(stateKey, loginType, params)
       if (res.code === 0) {
-        successMessage('绑定成功')
+        successMessage(getIntl().formatMessage({id:'pages.wechat.bindSuccess',defaultMessage:'绑定成功'}))
         onSuccess(res.data.accessToken, res.data.refreshToken)
       } else {
-        errorMessage(res.msg || '操作失败')
+        errorMessage(res.msg || getIntl().formatMessage({id:'pages.common.opFailedShort',defaultMessage:'操作失败'}))
         if (bindTab === 'account') refreshAccountCaptcha()
         else if (bindTab === 'phone') refreshPhoneCaptcha()
         else refreshEmailCaptcha()
       }
     } catch (err) {
-      errorMessage('操作失败，请重试')
+      errorMessage(getIntl().formatMessage({id:'pages.common.opFailed',defaultMessage:'操作失败，请重试'}))
     } finally {
       setBindLoading(false)
     }
@@ -260,22 +261,22 @@ const WechatLoginModal: React.FC<WechatLoginModalProps> = ({open, onCancel, onSu
       case 'loading':
         return (
           <div style={{textAlign: 'center', padding: '60px 0'}}>
-            <Spin size='large' tip='加载中...'/>
+            <Spin size='large' tip={getIntl().formatMessage({id:'pages.loading',defaultMessage:'加载中\.\.\.'})}/>
           </div>
         )
 
       case 'qrcode':
         return (
           <div style={{textAlign: 'center', padding: '20px 0'}}>
-            <p style={{marginBottom: 16, color: '#666'}}>请使用微信扫描二维码登录</p>
+            <p style={{marginBottom: 16, color: '#666'}}>{getIntl().formatMessage({id:'pages.wechat.scanTip',defaultMessage:'请使用微信扫描二维码登录'})}</p>
             <img
               ref={imgRef}
               src={qrCodeImgUrl}
-              alt='微信扫码登录'
+              alt={getIntl().formatMessage({id:'pages.login.wechatLogin',defaultMessage:'微信扫码登录'})}
               style={{width: 200, height: 200, border: '1px solid #eee', borderRadius: 4}}
-              onError={() => { setStatus('error'); setErrorMsg('二维码加载失败') }}
+              onError={() => { setStatus('error'); setErrorMsg(getIntl().formatMessage({id:'pages.wechat.qrFailed',defaultMessage:'二维码加载失败'})) }}
             />
-            <p style={{marginTop: 12, color: '#999', fontSize: 12}}>二维码有效期5分钟，请尽快扫码</p>
+            <p style={{marginTop: 12, color: '#999', fontSize: 12}}>{getIntl().formatMessage({id:'pages.wechat.qrExpiry',defaultMessage:'二维码有效期5分钟，请尽快扫码'})}</p>
           </div>
         )
 
@@ -284,17 +285,17 @@ const WechatLoginModal: React.FC<WechatLoginModalProps> = ({open, onCancel, onSu
           <div style={{textAlign: 'center', padding: '20px 0'}}>
             {nickName && <p style={{fontSize: 16, fontWeight: 500, marginBottom: 12}}>Hi, {nickName}</p>}
             {allowRegister
-              ? <p style={{color: '#666', marginBottom: 24}}>该微信未关联平台账号，请选择：</p>
-              : <p style={{color: '#666', marginBottom: 24}}>该微信未关联平台账号，请绑定已有账号：</p>
+              ? <p style={{color: '#666', marginBottom: 24}}>{getIntl().formatMessage({id:'pages.wechat.unregistered',defaultMessage:'该微信未关联平台账号，请选择：'})}</p>
+              : <p style={{color: '#666', marginBottom: 24}}>{getIntl().formatMessage({id:'pages.wechat.unregisteredBind',defaultMessage:'该微信未关联平台账号，请绑定已有账号：'})}</p>
             }
             <Space direction='vertical' size={12} style={{width: '100%'}}>
               {allowRegister && (
                 <Button type='primary' block onClick={handleRegister}>
-                  注册新账号
+{getIntl().formatMessage({id:'pages.wechat.newAccount',defaultMessage:'注册新账号'})}
                 </Button>
               )}
               <Button type={allowRegister ? 'default' : 'primary'} block onClick={goBindLogin}>
-                绑定已有账号
+{getIntl().formatMessage({id:'pages.wechat.bindExisting',defaultMessage:'绑定已有账号'})}
               </Button>
             </Space>
           </div>
@@ -303,7 +304,7 @@ const WechatLoginModal: React.FC<WechatLoginModalProps> = ({open, onCancel, onSu
       case 'bindLogin':
         return (
           <div style={{padding: '10px 0'}}>
-            <p style={{color: '#666', marginBottom: 12}}>请输入已有账号信息完成绑定</p>
+            <p style={{color: '#666', marginBottom: 12}}>{getIntl().formatMessage({id:'pages.wechat.bindIntro',defaultMessage:'请输入已有账号信息完成绑定'})}</p>
             <Tabs
               activeKey={bindTab}
               onChange={(key) => {
@@ -317,16 +318,16 @@ const WechatLoginModal: React.FC<WechatLoginModalProps> = ({open, onCancel, onSu
               items={[
                 {
                   key: 'account',
-                  label: '账户密码',
+                  label: getIntl().formatMessage({id:'pages.tab.account',defaultMessage:'账户密码'}),
                   children: (
                     <div>
-                      <Input prefix={<UserOutlined/>} placeholder='用户名/手机号/邮箱'
+                      <Input prefix={<UserOutlined/>} placeholder={getIntl().formatMessage({id:'pages.login.bind.username',defaultMessage:'用户名/手机号/邮箱'})}
                              style={{marginBottom: 12}}
                              value={bindUsername} onChange={e => setBindUsername(e.target.value)} />
-                      <Input.Password prefix={<LockOutlined/>} placeholder='密码'
+                      <Input.Password prefix={<LockOutlined/>} placeholder={getIntl().formatMessage({id:'pages.login.bind.password',defaultMessage:'密码'})}
                                       style={{marginBottom: 12}}
                                       value={bindPassword} onChange={e => setBindPassword(e.target.value)} />
-                      <Input prefix={<SafetyOutlined/>} placeholder='图形验证码'
+                      <Input prefix={<SafetyOutlined/>} placeholder={getIntl().formatMessage({id:'pages.login.imageCaptchaVerify.placeholder',defaultMessage:'图形验证码'})}
                              value={bindCaptcha} onChange={e => setBindCaptcha(e.target.value)}
                              suffix={<div dangerouslySetInnerHTML={{__html: bindCaptchaHtml}}
                                           onClick={refreshAccountCaptcha}
@@ -336,49 +337,49 @@ const WechatLoginModal: React.FC<WechatLoginModalProps> = ({open, onCancel, onSu
                 },
                 {
                   key: 'phone',
-                  label: '手机验证码',
+                  label: getIntl().formatMessage({id:'pages.tab.phone',defaultMessage:'手机验证码'}),
                   children: (
                     <div>
-                      <Input prefix={<MobileOutlined/>} placeholder='手机号'
+                      <Input prefix={<MobileOutlined/>} placeholder={getIntl().formatMessage({id:'pages.login.phoneNumber.ph',defaultMessage:'手机号'})}
                              style={{marginBottom: 12}}
                              value={bindPhone} onChange={e => setBindPhone(e.target.value)} />
-                      <Input prefix={<SafetyOutlined/>} placeholder='图形验证码'
+                      <Input prefix={<SafetyOutlined/>} placeholder={getIntl().formatMessage({id:'pages.login.imageCaptchaVerify.placeholder',defaultMessage:'图形验证码'})}
                              style={{marginBottom: 12}}
                              value={bindPhoneCaptcha} onChange={e => setBindPhoneCaptcha(e.target.value)}
                              suffix={<div dangerouslySetInnerHTML={{__html: bindPhoneCaptchaHtml}}
                                           onClick={refreshPhoneCaptcha}
                                           style={{cursor: 'pointer', width: 80, height: 32}}/>} />
-                      <Input prefix={<LockOutlined/>} placeholder='短信验证码'
+                      <Input prefix={<LockOutlined/>} placeholder={getIntl().formatMessage({id:'pages.smsCode.ph',defaultMessage:'短信验证码'})}
                              value={bindSmsCode} onChange={e => setBindSmsCode(e.target.value)}
-                             suffix={<a onClick={handleGetSmsCode}>获取验证码</a>} />
+                             suffix={<a onClick={handleGetSmsCode}>{getIntl().formatMessage({id:'pages.login.getCode',defaultMessage:'获取验证码'})}</a>} />
                     </div>
                   )
                 },
                 {
                   key: 'email',
-                  label: '邮箱验证码',
+                  label: getIntl().formatMessage({id:'pages.tab.email',defaultMessage:'邮箱验证码'}),
                   children: (
                     <div>
-                      <Input prefix={<MailOutlined/>} placeholder='邮箱'
+                      <Input prefix={<MailOutlined/>} placeholder={getIntl().formatMessage({id:'pages.email.ph',defaultMessage:'邮箱'})}
                              style={{marginBottom: 12}}
                              value={bindEmail} onChange={e => setBindEmail(e.target.value)} />
-                      <Input prefix={<SafetyOutlined/>} placeholder='图形验证码'
+                      <Input prefix={<SafetyOutlined/>} placeholder={getIntl().formatMessage({id:'pages.login.imageCaptchaVerify.placeholder',defaultMessage:'图形验证码'})}
                              style={{marginBottom: 12}}
                              value={bindEmailCaptcha} onChange={e => setBindEmailCaptcha(e.target.value)}
                              suffix={<div dangerouslySetInnerHTML={{__html: bindEmailCaptchaHtml}}
                                           onClick={refreshEmailCaptcha}
                                           style={{cursor: 'pointer', width: 80, height: 32}}/>} />
-                      <Input prefix={<LockOutlined/>} placeholder='邮箱验证码'
+                      <Input prefix={<LockOutlined/>} placeholder={getIntl().formatMessage({id:'pages.tab.email',defaultMessage:'邮箱验证码'})}
                              value={bindEmailCode} onChange={e => setBindEmailCode(e.target.value)}
-                             suffix={<a onClick={handleGetEmailCode}>获取验证码</a>} />
+                             suffix={<a onClick={handleGetEmailCode}>{getIntl().formatMessage({id:'pages.login.getCode',defaultMessage:'获取验证码'})}</a>} />
                     </div>
                   )
                 },
               ]}
             />
             <div style={{marginTop: 6, display: 'flex', gap: 8}}>
-              <Button block onClick={() => setStatus('unregistered')}>返回</Button>
-              <Button type='primary' block loading={bindLoading} onClick={doBindLogin}>登录并绑定</Button>
+              <Button block onClick={() => setStatus('unregistered')}>{getIntl().formatMessage({id:'pages.wechat.back',defaultMessage:'返回'})}</Button>
+              <Button type='primary' block loading={bindLoading} onClick={doBindLogin}>{getIntl().formatMessage({id:'pages.wechat.bindLogin',defaultMessage:'登录并绑定'})}</Button>
             </div>
           </div>
         )
@@ -386,16 +387,16 @@ const WechatLoginModal: React.FC<WechatLoginModalProps> = ({open, onCancel, onSu
       case 'expired':
         return (
           <Result
-            status='warning' title='二维码已过期' subTitle='请刷新二维码后重新扫码'
-            extra={<Button type='primary' icon={<ReloadOutlined/>} onClick={loadQrCode}>刷新二维码</Button>}
+            status='warning' title={getIntl().formatMessage({id:'pages.wechat.qrExpired',defaultMessage:'二维码已过期'})} subTitle={getIntl().formatMessage({id:'pages.wechat.qrRefreshHint',defaultMessage:'请刷新二维码后重新扫码'})}
+            extra={<Button type='primary' icon={<ReloadOutlined/>} onClick={loadQrCode}>{getIntl().formatMessage({id:'pages.wechat.refreshQr',defaultMessage:'刷新二维码'})}</Button>}
           />
         )
 
       case 'error':
         return (
           <Result
-            status='error' title='加载失败' subTitle={errorMsg || '未知错误'}
-            extra={<Button type='primary' icon={<ReloadOutlined/>} onClick={loadQrCode}>重新加载</Button>}
+            status='error' title={getIntl().formatMessage({id:'pages.wechat.loadFailed',defaultMessage:'加载失败'})} subTitle={errorMsg || getIntl().formatMessage({id:'pages.wechat.unknownError',defaultMessage:'未知错误'})}
+            extra={<Button type='primary' icon={<ReloadOutlined/>} onClick={loadQrCode}>{getIntl().formatMessage({id:'pages.wechat.reload',defaultMessage:'重新加载'})}</Button>}
           />
         )
 
@@ -406,7 +407,7 @@ const WechatLoginModal: React.FC<WechatLoginModalProps> = ({open, onCancel, onSu
 
   return (
     <Modal
-      title='微信扫码登录'
+      title={getIntl().formatMessage({id:'pages.login.wechatLogin',defaultMessage:'微信扫码登录'})}
       open={open}
       onCancel={onCancel}
       footer={null}
