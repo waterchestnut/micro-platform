@@ -1,5 +1,5 @@
 import {Footer, AvatarDropdown, AvatarName} from '@/components'
-import SelectLang from '@/components/SelectLang'
+import {SelectLang} from '@/components/RightContent'
 import '@/utils/wujieLocaleSync'
 import {getRuntimeBranding} from '@/utils/runtimeBranding'
 import {LinkOutlined} from '@ant-design/icons'
