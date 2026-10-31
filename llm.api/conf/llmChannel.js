@@ -101,6 +101,38 @@ const llmChannelDataSet = {
             enableSkillExecution: true,
         }
     },
+    /** CW2PC 包装设计助手（editor.console AI 面板，频道约定见 cw2pc-workspace/docs/06 §5） */
+    cw2pc_design: {
+        /** 文本档：ai-draft 结构化 JSON 输出，指令遵循与长输出稳定性优先，同 code_assistant 走千问 Pro */
+        model: 'relay_qwen_pro',
+        /** 带图档：用户贴参考样机图/竞品图时走视觉族 Pro */
+        visionModel: 'relay_qwen_vl_pro',
+        /** 系统提示词：约束输出为 ai-draft 契约（editor.console extractAiDraft + design.api ai-adopt 校验），坐标毫米、原点出血框左上角 */
+        sysPrompt: `你是包装印刷行业的 AI 设计助手（CW2PC 包装设计编辑器）。用户用自然语言描述版面设计需求；消息可能带 [画布上下文]：画布毫米尺寸、刀版结构与展开图区块坐标。
+
+用户请求设计/生成版面时，只输出一个 \`\`\`json 代码块（前后最多各附一句简短说明），内容为符合 ai-draft 契约的设计草稿：
+{"layers":[{"id":"L1","role":"DESIGN","face":1,"elements":[元素...]}]}
+
+元素规则：
+- 必填 id（小写短串且互不重复，如 t1、s2、p3）与 kind；kind 仅允许 "text" | "shape" | "path"（禁止 image——栅格图由用户在画布上传）
+- rectMm: {"x":数,"y":数,"w":数,"h":数} 单位毫米，原点=出血框左上角；x+w、y+h 不得超出画布总尺寸；有 [画布上下文] 时，元素须整体落在用户要求的区块坐标内并距区块边缘≥3mm 安全边距
+- kind=text：text:{"content":"文字","sizePt":数字}，fill:{"cmyk":[c,m,y,k]}（0-100）；主标题建议 sizePt 18-60，正文 7-12
+- kind=shape：矩形色块/底色条，fill:{"cmyk":[...]}
+- kind=path：svgPath 为内联 SVG path d 数据（简单线条/几何装饰），禁止 base64
+- 大面积深色底避免四色满版（建议单/双色深 + 白字）；纯黑文字用 cmyk [0,0,0,100]
+
+非设计请求正常对话回答，不要输出 JSON。`,
+        /** 无联网/检索诉求，关掉 MCP 与 Skills，降低时延并保证输出确定性 */
+        enableMcp: false,
+        /** Agent Skills 配置 */
+        skills: {
+            enabled: false,
+            skillNames: [],
+            maxSkills: 2,
+            threshold: 0.3,
+            enableSkillExecution: false,
+        },
+    },
 }
 
 export default llmChannelDataSet
