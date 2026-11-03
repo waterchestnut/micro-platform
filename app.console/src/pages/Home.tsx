@@ -1,6 +1,6 @@
 import {PageContainer} from '@ant-design/pro-components'
 import {history, useModel} from '@umijs/max'
-import {Button, Card, Col, Empty, Row, Skeleton, Space, Statistic, Tag, theme} from 'antd'
+import {Button, Card, Col, Empty, Row, Skeleton, Space, Tag, theme} from 'antd'
 import {
   AppstoreAddOutlined,
   AppstoreOutlined,
@@ -96,20 +96,26 @@ const Home: React.FC = () => {
 
   const userName = currentUser?.realName || currentUser?.nickName || currentUser?.userCode || ''
 
-  /** 概览指标卡 */
-  const renderKpi = (title: string, value: React.ReactNode, icon: React.ReactNode, color: string, suffix?: string) => (
+  /** 概览指标卡（自绘数值区：Statistic 的 value 不接受 ReactNode，塞 JSX 会被字符串化成 [object Object]） */
+  const renderKpi = (title: string, content: React.ReactNode, icon: React.ReactNode, color: string) => (
     <Card
       bordered={false}
       style={{borderRadius: 12, height: '100%'}}
       styles={{body: {padding: '20px 24px'}}}
     >
       <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between'}}>
-        <Statistic title={title} value={value as any} suffix={suffix} valueStyle={{fontWeight: 600}}/>
+        <div style={{minWidth: 0}}>
+          <div style={{fontSize: token.fontSize, color: token.colorTextSecondary, marginBottom: 6}}>{title}</div>
+          <div style={{fontSize: 24, fontWeight: 600, color: token.colorText, lineHeight: '32px', whiteSpace: 'nowrap'}}>
+            {content}
+          </div>
+        </div>
         <div
           style={{
             width: 48,
             height: 48,
             borderRadius: 12,
+            flexShrink: 0,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -123,6 +129,9 @@ const Home: React.FC = () => {
       </div>
     </Card>
   )
+
+  const kpiUnit = (n: number, unit: string) =>
+    n > 0 ? <span style={{fontSize: 14, fontWeight: 400, marginLeft: 4, color: token.colorTextSecondary}}>{unit}</span> : null
 
   /** 图表卡片外壳：骨架屏 + 空态 */
   const renderChartCard = (
@@ -246,34 +255,34 @@ const Home: React.FC = () => {
       <Row gutter={[16, 16]} style={{marginBottom: 16}}>
         <Col xs={12} md={kpiSpan}>
           <Skeleton loading={myLoading} active paragraph={{rows: 1}}>
-            {renderKpi('我创建的应用', myTotal, <AppstoreOutlined/>, token.colorPrimary, myTotal > 0 ? '个' : undefined)}
+            {renderKpi('我创建的应用', <>{myTotal}{kpiUnit(myTotal, '个')}</>, <AppstoreOutlined/>, token.colorPrimary)}
           </Skeleton>
         </Col>
         <Col xs={12} md={kpiSpan}>
           <Skeleton loading={myLoading} active paragraph={{rows: 1}}>
-            {renderKpi('覆盖应用分类', myData.length, <TagsOutlined/>, '#722ed1', myData.length > 0 ? '类' : undefined)}
+            {renderKpi('覆盖应用分类', <>{myData.length}{kpiUnit(myData.length, '类')}</>, <TagsOutlined/>, '#722ed1')}
           </Skeleton>
         </Col>
         <Col xs={12} md={kpiSpan}>
           <Skeleton loading={myLoading} active paragraph={{rows: 1}}>
-            {topTag ? (
-              renderKpi(
-                '最活跃分类',
-                <Tag color="processing" style={{fontSize: 16, padding: '2px 12px', marginInlineEnd: 0}}>
+            {renderKpi(
+              '最活跃分类',
+              topTag ? (
+                <Tag color="processing" style={{fontSize: 16, padding: '2px 12px', marginInlineEnd: 0, lineHeight: '26px'}}>
                   {topTag.value}
-                </Tag>,
-                <FundOutlined/>,
-                '#fa8c16',
-              )
-            ) : (
-              renderKpi('最活跃分类', '—', <FundOutlined/>, '#fa8c16')
+                </Tag>
+              ) : (
+                '—'
+              ),
+              <FundOutlined/>,
+              '#fa8c16',
             )}
           </Skeleton>
         </Col>
         {canViewIpmi && (
           <Col xs={12} md={kpiSpan}>
             <Skeleton loading={ipmiLoading} active paragraph={{rows: 1}}>
-              {renderKpi('全平台应用', ipmiTotal, <TeamOutlined/>, '#13c2c2', ipmiTotal > 0 ? '个' : undefined)}
+              {renderKpi('全平台应用', <>{ipmiTotal}{kpiUnit(ipmiTotal, '个')}</>, <TeamOutlined/>, '#13c2c2')}
             </Skeleton>
           </Col>
         )}
