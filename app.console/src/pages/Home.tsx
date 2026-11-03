@@ -167,16 +167,17 @@ const Home: React.FC = () => {
     data: data.map(_ => ({tag: _.value, '应用数量': _.count})),
     xField: 'tag',
     yField: '应用数量',
-    columnWidthRatio: 0.45,
     label: {
       position: 'top' as const,
     },
+    // 注意：G2 v5 interval 的 style.radius 只接受 number，传数组会整体赋给四角导致路径损坏、柱子消失；
+    // 分角圆角要用 radiusTopLeft/radiusTopRight 这类单值键（maxWidth 为库内 shape 实际支持的键）
     style: {
       fill: color ?? token.colorPrimary,
-      radius: [6, 6, 0, 0] as number[],
+      radiusTopLeft: 6,
+      radiusTopRight: 6,
+      maxWidth: 36,
     },
-    interaction: {tooltip: {shared: true}},
-    axis: {y: {labelFormatter: (v: number) => `${v}`}},
   })
 
   const pieConfig = {
