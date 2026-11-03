@@ -14,6 +14,7 @@ import {
 import {FormattedMessage, history, useIntl, Helmet} from '@umijs/max'
 import {Alert, message, Tabs, Form, Button} from 'antd'
 import Settings from '../../../../config/defaultSettings'
+import {getPortalTitle} from '@/utils/runtimeBranding'
 import React, {useState, useEffect} from 'react'
 import {createStyles} from 'antd-style'
 import {emailPattern, mobilePattern, checkPasswordComplexity} from '@/utils/validator'
@@ -179,7 +180,7 @@ const Forget: React.FC = () => {
       <Helmet>
         <title>
           {intl.formatMessage({id: 'pages.login.forgotPassword', defaultMessage: '忘记密码'})}
-          - {Settings.title}
+          - {getPortalTitle('微平台')}
         </title>
       </Helmet>
       <div style={{
@@ -195,7 +196,7 @@ const Forget: React.FC = () => {
             containerStyle={{borderRadius: 8}}
             contentStyle={{minWidth: 380, maxWidth: '75vw'}}
             logo={<img alt='logo' src='/logo.svg'/>}
-            title='微平台'
+            title={getPortalTitle('微平台')}
             subTitle={intl.formatMessage({id:'pages.forget.subTitle',defaultMessage:'重置密码'})}
             submitter={{
               resetButtonProps: {style: {display: 'none'}},

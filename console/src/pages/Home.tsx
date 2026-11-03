@@ -5,6 +5,7 @@ import {AppstoreOutlined, GlobalOutlined, RightOutlined, RobotOutlined} from '@a
 import React, {useMemo} from 'react';
 import {checkPermissions} from '@/utils/authority';
 import {getDocHttpUrl} from '@/utils/util';
+import {getBrandTitle} from '@/utils/runtimeBranding';
 // @ts-ignore
 import type {APPAPI} from '@/services/app/typings';
 
@@ -78,7 +79,7 @@ const Home: React.FC = () => {
               {getGreeting()}，{userName}
             </div>
             <div style={{color: token.colorTextSecondary}}>
-              {formatDate()} · 欢迎回到微平台，下面列出了你可以访问的全部应用
+              {formatDate()} · 欢迎回到{getBrandTitle('微平台')}，下面列出了你可以访问的全部应用
             </div>
           </Col>
           <Col flex="none">

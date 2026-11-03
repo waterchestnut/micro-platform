@@ -134,7 +134,7 @@ export default defineConfig({
   links: [{rel: 'stylesheet', href: '/css/brand.css'}],
 headScripts: [
     // 部署级品牌 env（值=baked 占位符，运行期 99-modify-config.sh 按 Deployment env 替换）
-    {content: `APP_TITLE='${process.env.APP_TITLE || 'CW2PC_APP_TITLE'}';APP_LOGO='${process.env.APP_LOGO || 'CW2PC_APP_LOGO'}';APP_ICP='${process.env.APP_ICP || 'CW2PC_APP_ICP'}';APP_COPYRIGHT='${process.env.APP_COPYRIGHT || 'CW2PC_APP_COPYRIGHT'}';APP_THEME='${process.env.APP_THEME || 'CW2PC_APP_THEME'}';`},
+    {content: `APP_TITLE='${process.env.APP_TITLE || 'CW2PC_APP_TITLE'}';APP_LOGO='${process.env.APP_LOGO || 'CW2PC_APP_LOGO'}';APP_ICP='${process.env.APP_ICP || 'CW2PC_APP_ICP'}';APP_COPYRIGHT='${process.env.APP_COPYRIGHT || 'CW2PC_APP_COPYRIGHT'}';APP_THEME='${process.env.APP_THEME || 'CW2PC_APP_THEME'}';APP_PORTAL_TITLE='${process.env.APP_PORTAL_TITLE || 'CW2PC_APP_PORTAL_TITLE'}';`},
     // 解决首次加载时白屏的问题
     {src: '/scripts/loading.js', async: true},
     {

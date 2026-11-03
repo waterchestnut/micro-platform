@@ -24,3 +24,8 @@ export function getRuntimeFooter(): {icp?: string; copyrightHolder?: string} {
     if (holder) branding.copyrightHolder = holder
     return branding
 }
+
+/** 页面正文里的品牌名（欢迎语等）：取本壳 APP_TITLE，未注入回落烘焙默认值 */
+export function getBrandTitle(fallback: string): string {
+    return clean((window as any).APP_TITLE) || fallback
+}

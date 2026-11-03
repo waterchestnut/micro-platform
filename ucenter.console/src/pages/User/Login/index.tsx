@@ -20,6 +20,7 @@ import {FormattedMessage, history, SelectLang, useIntl, useModel, Helmet} from '
 // 1. 从 antd 导入 Form
 import {Alert, Divider, message, Space, Tabs, theme, Form} from 'antd'
 import Settings from '../../../../config/defaultSettings'
+import {getPortalTitle} from '@/utils/runtimeBranding'
 import React, {useEffect, useState} from 'react'
 import {flushSync} from 'react-dom' // 注意：flushSync 在此场景下可能非必需，但按要求保留
 import {createStyles} from 'antd-style'
@@ -251,7 +252,7 @@ const Login: React.FC = () => {
             id: 'menu.login',
             defaultMessage: '登录页',
           })}
-          - {Settings.title}
+          - {getPortalTitle('微平台')}
         </title>
       </Helmet>
       {/* 背景视频部分保持不变 */}
@@ -301,8 +302,8 @@ const Login: React.FC = () => {
               maxWidth: '75vw',
             }}
             logo={<img alt='logo' src='/logo.svg'/>}
-            title='微平台'
-            subTitle={intl.formatMessage({id: 'pages.layouts.userLayout.title'})}
+            title={getPortalTitle('微平台')}
+            subTitle={getPortalTitle() ?? intl.formatMessage({id: 'pages.layouts.userLayout.title'})}
             initialValues={{ // 保留原有 initialValues
               autoLogin: true,
             }}
