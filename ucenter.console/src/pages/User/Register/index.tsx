@@ -17,6 +17,7 @@ import Settings from '../../../../config/defaultSettings'
 import React, {useEffect, useState} from 'react'
 import {createStyles} from 'antd-style'
 import {emailPattern, mobilePattern, checkPasswordComplexity} from '@/utils/validator'
+import {getPortalTitle} from '@/utils/runtimeBranding'
 import {getCaptcha} from '@/services/ucenter/captcha'
 import {errorMessage, successMessage} from '@/utils/msg'
 
@@ -125,7 +126,7 @@ const Register: React.FC = () => {
             id: 'menu.register',
             defaultMessage: '注册页',
           })}
-          - {Settings.title}
+          - {getPortalTitle(Settings.title)}
         </title>
       </Helmet>
       <div
@@ -160,7 +161,7 @@ const Register: React.FC = () => {
             }}
             logo={<img alt='logo' src='/logo.svg'/>}
             title={intl.formatMessage({id:'pages.register.userRegister',defaultMessage:'用户注册'})}
-            subTitle={intl.formatMessage({id: 'pages.layouts.userLayout.title'})}
+            subTitle={getPortalTitle() ?? intl.formatMessage({id: 'pages.layouts.userLayout.title'})}
             submitter={{
               searchConfig: {
                 submitText: intl.formatMessage({id:'pages.register.submit',defaultMessage:'注册'})
