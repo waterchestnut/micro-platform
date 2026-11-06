@@ -41,6 +41,7 @@ const pageConfigSchema = new Schema({
     },
     clientCode: {type: String, description: '所属应用标识'},
     name: {type: String, description: '名称'},
+    nameEn: {type: String, description: '英文名称（i18n-menu-label-en：客户端语言环境接口列表显示）'},
     path: {type: String, description: '请求路径', required: true},
     method: {type: [String], description: '请求方法', required: true, enum: RequestMethodEnum.toValues()},
     auth: {type: Boolean, description: '是否用户登录才能访问'},

@@ -21,5 +21,6 @@ const tools = app.tools
 export default new Schema({
     endpointType: {type: String, description: '访问端类型', enum: EndpointTypeEnum.toValues()},
     visitPath: {type: String, description: '访问地址'},
+    nameEn: {type: String, description: '访问端英文名称（i18n-menu-label-en 预留，菜单显示当前以 Client.nameEn 为准）'},
     status: {type: Number, default: 0, description: '状态', enum: StatusEnum.toValues()},
 }, {_id: false})

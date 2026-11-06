@@ -165,6 +165,7 @@ export async function updateClient(curUserInfo, clientCode, newClient) {
     await saveUcenterClient(curUserInfo, {
         clientCode,
         clientName: client.clientName,
+        nameEn: newClient.nameEn,
         description: client.description,
         status: newClient.status,
     })

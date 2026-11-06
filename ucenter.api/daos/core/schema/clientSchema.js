@@ -42,6 +42,7 @@ const clientSchema = new Schema({
         required: true
     },
     clientName: {type: String, description: '应用名称'},
+    nameEn: {type: String, description: '应用英文名称（i18n-menu-label-en）'},
     clientSecret: {type: String, description: '应用秘钥'},
     retUrls: {type: [String], description: '授权后的回调地址'},
     grantTypes: {type: [String], default: ['code'], description: '授权模式', enum: OAuthGrantTypeEnum.toValues()},

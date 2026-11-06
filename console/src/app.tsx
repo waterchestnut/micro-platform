@@ -64,7 +64,8 @@ const formatMenuData = (toShowClients: any[], myClients: any[], currentPrivs: an
   let dynamicList: any[] = toShowClients.map((clientInfo: APPAPI.ClientPublic) => {
     let visitPath = clientInfo.endpoints?.find((_) => _.endpointType === 'pc')?.visitPath
     return {
-      name: clientInfo.clientName,
+      // i18n-menu-label-en：英文语言环境优先 Client.nameEn（register-clients 自 registry.titleEn 落库）
+      name: (getLocale().startsWith('en') && clientInfo.nameEn) || clientInfo.clientName,
       path: visitPath?.startsWith('/') ? visitPath : `/sub/${clientInfo.clientCode}`,
       authority: clientInfo.needAuth2Show ? [`${clientInfo.clientCode}-browse`] : false,
     }

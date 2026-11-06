@@ -19,6 +19,9 @@ export function registerClientPageRoutes(fastify, opts, tags = ['client-ipmi']) 
             name: {
                 type: 'string'
             },
+            nameEn: {
+                type: 'string'
+            },
             path: {
                 type: 'string'
             },

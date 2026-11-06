@@ -27,6 +27,9 @@ export function initService(server) {
                 if (call.request.clientInfo?.clientName?.length > 0) {
                     newInfo.clientName = call.request.clientInfo.clientName
                 }
+                if (call.request.clientInfo?.nameEn?.length > 0) {
+                    newInfo.nameEn = call.request.clientInfo.nameEn
+                }
                 if (call.request.clientInfo?.description?.length > 0) {
                     newInfo.description = call.request.clientInfo.description
                 }

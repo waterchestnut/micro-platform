@@ -8,6 +8,8 @@ declare namespace APPAPI {
     clientCode: string;
     /** 应用名称 */
     clientName?: string;
+    /** 应用英文名称（i18n-menu-label-en） */
+    nameEn?: string;
     /** 状态 */
     status?: -1 | 0 | 1;
     /** 应用描述 */

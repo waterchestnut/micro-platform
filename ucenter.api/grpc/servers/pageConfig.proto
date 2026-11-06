@@ -61,4 +61,5 @@ message PageConfigSchema {
   repeated Tag tags = 11;
   uint32 orderNum = 12;
   string clientName = 13;
+  string nameEn = 14;
 }

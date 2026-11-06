@@ -49,6 +49,7 @@ const clientSchema = new Schema({
         required: true
     },
     clientName: {type: String, description: '应用名称'},
+    nameEn: {type: String, description: '应用英文名称（i18n-menu-label-en：客户端语言环境菜单/列表显示）'},
     status: {type: Number, default: 0, description: '状态', enum: StatusEnum.toValues()},
     description: {type: String, description: '应用描述'},
     operator: {type: Operator, description: '应用创建者'},

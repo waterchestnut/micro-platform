@@ -72,4 +72,5 @@ message ClientSchema {
   repeated string logoutUrls = 11;
   repeated Tag tags = 12;
   repeated string modulePrivCodes = 13;
+  string nameEn = 14;
 }
