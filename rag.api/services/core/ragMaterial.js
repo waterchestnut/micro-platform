@@ -274,14 +274,22 @@ export async function getTextTest() {
  * @returns {Promise<String>} 处理结果
  */
 export async function handleSimpleMaterial(materialInfo) {
-    if (materialInfo?.handleStatus !== 0 || !materialInfo?.fileList?.length) {
+    if (materialInfo?.handleStatus !== 0) {
+        return 'none'
+    }
+    // 文本物料通道：无 fileList 但 details 含原文时（产品侧登记的语料，如毕设往届论文），
+    // 直接以 details 原文复用后续分段/嵌入链路，与文件解析物料同语义
+    const textDetail = materialInfo?.fileList?.length
+        ? null
+        : (materialInfo?.details || []).find(_ => _.isOriginal === 1 && _.text)
+    if (!materialInfo?.fileList?.length && !textDetail) {
         return 'none'
     }
 
     let ragInfo = await ragInfoDac.getByCode(materialInfo.ragCode)
 
-    let fileInfo = materialInfo.fileList[0]
-    if (!['pdf', 'doc', 'docx', 'xls', 'xlsx', 'html', 'txt'].includes(fileInfo.fileExt)) {
+    let fileInfo = materialInfo.fileList?.[0]
+    if (fileInfo && !['pdf', 'doc', 'docx', 'xls', 'xlsx', 'html', 'txt'].includes(fileInfo.fileExt)) {
         await ragMaterialDac.updateById({
             _id: materialInfo._id, handleStatus: -1, handleError: '不支持的文件格式'
         })
@@ -291,7 +299,7 @@ export async function handleSimpleMaterial(materialInfo) {
         _id: materialInfo._id, handleStatus: 1, handleError: '解析处理中'
     })
     try {
-        let text = await getFileText(fileInfo)
+        let text = fileInfo ? await getFileText(fileInfo) : textDetail.text
         if (!text) {
             await ragMaterialDac.updateById({
                 _id: materialInfo._id, handleStatus: -1, handleError: '未解析到文本内容'
@@ -305,7 +313,7 @@ export async function handleSimpleMaterial(materialInfo) {
             text: text,
             wordCount: text.length,
             tokens: calcTextTokenCount(text),
-            fileCode: fileInfo.fileCode,
+            fileCode: fileInfo ? fileInfo.fileCode : textDetail.fileCode,
         }
         let ret = await nlpChunk(materialInfo.ragCode, materialInfo, originalDetail, materialInfo.operator, ragInfo)
         /*清理现有的分段、分句*/
