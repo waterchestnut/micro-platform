@@ -50,10 +50,12 @@ export async function updateSubAgentTaskWithLock(agentCode, subAgentCode, toUpda
 export async function updateParentAgentTaskWithLock(parentCode, curAgentTaskInfo, curRet, extToUpdate = {}) {
     let lock = null
     let parentAgentTask = null
+    let dispatchNextCode = null
     try {
         lock = await redlock.acquire(['updateAgentTask:' + parentCode], 5000)
         await agentTaskDac.update({'subAgents.$[idx1]': {handleStatus: curRet.handleStatus}}, {agentCode: parentCode}, {arrayFilters: [{'idx1.agentCode': curAgentTaskInfo.agentCode}]})
         parentAgentTask = await agentTaskDac.getByCode(parentCode)
+        const prevStatus = parentAgentTask.handleStatus
         let isDone = true
         let hasError = false
         parentAgentTask.subAgents.forEach((sub) => {
@@ -82,8 +84,25 @@ export async function updateParentAgentTaskWithLock(parentCode, curAgentTaskInfo
         if (Object.keys(toUpdateInfo).length > 0) {
             await agentTaskDac.update(toUpdateInfo, {agentCode: parentCode})
         }
+        // 父任务首次成功完成且自身在 queue 串行链上有后继（典型：sequential 嵌套 parallel 时，
+        // parallel 父级完成后无人派发其 nextAgentCode）——与 execAgentTask 尾部派发同语义
+        if (toUpdate.handleStatus === 2 && ![2, 3].includes(prevStatus)
+            && parentAgentTask.handleMode !== 'manual' && parentAgentTask.nextAgentCode) {
+            dispatchNextCode = parentAgentTask.nextAgentCode
+        }
     } finally {
         await safeUnlock(lock)
+    }
+
+    if (dispatchNextCode) {
+        let nextAgentTask = await agentTaskDac.getByCode(dispatchNextCode)
+        if (nextAgentTask?.handleStatus === 0) {
+            await sendMessage([{
+                topic: kafkaConfig.topics.agentTask.topic,
+                key: nextAgentTask.agentCode,
+                value: JSON.stringify(nextAgentTask)
+            }])
+        }
     }
 
     if (parentAgentTask && parentAgentTask.parentCode) {
@@ -134,7 +153,7 @@ function formatWaitAddAgentTask(agentTaskInfo, taskList, parentInfo) {
     if (agentTaskInfo.agentType === 'sequential' && agentTaskInfo.handleMode === 'queue') {
         subs.forEach((sub, index) => {
             if (index < subs.length - 1) {
-                sub.nextAgentCode = subs[index - 1].agentCode
+                sub.nextAgentCode = subs[index + 1].agentCode
             }
         })
     }

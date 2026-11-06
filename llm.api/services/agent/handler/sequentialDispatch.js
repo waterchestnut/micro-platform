@@ -5,6 +5,7 @@
  */
 import BaseHandler from './base.js'
 import {sendMessage} from '../../../daos/kafka/client.js'
+import agentTaskDac from '../../../daos/core/dac/agentTaskDac.js'
 
 const tools = llm.tools
 const logger = llm.logger
@@ -26,7 +27,11 @@ class SequentialDispatch extends BaseHandler {
                 subsequents: agentTaskInfo.subAgents
             }
         }
-        let subAgentTask = agentTaskInfo.subAgents[0]
+        // subAgents 入库时为简化引用，需取回完整任务再派发（与 execAgentTask 的 nextAgentCode 派发同语义）
+        const subAgentTask = await agentTaskDac.getByCode(agentTaskInfo.subAgents[0].agentCode)
+        if (!subAgentTask) {
+            throw new Error('子任务不存在：' + agentTaskInfo.subAgents[0].agentCode)
+        }
         await sendMessage([{
             topic: kafkaConfig.topics.agentTask.topic,
             key: subAgentTask.agentCode,
