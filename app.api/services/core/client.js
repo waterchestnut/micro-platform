@@ -149,6 +149,7 @@ export async function updateClient(curUserInfo, clientCode, newClient) {
     let client = {
         clientCode,
         clientName: newClient.clientName,
+        nameEn: newClient.nameEn,
         description: newClient.description,
         tags: newClient.tags,
         endpoints: newClient.endpoints,
