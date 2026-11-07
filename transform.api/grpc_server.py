@@ -3,7 +3,7 @@ import os
 from concurrent import futures
 import grpc
 
-from grpcs.servers import helloworld_server, extractor_server, nlp_analyzer_server, converter_server, renderer_server
+from grpcs.servers import helloworld_server, extractor_server, nlp_analyzer_server, converter_server, renderer_server, pdf_server
 
 
 def serve():
@@ -17,6 +17,7 @@ def serve():
     nlp_analyzer_server.register(server)
     converter_server.register(server)
     renderer_server.register(server)
+    pdf_server.register(server)
 
     server.add_insecure_port('[::]:50051')
     server.start()

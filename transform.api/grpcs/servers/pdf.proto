@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package rag;
+
+service Pdf {
+  rpc compile (PdfCompileRequest) returns (PdfCompileResponse) {}
+}
+
+message PdfCompileRequest {
+  // typst 排版源码（产品侧负责 markdown->typst 映射，服务端为通用排版引擎）
+  string typSource = 1;
+}
+
+message PdfCompileResponse {
+  bytes content = 1;
+}
