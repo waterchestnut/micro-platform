@@ -7,8 +7,8 @@ import dotenv from 'dotenv'
 dotenv.config()
 
 export default {
-    /** debug为true时，为调试模式 */
-    debug: true,
+    /** debug为true时，为调试模式（proposals/kafka-client-stream-leak：生产可设 DEBUG_MODE=0 关闭 trace 级全量日志） */
+    debug: process.env['DEBUG_MODE'] !== '0',
     /** 部署环境需要修改，mongodb数据库配置 */
     mongodbConfig: {
         uri: process.env['MONGO_URI'],
@@ -46,12 +46,14 @@ export default {
         clientId: process.env['KAFKA_CLIENTID'],
         brokers: process.env['KAFKA_BROKERS'].split(','),
         sasl: {
-            mechanism: process.env['KAFKA_SASL_MECHANISM'],
+            // @platformatic/kafka validates mechanism against a case-sensitive whitelist (PLAIN/SCRAM-SHA-256/...)；infra ConfigMap 下发小写 plain（kafkajs 约定），本地归一（proposals/kafka-client-stream-leak）
+            mechanism: (process.env['KAFKA_SASL_MECHANISM'] || 'PLAIN').toUpperCase(),
             username: process.env['KAFKA_SASL_USERNAME'],
             password: process.env['KAFKA_SASL_PASSWORD']
         },
         retry: {
-            retries: true,
+            // retries: true 数值化为 1（rejoinGroup 仅试一次即弃，僵尸消费根因之一）——固定 3（proposals/kafka-client-stream-leak）
+            retries: 3,
             retryDelay: 3000
         },
         autocreateTopics: true,

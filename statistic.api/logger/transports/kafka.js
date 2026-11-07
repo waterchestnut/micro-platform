@@ -11,8 +11,13 @@ export default async function (opts) {
     const {saveStatisticContent} = await import('../../services/statistic/index.js')
     return build(async function (source) {
         for await (let logObj of source) {
-            /*console.log('kafka', logObj)*/
-            await saveStatisticContent('log-pino-' + getLevelLabel(logObj?.level), JSON.stringify(logObj), logObj)
+            try {
+                /*console.log('kafka', logObj)*/
+                await saveStatisticContent('log-pino-' + getLevelLabel(logObj?.level), JSON.stringify(logObj), logObj)
+            } catch (e) {
+                // 统计日志发送失败只丢这一条；绝不把异常抛出for-await循环，
+                // 否则transport停读后、后续日志会在工作线程缓冲里无限堆积（proposals/kafka-client-stream-leak）
+            }
         }
     })
 }
