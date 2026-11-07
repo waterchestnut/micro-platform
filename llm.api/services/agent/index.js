@@ -97,7 +97,9 @@ export async function execAgentTask(agentTaskInfo) {
             }
         }
     }
-    if (agentTaskInfo.nextAgentCode) {
+    // 链式推进仅在任务"执行完成"(2)时派发后继；dispatch型任务(sequential/parallel)exec返回1=进行中，
+    // 其后继派发由 updateParent 首次完成路径负责（否则嵌套parallel下persist会在分片未完成时被过早触发）
+    if (agentTaskInfo.nextAgentCode && ret.handleStatus === 2) {
         let nextAgentTask = await agentTaskDac.getByCode(agentTaskInfo.nextAgentCode)
         await sendMessage([{
             topic: kafkaConfig.topics.agentTask.topic,
