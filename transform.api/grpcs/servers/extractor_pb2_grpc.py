@@ -54,6 +54,11 @@ class ExtractorStub(object):
                 request_serializer=grpcs_dot_servers_dot_extractor__pb2.TextExtractorRequest.SerializeToString,
                 response_deserializer=grpcs_dot_servers_dot_extractor__pb2.TextExtractorResponse.FromString,
                 _registered_method=True)
+        self.image2Text = channel.unary_unary(
+                '/rag.Extractor/image2Text',
+                request_serializer=grpcs_dot_servers_dot_extractor__pb2.TextExtractorRequest.SerializeToString,
+                response_deserializer=grpcs_dot_servers_dot_extractor__pb2.TextExtractorResponse.FromString,
+                _registered_method=True)
 
 
 class ExtractorServicer(object):
@@ -83,6 +88,12 @@ class ExtractorServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def image2Text(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_ExtractorServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -103,6 +114,11 @@ def add_ExtractorServicer_to_server(servicer, server):
             ),
             'html2Text': grpc.unary_unary_rpc_method_handler(
                     servicer.html2Text,
+                    request_deserializer=grpcs_dot_servers_dot_extractor__pb2.TextExtractorRequest.FromString,
+                    response_serializer=grpcs_dot_servers_dot_extractor__pb2.TextExtractorResponse.SerializeToString,
+            ),
+            'image2Text': grpc.unary_unary_rpc_method_handler(
+                    servicer.image2Text,
                     request_deserializer=grpcs_dot_servers_dot_extractor__pb2.TextExtractorRequest.FromString,
                     response_serializer=grpcs_dot_servers_dot_extractor__pb2.TextExtractorResponse.SerializeToString,
             ),
@@ -213,6 +229,33 @@ class Extractor(object):
             request,
             target,
             '/rag.Extractor/html2Text',
+            grpcs_dot_servers_dot_extractor__pb2.TextExtractorRequest.SerializeToString,
+            grpcs_dot_servers_dot_extractor__pb2.TextExtractorResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def image2Text(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/rag.Extractor/image2Text',
             grpcs_dot_servers_dot_extractor__pb2.TextExtractorRequest.SerializeToString,
             grpcs_dot_servers_dot_extractor__pb2.TextExtractorResponse.FromString,
             options,

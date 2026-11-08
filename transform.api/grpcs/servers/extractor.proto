@@ -7,6 +7,7 @@ service Extractor {
   rpc word2Text (TextExtractorRequest) returns (TextExtractorResponse) {}
   rpc excel2Text (TextExtractorRequest) returns (TextExtractorResponse) {}
   rpc html2Text (TextExtractorRequest) returns (TextExtractorResponse) {}
+  rpc image2Text (TextExtractorRequest) returns (TextExtractorResponse) {}
 }
 
 message TextExtractorRequest {

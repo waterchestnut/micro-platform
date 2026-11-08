@@ -5,6 +5,7 @@ from io import BytesIO
 
 from services.excel import get_xls_text, get_csv_text, get_xlsx_text
 from services.pdf import get_pdf_text
+from services.ocr import image_ocr_xin
 
 
 class Extractor(extractor_pb2_grpc.ExtractorServicer):
@@ -35,11 +36,15 @@ class Extractor(extractor_pb2_grpc.ExtractorServicer):
         return extractor_pb2.TextExtractorResponse(text=text)
 
     def html2Text(self, request, context):
-        with open(request.content, "rb") as fp:
-            soup = BeautifulSoup(fp, "html.parser")
-            text = soup.get_text()
-            text = text.strip() if text else ""
-        return extractor_pb2.TextExtractorResponse(text=text)
+        # content 为文件字节流（此前误按路径 open，该方法此前不可用）
+        soup = BeautifulSoup(request.content, "html.parser")
+        text = soup.get_text()
+        return extractor_pb2.TextExtractorResponse(text=text.strip() if text else "")
+
+    def image2Text(self, request, context):
+        # 图片 OCR（xinference ocr 模型，字节直传）
+        text = image_ocr_xin(request.content)
+        return extractor_pb2.TextExtractorResponse(text=text or "")
 
 
 def register(server):

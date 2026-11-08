@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1dgrpcs/servers/extractor.proto\x12\x03rag\"9\n\x14TextExtractorRequest\x12\x10\n\x08language\x18\x01 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x02 \x01(\x0c\"%\n\x15TextExtractorResponse\x12\x0c\n\x04text\x18\x01 \x01(\t2\xa3\x02\n\tExtractor\x12\x43\n\x08pdf2Text\x12\x19.rag.TextExtractorRequest\x1a\x1a.rag.TextExtractorResponse\"\x00\x12\x44\n\tword2Text\x12\x19.rag.TextExtractorRequest\x1a\x1a.rag.TextExtractorResponse\"\x00\x12\x45\n\nexcel2Text\x12\x19.rag.TextExtractorRequest\x1a\x1a.rag.TextExtractorResponse\"\x00\x12\x44\n\thtml2Text\x12\x19.rag.TextExtractorRequest\x1a\x1a.rag.TextExtractorResponse\"\x00\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1dgrpcs/servers/extractor.proto\x12\x03rag\"9\n\x14TextExtractorRequest\x12\x10\n\x08language\x18\x01 \x01(\t\x12\x0f\n\x07\x63ontent\x18\x02 \x01(\x0c\"%\n\x15TextExtractorResponse\x12\x0c\n\x04text\x18\x01 \x01(\t2\xea\x02\n\tExtractor\x12\x43\n\x08pdf2Text\x12\x19.rag.TextExtractorRequest\x1a\x1a.rag.TextExtractorResponse\"\x00\x12\x44\n\tword2Text\x12\x19.rag.TextExtractorRequest\x1a\x1a.rag.TextExtractorResponse\"\x00\x12\x45\n\nexcel2Text\x12\x19.rag.TextExtractorRequest\x1a\x1a.rag.TextExtractorResponse\"\x00\x12\x44\n\thtml2Text\x12\x19.rag.TextExtractorRequest\x1a\x1a.rag.TextExtractorResponse\"\x00\x12\x45\n\nimage2Text\x12\x19.rag.TextExtractorRequest\x1a\x1a.rag.TextExtractorResponse\"\x00\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -36,5 +36,5 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_TEXTEXTRACTORRESPONSE']._serialized_start=97
   _globals['_TEXTEXTRACTORRESPONSE']._serialized_end=134
   _globals['_EXTRACTOR']._serialized_start=137
-  _globals['_EXTRACTOR']._serialized_end=428
+  _globals['_EXTRACTOR']._serialized_end=499
 # @@protoc_insertion_point(module_scope)
