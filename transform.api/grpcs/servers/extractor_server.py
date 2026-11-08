@@ -5,7 +5,7 @@ from io import BytesIO
 
 from services.excel import get_xls_text, get_csv_text, get_xlsx_text
 from services.pdf import get_pdf_text
-from services.ocr import image_ocr_xin
+from services.ocr import image_ocr_auto
 
 
 class Extractor(extractor_pb2_grpc.ExtractorServicer):
@@ -42,8 +42,8 @@ class Extractor(extractor_pb2_grpc.ExtractorServicer):
         return extractor_pb2.TextExtractorResponse(text=text.strip() if text else "")
 
     def image2Text(self, request, context):
-        # 图片 OCR（xinference ocr 模型，字节直传）
-        text = image_ocr_xin(request.content)
+        # 图片 OCR：优先 xinference 专用模型，缺失时回退中转站多模态（字节直传）
+        text = image_ocr_auto(request.content)
         return extractor_pb2.TextExtractorResponse(text=text or "")
 
 

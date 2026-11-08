@@ -1,6 +1,6 @@
 from io import BytesIO
 
-from services.ocr import image_ocr_xin
+from services.ocr import image_ocr_auto
 
 
 def get_pdf_text(content, need_ocr=False):
@@ -21,7 +21,7 @@ def get_pdf_text(content, need_ocr=False):
                 )
                 output = BytesIO()
                 pil_image.to_pil().save(output, 'jpeg')
-                content = image_ocr_xin(output.getvalue())
+                content = image_ocr_auto(output.getvalue())
                 pil_image.close()
             else:
                 text_page = page.get_textpage()
