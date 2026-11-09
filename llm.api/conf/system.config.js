@@ -250,6 +250,16 @@ export default {
         pingIntervalMs: parseInt(process.env['stream_pingIntervalMs'] || '8000'),
     },
     /**
+     * 账本的实时行（v1.33）。默认开：这条改动的目的就是让"看不见的损失"变得看得见，
+     * 默认关等于继续瞎。
+     * 写放大上界：每 run 多 1+k 次**同一行的唯一索引更新**（k = 本 run 发起的上游调用数，
+     * 正常 1~6、上限 20），不是新增文档；与检查点的写放大不同量级（检查点每条都带完整 messages）。
+     * 关掉后 `listAbandoned()` 恒空——那不代表没有损失，只代表又开始瞎了。
+     */
+    llmUsageLive: {
+        enabled: process.env['llmUsageLive_enabled'] !== 'false',
+    },
+    /**
      * u2u（用户间聊天）相关配置。
      */
     u2u: {

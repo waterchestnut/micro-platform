@@ -120,6 +120,12 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
      * 放在函数入口而不是循环前：装配、RAG、记忆召回都算这一轮的成本。
      */
     const turnStart = Date.now()
+    /**
+     * 归属日（UTC yyyy-mm-dd）。定义紧挨 turnStart：
+     * ① 开局落账与收尾落账共用同一个口径，两处各算一遍会在跨日界时把同一条 run 记进两个 day；
+     * ② 位置必须早于使用点，否则 const 箭头函数踩 TDZ。
+     */
+    const usageDay = () => new Date().toISOString().slice(0, 10)
 
     let conversationInfo = await conversationDac.getByCode(conversationCode)
     if (!conversationInfo) {
@@ -209,6 +215,29 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     }
 
     const systemMessages = []
+    /**
+     * 开局就把这一轮写进账本（v1.33）。原来这一行只在 persistTurn 里写，
+     * 于是被 SIGKILL 的 run 在 llmUsage 里也不存在——"发版丢了几轮"在数据上查不出来，
+     * 而恢复扫描也没有对象：**没有行，就没有未终态**。
+     *
+     * 位置在缓存命中分支之后：命中缓存根本不发起模型调用，落 processing 只会制造假的中途行。
+     * 失败不阻断主链路，但必须留 warn——账本缺行比多花几毛钱严重得多。
+     */
+    if (config.llmUsageLive?.enabled !== false) {
+        try {
+            await llmUsageDac.markStarted({
+                messageCode,
+                conversationCode,
+                userCode: curUserInfo?.userCode || '',
+                channel,
+                llmModel,
+                day: usageDay(),
+            })
+        } catch (e) {
+            tlog.warn(`开局落账失败（不影响本轮回答，但这一轮将无法被恢复扫描发现）: ${String(e?.message || e).slice(0, 200)}`)
+        }
+    }
+
     const fixedMessages = []
 
     if (llmChannelData.sysPrompt) {
@@ -439,6 +468,30 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
      */
     const trackCall = () => {
         modelCalls++
+        /**
+         * 在途刷新：每次真正发起上游调用，就把"到目前为止发起了几次、花了多少"写回同一行。
+         * 挂在 trackCall 定义内（而不是某个调用点）：本文件有两个发起点（主循环、无工具收尾），
+         * 只挂一处就会让另一处被杀的 run 重新变隐形；挂在自增之后，也避开
+         * "刷新早于计数"导致同一行里 modelCalls 比 attempts 少 1 的自相矛盾（主仓实测踩过）。
+         *
+         * 只写计数与 token：不写 progress（归收尾管，两处都写就互相覆盖，谁赢看时序），
+         * 也不写 latencyMs（终态字段，在途写它就变成"最后心跳的时刻"，一个字段两义）。
+         * 底座这条尚未接 PR-0.5 的 callUpstream，故暂不写 estPromptTokens；接线时补上 ——
+         * 遗弃行的成本量级靠它，且**不能塞进 billablePromptTokens**（那列必须只表示上游实测值）。
+         */
+        if (config.llmUsageLive?.enabled !== false) {
+            llmUsageDac.touchInflight({
+                messageCode,
+                modelCalls,
+                promptTokens: runUsage.promptTokens,
+                completionTokens: runUsage.completionTokens,
+                totalTokens: runUsage.totalTokens,
+                cachedTokens: runUsage.cachedTokens,
+                reasoningTokens: runUsage.reasoningTokens,
+                billablePromptTokens: Math.max(0, runUsage.promptTokens - runUsage.cachedTokens),
+                hasUsage: runUsage.promptTokens > 0 || runUsage.completionTokens > 0,
+            }).catch((e) => tlog.warn(`在途刷新账本失败: ${String(e?.message || e).slice(0, 160)}`))
+        }
         return modelCalls
     }
 
@@ -455,7 +508,6 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
      * @description 账本归属日：UTC 的 yyyy-mm-dd，与 day 索引一致
      * @returns {String} yyyy-mm-dd
      */
-    const usageDay = () => new Date().toISOString().slice(0, 10)
 
     /**
      * @description 取当前这一轮的用量快照：派生指标 + 告警判定

@@ -70,6 +70,17 @@ const llmUsageSchema = new Schema({
      */
     upstreamAttempts: {type: Number, default: 0, description: '本 run 发起上游调用的次数（含重试）'},
     upstreamRetried: {type: Number, default: 0, description: '其中属于重试的次数'},
+    /**
+     * 在途刷新写入的**估算** prompt token（发起那一刻按 tokenizer 算的）。
+     *
+     * 为什么要单独一列：被硬杀的 run 永远等不到 usage，于是它的 `billablePromptTokens` 恒为 0——
+     * 实测扫到的两条遗弃行就是这样，钱花了但账上是零。
+     * 把估算写进 `billablePromptTokens` 会毁掉那一列的可信度：
+     * 它同时表示"上游实测回传"和"我们自己估"，而两者能差几倍（缓存命中与否），
+     * 聚合出来的钱就成了假的。
+     * ⇒ 规则：**估算归估算列，真值归真值列**；要合起来算成本时必须分开看。
+     */
+    estPromptTokens: {type: Number, default: 0, description: '在途刷新写入的估算 prompt token（非上游回传，仅用于给遗弃行一个量级）'},
     fallbackFrom: {type: String, default: '', description: '换档前的档位 key（未换为空）'},
     fallbackTo: {type: String, default: '', description: '换档后的档位 key（未换为空）'},
     loopExit: {type: String, default: '', description: '主循环退出方式'},
