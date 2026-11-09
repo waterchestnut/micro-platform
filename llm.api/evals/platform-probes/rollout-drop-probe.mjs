@@ -12,7 +12,9 @@
  * - **用户侧**：那条连接是被切还是被等完？被切之后前端拿到的是什么形态？
  *
  * 用法（在 `src/` 下）：先起本探针，再在另一个终端 `git push`：
- *   node evals/platform-probes/rollout-drop-probe.mjs --minutes=6 --every=25
+ *   node evals/platform-probes/rollout-drop-probe.mjs --minutes=6 --every=25000
+ * **`--every` 的单位是毫秒**（这里曾写 `--every=25`，害我把 8 条流在 200ms 内全发出去，
+ * 测到的变成并发闸而不是停机行为；现在小于 1000 会直接拒绝启动，见下面的单位守卫）。
  *
  * 只写自己新建的 conversationCode。
  */
@@ -31,6 +33,24 @@ const valOf = (n, d) => {
 }
 const MINUTES = valOf('minutes', 6)
 const EVERY_MS = valOf('every', 25000)
+/**
+ * 单位守卫。这个坑是我自己踩的：文件头的用法写的是 `--every=25`，
+ * 而这里的单位是**毫秒**，于是 `--every=25` = 每 25 毫秒发一条 ⇒ 全部流在 200ms 内并发发出。
+ * 后果不是"测不准"而是"测出来的东西根本不是我以为的那件事"：
+ * 并发闸按 `limits_concurrentRunsPerUser=3` 把超出的两轮挡成 `200 + JSON`（不是流），
+ * 而在途的那几条早在 SIGTERM 之前就跑完了 ⇒ 覆盖照样不成立，却多出一堆"看起来像丢弃"的行。
+ * 与其让下一次再踩，不如让它在开机时就拒绝跑。
+ */
+if (EVERY_MS < 1000 && !argv.includes('--allowBurst')) {
+    console.error(JSON.stringify({
+        probe: 'rollout-drop',
+        note: '拒绝启动',
+        原因: `--every=${EVERY_MS} 的单位是毫秒：这会把 ${valOf('count', 5)} 条流在 ${EVERY_MS * valOf('count', 5)}ms 内全部并发发出，`
+            + '测到的是并发闸与瞬时并发，不是"SIGTERM 那一刻有没有流在途"。',
+        正确用法: '--every=25000（每条流之间隔 25 秒）；确实要并发压闸时才加 --allowBurst',
+    }))
+    process.exit(2)
+}
 const OUT_FILE = (argv.find(a => a.startsWith('--out=')) || '').split('=')[1] || ''
 /** kubeconfig 只从参数/环境取，不在源码里写路径（更不把任何凭据打印出来） */
 const KUBECONFIG = (argv.find(a => a.startsWith('--kubeconfig=')) || '').split('=')[1] || process.env.KUBECONFIG || ''
