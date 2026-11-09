@@ -17,6 +17,7 @@ import {
     buildToolNameIndex,
     clipTraceResult,
     describeError,
+    createBudgetMeter,
     detachAction,
     steerAction,
     RUN_PHASES,
@@ -208,6 +209,103 @@ test('steerAction：hard 在生成阶段立即打断，在工具阶段退化为�
     const tool = steerAction('hard', 'tool_executing')
     assert.equal(tool.abortCurrentStream, false, '工具执行中不得被 hard 打断（D4 副作用优先）')
     assert.equal(tool.injectAt, 'postTools')
+})
+
+/* ========================= createBudgetMeter（PR-K1 增量测量） ========================= */
+
+test('createBudgetMeter：增量结果与全量重算严格相等（可加性是前提）', () => {
+    /** measureOne 用与线上一致的口径：calcMessagesTokenCount 就是逐条 reduce，所以和必然等于整体 */
+    const measureOne = (m) => 1 + String(m.content || '').length
+    const messages = []
+    const meter = createBudgetMeter({measureOne})
+
+    let expect = 0
+    for (let i = 0; i < 6; i++) {
+        messages.push({role: i % 2 ? 'tool' : 'user', content: 'x'.repeat(i)})
+        expect += measureOne(messages[i])
+        assert.equal(meter.check(messages), expect, `第 ${i + 1} 次测量的总量`)
+    }
+    const full = messages.reduce((sum, m) => sum + measureOne(m), 0)
+    assert.equal(meter.total(), full, '增量累计值必须等于全量重算，否则这条优化就是错的')
+})
+
+test('createBudgetMeter：只在首帧全量，后续都是增量（省掉的就是 O(n²)）', () => {
+    const measureOne = (m) => String(m.content || '').length
+    const messages = []
+    const meter = createBudgetMeter({measureOne})
+    for (let i = 0; i < 10; i++) {
+        messages.push({role: 'tool', content: 'ab' + i})
+        meter.check(messages)
+    }
+    const {fullPasses, deltaPasses} = meter.stats()
+    assert.equal(fullPasses, 1, '只有第一次测量是全量')
+    assert.equal(deltaPasses, 9, '剩下 9 次都只测新增的那一条')
+    assert.equal(fullPasses + deltaPasses, 10, '10 次测量、1 次全量')
+})
+
+test('createBudgetMeter：invalidate 后强制全量重算（就地改写消息必须走这条路）', () => {
+    const measureOne = (m) => String(m.content || '').length
+    const messages = [{role: 'tool', content: 'aaaa'}, {role: 'tool', content: 'bbbb'}]
+    const meter = createBudgetMeter({measureOne})
+    assert.equal(meter.check(messages), 8)
+
+    /** compactToBudget 式的就地改写：长度变了，但数组没增没减，增量看不到 */
+    messages[0].content = 'x'
+    meter.invalidate()
+    assert.equal(meter.check(messages), 5, 'invalidate 之后要重算')
+    assert.equal(meter.stats().fullPasses, 2)
+})
+
+test('createBudgetMeter：isRewritten 钩子能自动发现历史被改写', () => {
+    const measureOne = (m) => String(m.content || '').length
+    const messages = [{role: 'tool', content: 'aaaa'}]
+    let seen = ''
+    const meter = createBudgetMeter({
+        measureOne,
+        isRewritten: (list) => {
+            const changed = list[0]?.content !== seen
+            seen = list[0]?.content
+            return changed
+        },
+    })
+    meter.check(messages)
+    messages[0].content = 'zz'
+    meter.check(messages)
+    assert.equal(meter.stats().fullPasses, 2, '改写触发了全量重算，而不是继续用脏的累计值')
+})
+
+test('createBudgetMeter：数组变短（重新装配或压缩丢弃）时回到全量', () => {
+    const measureOne = (m) => String(m.content || '').length
+    const messages = [{role: 'tool', content: 'aaaa'}, {role: 'tool', content: 'bbbb'}, {role: 'tool', content: 'cccc'}]
+    const meter = createBudgetMeter({measureOne})
+    meter.check(messages)
+    messages.splice(1, 2)
+    assert.equal(meter.check(messages), 4)
+    assert.equal(meter.stats().fullPasses, 2)
+})
+
+test('createBudgetMeter：脏输入不炸，非数字测量按 0 计', () => {
+    const meter = createBudgetMeter({measureOne: (m) => (m?.weird ? 5 : undefined)})
+    assert.equal(meter.check(undefined), 0, '没有消息数组时给 0，不抛')
+    assert.equal(meter.check([]), 0)
+    assert.equal(meter.check([{weird: true}, {weird: true}]), 10, 'undefined 单条按 0 计，正常条目照常累加')
+    assert.equal(meter.total(), 10)
+})
+
+test('createBudgetMeter 用真实 tokenizer 时也必须增量==全量（这条断了就说明可加性前提没了）', async () => {
+    const {calcMessagesTokenCount} = await import('../../../services/openai/util.js')
+    const measureOne = (m) => calcMessagesTokenCount([m], {})
+    const messages = [{role: 'system', content: '你是助手'}, {role: 'user', content: '帮我查一下幂等性'}]
+    const meter = createBudgetMeter({measureOne})
+    assert.equal(meter.check(messages), calcMessagesTokenCount(messages, {}))
+
+    for (let i = 0; i < 8; i++) {
+        messages.push({role: 'assistant', content: null, tool_calls: [{id: `c${i}`, function: {name: 'search_web', arguments: '{"q":' + i + '}'}}]})
+        messages.push({role: 'tool', tool_call_id: `c${i}`, content: `结果 ${i}：`.padEnd(60 + i * 37, '字')})
+        /** 每一轮都拿全量重算当对照：只要有一次不等，就说明"逐条相加"的假设被破坏了 */
+        assert.equal(meter.check(messages), calcMessagesTokenCount(messages, {}), `第 ${i + 1} 轮工具往返后`)
+    }
+    assert.equal(meter.stats().fullPasses, 1, '全程只该有一次全量')
 })
 
 /* ========================= describeError ========================= */

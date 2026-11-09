@@ -124,6 +124,17 @@ const invariants = {
     '落库 answer 非空（§2E-3 修复）': (m?.answer || '').length > 0,
     'progress=finish 时 answer 必非空': !(m?.progress === 'finish' && !(m?.answer || '').length),
     'process.loopExit 已落库可观测': ['break', 'exhausted', 'no-iterations', 'unknown'].includes(m?.process?.loopExit),
+    /**
+     * PR-K1 把每轮的全量 tokenize 换成增量测量，最坏的死法是"增量漏算"——
+     * 表现就是 `contextUsage.total` 掉到 0 或明显小于实收内容。这条断言就是抓它的。
+     */
+    'contextUsage.total 非零且没超预算': (() => {
+        const cu = m?.process?.contextUsage
+        if (!cu || !Number.isFinite(cu.total) || cu.total <= 0) {
+            return false
+        }
+        return !Number.isFinite(cu.budget) || cu.total <= cu.budget
+    })(),
     'loopExit=exhausted 时要么补过收尾调用、要么 progress 不是 finish':
         m?.process?.loopExit !== 'exhausted' || m?.process?.forcedFinal === true || m?.progress !== 'finish',
     /** PR-B：过程分段留存。这一条是"40% 轮次的中间内容只存在于已经断开的那条 SSE 连接里"的终结 */

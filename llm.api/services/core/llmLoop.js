@@ -192,6 +192,83 @@ export function loopExitReason({broke = false, iterationCount = 0, maxIterations
     return 'unknown'
 }
 
+/* ---------- 迭代预算的增量测量（PR-K1，实测后缩小的一刀） ---------- */
+
+/**
+ * @description 建一个上下文预算测量器：**只测新增消息**，不每轮全量重算
+ * @param {Object} deps 依赖注入（保持本模块零依赖）
+ * @param {Function} deps.measureOne 单条消息的 token 测量 `(message) => Number`
+ * @param {Function} [deps.isRewritten] 判断"历史是否被就地改写过" `(messages) => Boolean`；返回 true 时全量重算
+ * @returns {{total: Function, check: Function, invalidate: Function, stats: Function}} 测量器
+ * @description
+ * 为什么这是**等价**而不是近似：`calcMessagesTokenCount` 的实现是
+ * `messages.reduce((sum, m) => sum + calcMessageTokenCount(m), 0)` ⇒ 整体值严格等于逐条值之和，
+ * 所以"上一轮的整体值 + 本轮新增各条"与"本轮全量重算"必然相等。
+ * 一旦有人把测量改成非可加的（例如按整段文本重新 encode，跨消息 BPE 合并会吃掉几个 token），
+ * 这个等价就断了——所以 `isRewritten` 之外还必须保留 `invalidate()` 给改写型压缩用。
+ *
+ * 收益口径（v1.20 实测更正，见 §2.20 与探针 P-15）：dev 96 条带预算的样本里
+ * **越界 0 次、最大 total/budget 仅 5.80%** ⇒ 每轮全量 `compactToBudget` 从未真正改写过任何消息，
+ * 它留下的成本只是 tokenize 的 CPU：一轮 6 次迭代就是 6 次全量重算（O(n²)）。
+ * 缓存与前缀稳定性收益为 **0**，别按那个立项。
+ */
+export function createBudgetMeter({measureOne, isRewritten = null} = {}) {
+    let upTo = 0
+    let total = 0
+    let fullPasses = 0
+    let deltaPasses = 0
+
+    /**
+     * @description 全量重算（首帧、或历史被改写过时）
+     * @param {Object[]} messages 消息数组
+     * @returns {Number} 全量 token
+     */
+    const recount = (messages) => {
+        total = (messages || []).reduce((sum, m) => sum + Number(measureOne(m) || 0), 0)
+        upTo = (messages || []).length
+        fullPasses++
+        return total
+    }
+
+    /**
+     * @description 测量当前上下文总量
+     * @param {Object[]} messages 消息数组（同一数组，长度只增不减才算追加式）
+     * @returns {Number} token 总量
+     */
+    const check = (messages) => {
+        const list = messages || []
+        /** 首次测量（或数组被清空后重来）就是一次全量：别把它记成增量，否则 stats 会骗人说"没有全量成本" */
+        if (upTo === 0 && list.length > 0) {
+            return recount(list)
+        }
+        /** 数组变短说明上游重新装配过（新一轮、或压缩丢弃了消息），增量结果不可信 ⇒ 全量重算 */
+        if (list.length < upTo) {
+            return recount(list)
+        }
+        if (isRewritten && isRewritten(list)) {
+            return recount(list)
+        }
+        for (let i = upTo; i < list.length; i++) {
+            total += Number(measureOne(list[i]) || 0)
+            deltaPasses++
+        }
+        upTo = list.length
+        return total
+    }
+
+    return {
+        check,
+        /** 让下一次 check 强制全量重算：任何就地改写已有消息的动作之后都要调 */
+        invalidate: () => {
+            upTo = 0
+            total = 0
+        },
+        total: () => total,
+        /** 观测用：全量/增量的次数比，能直接看出这轮循环有没有退化成 O(n²) */
+        stats: () => ({fullPasses, deltaPasses, measuredUpTo: upTo}),
+    }
+}
+
 /* ---------- 异常归因（供 §2E-2 的 try/catch 使用） ---------- */
 
 /**
@@ -436,6 +513,7 @@ export default {
     iterationDecision,
     loopExitReason,
     describeError,
+    createBudgetMeter,
     resolveMaxIterations,
     finalizationDecision,
     buildFinalizeBody,

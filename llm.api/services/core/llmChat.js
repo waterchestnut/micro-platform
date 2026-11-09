@@ -45,6 +45,7 @@ import {
     iterationDecision,
     loopExitReason,
     describeError,
+    createBudgetMeter,
     resolveMaxIterations,
     finalizationDecision,
     buildFinalizeBody,
@@ -371,6 +372,15 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     })
     /** 每轮的起始时刻，用于段耗时 */
     let roundStartedAt = Date.now()
+    /**
+     * 上下文预算测量器：迭代内只测新增消息。
+     * `measureOne` 复用与全量同一个函数（`calcMessagesTokenCount` 传单条数组），
+     * 因为它的实现是逐条 reduce ⇒ 总量严格等于各条之和，**增量与全量等价**（等价性由用例钉住）。
+     * 越界时的安全网原样保留：真越界仍会 `compactToBudget`，压完必须 `invalidate()`。
+     */
+    const budgetMeter = createBudgetMeter({
+        measureOne: (m) => calcMessagesTokenCount([m], tokenizerOptions),
+    })
 
     // 最多迭代多少次：原为硬编码 6，现按 请求 > 频道 > 全局配置 > 6 解析
     let iterationCount = 0
@@ -387,6 +397,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         try {
             /** 预算重核与主循环每轮同口径：这一步也要求解，否则补落反而撑爆上下文 */
             compactToBudget(messages, contextBudget, {tokenizerOptions})
+            /** 压缩会就地改写已有消息 ⇒ 增量测量结果作废，下一轮（若有）重新全量测 */
+            budgetMeter.invalidate()
             const finalizeBody = buildFinalizeBody(createBody, messages)
             logger.info(`无工具收尾调用开始: messages=${finalizeBody.messages.length}, maxIterations=${maxIterations}`)
             const finalizeStream = await openai.chat.completions.create(finalizeBody, {signal: options.signal})
@@ -546,8 +558,14 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
 
             iterationCount++
             roundStartedAt = Date.now()
-            /*工具循环会持续往 messages 里塞结果，每轮请求前都要重新核对预算*/
-            const loopTokens = compactToBudget(messages, contextBudget, {tokenizerOptions})
+            /*工具循环会持续往 messages 里塞结果，每轮请求前都要核对预算——但不再每轮全量重算*/
+            let loopTokens = budgetMeter.check(messages)
+            if (loopTokens > contextBudget) {
+                /** 越界安全网：与原实现一致，压完丢弃增量结果，下一轮重新全量测 */
+                compactToBudget(messages, contextBudget, {tokenizerOptions})
+                budgetMeter.invalidate()
+                loopTokens = budgetMeter.check(messages)
+            }
             if (contextUsage) {
                 contextUsage = {...contextUsage, total: loopTokens, loopIteration: iterationCount}
             }
