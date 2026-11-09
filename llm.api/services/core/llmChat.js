@@ -12,6 +12,8 @@ import {pickModelKey} from '../../conf/llmModel.js'
 import tmplParse from 'json-templates'
 import {llmRagSearch} from '../../grpc/clients/resourceRag.js'
 import messageDac from '../../daos/core/dac/messageDac.js'
+/** §14 自有账本：模型用量按 run 落一行，看板与预算都从这张窄表出 */
+import llmUsageDac from '../../daos/core/dac/llmUsageDac.js'
 import {waitTime} from '../../tools/index.js'
 import {getAnswerCache, saveAnswerCache} from './answerCache.js'
 import {calcTextTokenCount, calcMessagesTokenCount, calcContextBudget, getTokenizerOptions, TOKENIZER_VERSION} from '../openai/util.js'
@@ -46,6 +48,10 @@ import {
     loopExitReason,
     describeError,
     createBudgetMeter,
+    deriveUsageMetrics,
+    usageCallAlert,
+    createEmptyUsage,
+    addUsage,
     resolveMaxIterations,
     finalizationDecision,
     buildFinalizeBody,
@@ -107,6 +113,11 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         ? calcContextBudget(llmConfig, {slackTokens: config.context?.slackTokens})
         : Infinity
     let contextUsage = null
+    /**
+     * 本 run 的起点（§14 账本的 latencyMs 基准）。
+     * 放在函数入口而不是循环前：装配、RAG、记忆召回都算这一轮的成本。
+     */
+    const turnStart = Date.now()
 
     let conversationInfo = await conversationDac.getByCode(conversationCode)
     if (!conversationInfo) {
@@ -390,6 +401,61 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         configValue: config.limits?.maxIterations,
     })
     /**
+     * 本 run 的 usage 累计与模型调用次数（§14 自有账本的原始数据）。
+     * `modelCalls` 单独数，不复用 `iterationCount`：后者在收尾补落后也会 +1，
+     * 而"每 run 调用次数"要的是真实打到上游的次数，两者今天恰好一致、将来未必一致。
+     */
+    let runUsage = createEmptyUsage()
+    let modelCalls = 0
+
+    /**
+     * @description 计一次模型调用：**在发起请求处调，不是拿到 usage 之后**
+     * @returns {Number} 累计调用次数
+     * @description
+     * 这个位置是成本账的命门：客户端中途断开时 usage 帧永远到不了，
+     * 只在"拿到 usage"时计数，一次确实花了钱的调用就会记成 0 次 0 token。
+     * 计数与量测分开后，`modelCalls` 记次数、`hasUsage:false` 记"这次没量到"，
+     * 两者的差额正是"花了钱但量不出来"的量——那正是账本要暴露的东西。
+     */
+    const trackCall = () => {
+        modelCalls++
+        return modelCalls
+    }
+
+    /**
+     * @description 合并一次调用回传的 usage（只并量，不计数）
+     * @param {Object} usage `drainAssistantStream` 返回的 usage
+     * @returns {void}
+     */
+    const trackUsage = (usage) => {
+        runUsage = addUsage(runUsage, usage)
+    }
+
+    /**
+     * @description 账本归属日：UTC 的 yyyy-mm-dd，与 day 索引一致
+     * @returns {String} yyyy-mm-dd
+     */
+    const usageDay = () => new Date().toISOString().slice(0, 10)
+
+    /**
+     * @description 取当前这一轮的用量快照：派生指标 + 告警判定
+     * @returns {{metrics: Object, alert: Object}} 见 `deriveUsageMetrics` 与 `usageCallAlert`
+     * @description
+     * 坚持**每次调用现算**，不读"稍后由收尾代码赋值"的外层变量：
+     * 异常与中断路径根本不经过收尾代码，读外层变量会拿到初始值，
+     * 结果同一轮里 `extInfo.usage.modelCalls` 是 0、账本行是 1，两个数字打架。
+     */
+    const usageSnapshot = () => ({
+        metrics: deriveUsageMetrics(runUsage, modelCalls),
+        alert: usageCallAlert({
+            modelCalls,
+            maxIterations,
+            warnAt: config.limits?.runModelCallsWarn,
+            hardAt: config.limits?.runModelCallsHardLimit,
+        }),
+    })
+
+    /**
      * @description 上限打满时补一次"无工具收尾调用"：只带 messages 与提示，产出结论并照常流式下发
      * @returns {Promise<Boolean>} 是否拿到了非空正文
      */
@@ -401,6 +467,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             budgetMeter.invalidate()
             const finalizeBody = buildFinalizeBody(createBody, messages)
             logger.info(`无工具收尾调用开始: messages=${finalizeBody.messages.length}, maxIterations=${maxIterations}`)
+            trackCall()
             const finalizeStream = await openai.chat.completions.create(finalizeBody, {signal: options.signal})
             const drained = await drainAssistantStream(finalizeStream, {
                 onDelta: (delta) => {
@@ -409,6 +476,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             })
             answerContent += drained.content
             answerReasoning += drained.reasoning
+            trackUsage(drained.usage)
             iterationCount++
             /** 收尾调用本身也是一个阶段：它解释"为什么这一轮多花了一次调用" */
             segments.seal({
@@ -447,6 +515,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             logger.warn(`本轮已落库，忽略重复 persistTurn: progress=${progress}`)
             return
         }
+        /** 现算快照：abort/error 路径不会走到收尾代码，读"稍后赋值"的外层变量会拿到过期初始值 */
+        const snap = usageSnapshot()
         /** 落一条终态检查点（finish/abort），续跑与审计都以此为准 */
         scheduleCp(progress === 'abort' ? 'abort' : 'final', {
             messages: messages.map(m => ({...m})),
@@ -464,6 +534,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             /** PR-B：过程分段。中间正文从此不再只存在于已经断开的那条 SSE 连接里 */
             segments: segments.list(),
             segmentSummary: segments.summary(),
+            /** §14/G-6：本 run 的模型用量与调用次数（非缓存 token 为主指标） */
+            usage: {...runUsage, ...snap.metrics, callAlert: snap.alert.level},
             messageTokens: calcMessagesTokenCount(messages, tokenizerOptions),
             answerTokens: calcTextTokenCount(answerContent + answerReasoning, tokenizerOptions.tokenizer),
             tokenizerVersion: TOKENIZER_VERSION,
@@ -490,6 +562,35 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         })
         /** 落库成功才算"已有档案"：放在 saveMessage 之后，这样 saveMessage 自己失败时异常路径还能再补一次 */
         persisted = true
+        /**
+         * §14 自有账本：一行一个 run 的模型用量。
+         * 记账失败**绝不影响聊天主链路**（与沙箱成本核算、记忆采集同口径），
+         * 但必须留 error 级日志——账本缺行比多花几毛钱严重得多。
+         */
+        try {
+            await llmUsageDac.upsertByMessageCode({
+                messageCode,
+                conversationCode,
+                userCode: curUserInfo?.userCode || '',
+                channel,
+                llmModel,
+                day: usageDay(),
+                modelCalls,
+                promptTokens: runUsage.promptTokens,
+                completionTokens: runUsage.completionTokens,
+                totalTokens: runUsage.totalTokens,
+                cachedTokens: runUsage.cachedTokens,
+                billablePromptTokens: snap.metrics.billablePromptTokens,
+                reasoningTokens: runUsage.reasoningTokens,
+                hasUsage: snap.metrics.hasUsage,
+                callAlert: snap.alert.level,
+                loopExit,
+                progress,
+                latencyMs: Date.now() - turnStart,
+            })
+        } catch (e) {
+            logger.error(`模型用量落账失败: messageCode=${messageCode}, ${String(e?.message || e).slice(0, 200)}`)
+        }
         /** 采集失败已在内部吞掉，不影响聊天主链路 */
     await captureTurn({
         curUserInfo,
@@ -576,6 +677,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                 toolState: {pendingCalls: [], completedCalls: toolCallTrace.map(t => t.id)},
             })
             //console.log(`createBody ${JSON.stringify(createBody)}`)
+            trackCall()
             const chatStream = await openai.chat.completions.create(createBody, {signal: options.signal})
 
             /**
@@ -589,6 +691,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             })
             answerContent += drained.content
             answerReasoning += drained.reasoning
+            /** 本 run 的用量：每一轮 create 合并一次（次数已在发起处计过） */
+            trackUsage(drained.usage)
             let toolCalls = drained.toolCalls      // 用于收集工具调用
             let receivedToolCall = drained.receivedToolCall
 
@@ -839,6 +943,21 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             now: Date.now(),
         })
 
+        /**
+         * §14 观测先行：出"每 run 模型调用次数"与"每 run token 数"。
+         * 主指标是**非缓存 token**（`prompt - cached`，这部分全价），命中率只作旁证。
+         * 告警口径是**严格大于上限**：打满但正常收尾不报（那是"活多"），超出上限才报（那才是"在打循环"）。
+         */
+        const tailSnap = usageSnapshot()
+        if (tailSnap.alert.level !== 'ok') {
+            logger.warn(`模型调用次数告警: level=${tailSnap.alert.level}, modelCalls=${modelCalls}, warnAt=${tailSnap.alert.warnAt}, `
+                + `maxIterations=${maxIterations}, loopExit=${loopExit}, conversationCode=${conversationCode}, messageCode=${messageCode}`)
+        }
+        if (!tailSnap.metrics.hasUsage) {
+            /** 单独一条：账本没数据时，"0 token" 与"没读到 usage"是两种完全不同的故障 */
+            logger.warn(`本轮未取到 usage（上游未回传或帧序异常）: conversationCode=${conversationCode}, modelCalls=${modelCalls}`)
+        }
+
         let answerTokens = calcTextTokenCount(answerContent + answerReasoning, tokenizerOptions.tokenizer)
         await persistTurn(fb.progress)
 
@@ -954,6 +1073,8 @@ async function saveMessage(query, messageCode, messages, conversationCode, chann
             /** PR-B：过程分段与它的体积摘要（丢过段、留存多少字） */
             segments: options.segments,
             segmentSummary: options.segmentSummary,
+            /** §14/G-6：本 run 的模型用量与调用次数 */
+            usage: options.usage,
             skills: options.skills,
             contextUsage: options.contextUsage,
             sources: options.sources,

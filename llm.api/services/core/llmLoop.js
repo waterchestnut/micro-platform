@@ -83,6 +83,113 @@ export function buildAssistantToolCallMessage(toolCalls) {
     return {role: 'assistant', content: null, tool_calls: toolCalls}
 }
 
+/* ---------- usage 归一与累加（§14 自有账本的数据源） ---------- */
+
+/**
+ * @description 空的 usage 记录（字段口径固定，缺项补 0，便于跨轮累加与写账本）
+ * @returns {{promptTokens: Number, completionTokens: Number, totalTokens: Number, cachedTokens: Number, reasoningTokens: Number, reported: Boolean}} 零值 usage
+ */
+export function createEmptyUsage() {
+    /** `reported:false` 必须是显式字段而不是缺省：账本要能区分"上游回了 0"与"上游没回" */
+    return {promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedTokens: 0, reasoningTokens: 0, reported: false}
+}
+
+/**
+ * @description 把上游的 usage（snake_case，OpenAI 兼容层形态）折成内部口径
+ * @param {Object} [raw] 一帧里的 `chunk.usage`
+ * @returns {{promptTokens: Number, completionTokens: Number, totalTokens: Number, cachedTokens: Number, reasoningTokens: Number}} 归一后的 usage
+ * @description
+ * 两条必须是这样的规则：
+ * 1. **`cachedTokens` 只能从 `prompt_tokens_details.cached_tokens` 取**，不能用 `total - completion` 反推；
+ *    反推在隐式缓存下会把"没命中"算成"命中"，成本口径直接失真（D41 的主指标就是 `prompt - cached`）。
+ * 2. **取不到就省略不猜**（§14）：字段缺失记 0，但 `reported` 标记为 false，
+ *    账本与告警都要能区分"真的 0"和"上游没回"。
+ */
+export function normalizeUsage(raw) {
+    const src = raw || {}
+    const num = (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : 0)
+    return {
+        promptTokens: num(src.prompt_tokens ?? src.input_tokens),
+        completionTokens: num(src.completion_tokens ?? src.output_tokens),
+        totalTokens: num(src.total_tokens),
+        cachedTokens: num(src.prompt_tokens_details?.cached_tokens ?? src.cached_tokens),
+        reasoningTokens: num(src.completion_tokens_details?.reasoning_tokens ?? src.reasoning_tokens),
+        reported: !!(src.prompt_tokens || src.completion_tokens || src.total_tokens),
+    }
+}
+
+/**
+ * @description 累加两次 usage（多轮迭代与收尾调用的量要合并成"每 run"的量）
+ * @param {Object} a 累计值
+ * @param {Object} b 本次值
+ * @returns {Object} 合并后的 usage
+ */
+export function addUsage(a, b) {
+    const x = a || createEmptyUsage()
+    const y = b || createEmptyUsage()
+    return {
+        promptTokens: (x.promptTokens || 0) + (y.promptTokens || 0),
+        completionTokens: (x.completionTokens || 0) + (y.completionTokens || 0),
+        totalTokens: (x.totalTokens || 0) + (y.totalTokens || 0),
+        cachedTokens: (x.cachedTokens || 0) + (y.cachedTokens || 0),
+        reasoningTokens: (x.reasoningTokens || 0) + (y.reasoningTokens || 0),
+        reported: !!(x.reported || y.reported),
+    }
+}
+
+/**
+ * @description 算出账本与告警要用的派生量
+ * @param {Object} usage 归一后的 usage
+ * @param {Number} [modelCalls] 本 run 的模型调用次数（含无工具收尾补落）
+ * @returns {{billablePromptTokens: Number, nonCachedRatio: Number|null, cacheReadTokens: Number, modelCalls: Number, hasUsage: Boolean}} 派生指标
+ * @description
+ * `billablePromptTokens = promptTokens - cachedTokens`（D41：主指标是**非缓存 token**，不是命中率）。
+ * 上游没回 usage 时返回 `hasUsage:false` 且比例给 `null` —— **不能给 0**，
+ * 0 会被看板读成"全部命中缓存"，那是最容易被当成好消息的错法。
+ */
+export function deriveUsageMetrics(usage, modelCalls = 0) {
+    const u = usage || createEmptyUsage()
+    const billablePromptTokens = Math.max(0, (u.promptTokens || 0) - (u.cachedTokens || 0))
+    const hasUsage = !!u.reported && (u.promptTokens || 0) > 0
+    return {
+        billablePromptTokens,
+        cacheReadTokens: u.cachedTokens || 0,
+        nonCachedRatio: hasUsage ? Number((billablePromptTokens / u.promptTokens).toFixed(4)) : null,
+        modelCalls,
+        hasUsage,
+    }
+}
+
+/**
+ * @description 每 run 模型调用次数的告警判定（失控循环的第一个可见症状，§14）
+ * @param {Object} state 现场
+ * @param {Number} state.modelCalls 本 run 的模型调用次数
+ * @param {Number} state.maxIterations 迭代上限
+ * @param {Number} [state.warnAt] 告警阈值；缺省 = `maxIterations`（判定用**严格大于**）
+ * @param {Number} [state.hardAt] 熔断阈值（交给上层拒绝继续，本函数只判定）
+ * @returns {{level: 'ok'|'warn'|'critical', overWarn: Boolean, overHard: Boolean, modelCalls: Number, warnAt: Number}} 判定结果
+ * @description
+ * **阈值为什么是"严格大于上限"**：一次打满 6 轮但正常收尾（`loopExit:'break'`）的运行，
+ * 是"这轮活多"，不是"在打循环"——把它报成 warn 会让告警第一天就变成噪声，
+ * 而噪声告警等于没有告警（同一批实测里 `droppedCount` 全程为 0 也是这个教训）。
+ * 真正的信号是**超出了上限**（需要额外补收尾调用，或显式越过 `hardAt`）。
+ * "打满"本身另有出口：`loopExit==='exhausted'` 在主循环里已经单独 warn 了，这里不重复报。
+ */
+export function usageCallAlert({modelCalls = 0, maxIterations = 6, warnAt = null, hardAt = null} = {}) {
+    /** **严格大于**上限才算异常：等于上限就是"打满但按规矩收尾" */
+    const warn = Number.isFinite(Number(warnAt)) && Number(warnAt) > 0 ? Number(warnAt) : maxIterations
+    const hard = Number.isFinite(Number(hardAt)) && Number(hardAt) > 0 ? Number(hardAt) : null
+    const overWarn = modelCalls > warn
+    const overHard = hard !== null && modelCalls >= hard
+    return {
+        level: overHard ? 'critical' : (overWarn ? 'warn' : 'ok'),
+        overWarn,
+        overHard,
+        modelCalls,
+        warnAt: warn,
+    }
+}
+
 /* ---------- 单轮流式响应消费（对应 llmChat.js:457-480） ---------- */
 
 /**
@@ -91,11 +198,11 @@ export function buildAssistantToolCallMessage(toolCalls) {
  * @param {Object} [handlers]
  * @param {Function} [handlers.onDelta] 每个含正文/推理的增量回调 `(delta, snapshot)`；
  *        调用时机与抽取前逐字一致（累加之后、同一 chunk 内），因此 SSE 顺序不变
- * @returns {Promise<{content: String, reasoning: String, toolCalls: Object[], receivedToolCall: Boolean, finishReason: String|null, chunkCount: Number, deltaCount: Number}>}
+ * @returns {Promise<{content: String, reasoning: String, toolCalls: Object[], receivedToolCall: Boolean, finishReason: String|null, chunkCount: Number, deltaCount: Number, usage: Object, usageChunks: Number}>}
  *
  * 现状（本函数原样保留，不在这一刀改）：
- * - `chunk.choices[0]` 不做空值防护 ⇒ chunk 缺 `choices` 字段会抛错，而 `execChat` 当时**没有 try/catch**，
- *   异常直接冒到上层（PR-A 要修的第 1 项）；`choices: []`（末帧 usage）是安全的，直接跳过。
+ * - `chunk.choices[0]` 不做空值防护 ⇒ chunk 缺 `choices` 字段会抛错；`execChat` 当时**没有 try/catch**，
+ *   异常直接冒到上层（已在 PR-A 补上）；`choices: []`（末帧 usage）是安全的，且 usage 就在这一帧上取。
  * - 判定"本轮是否要求调用工具"用的是 `delta.tool_calls` **字段是否存在**，不是数组是否非空
  *   ⇒ `tool_calls: []` 也会置 receivedToolCall=true。
  */
@@ -107,9 +214,20 @@ export async function drainAssistantStream(chunks, {onDelta} = {}) {
     let finishReason = null
     let chunkCount = 0
     let deltaCount = 0
+    let usage = createEmptyUsage()
+    let usageChunks = 0
 
     for await (const chunk of chunks) {
         chunkCount++
+        /**
+         * usage 帧必须在 `choices` 判空**之前**取：OpenAI 兼容层的最后一帧是 `{choices: [], usage: {...}}`，
+         * 顺序写反就等于永远读不到 token 数（这正是 §14 说的"账本没有数据来源"的代码根因，
+         * 而上游 P-1 实测确认 usage 一直都在，是我们丢了）。
+         */
+        if (chunk.usage) {
+            usage = addUsage(usage, normalizeUsage(chunk.usage))
+            usageChunks++
+        }
         const choice = chunk.choices[0]
         if (!choice) {
             continue
@@ -141,7 +259,7 @@ export async function drainAssistantStream(chunks, {onDelta} = {}) {
         }
     }
 
-    return {content, reasoning, toolCalls, receivedToolCall, finishReason, chunkCount, deltaCount}
+    return {content, reasoning, toolCalls, receivedToolCall, finishReason, chunkCount, deltaCount, usage, usageChunks}
 }
 
 /* ---------- 迭代走向决策（对应 llmChat.js:493-645） ---------- */
@@ -514,6 +632,11 @@ export default {
     loopExitReason,
     describeError,
     createBudgetMeter,
+    createEmptyUsage,
+    normalizeUsage,
+    addUsage,
+    deriveUsageMetrics,
+    usageCallAlert,
     resolveMaxIterations,
     finalizationDecision,
     buildFinalizeBody,

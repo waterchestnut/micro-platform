@@ -18,6 +18,11 @@ import {
     clipTraceResult,
     describeError,
     createBudgetMeter,
+    createEmptyUsage,
+    normalizeUsage,
+    addUsage,
+    deriveUsageMetrics,
+    usageCallAlert,
     detachAction,
     steerAction,
     RUN_PHASES,
@@ -209,6 +214,69 @@ test('steerAction：hard 在生成阶段立即打断，在工具阶段退化为�
     const tool = steerAction('hard', 'tool_executing')
     assert.equal(tool.abortCurrentStream, false, '工具执行中不得被 hard 打断（D4 副作用优先）')
     assert.equal(tool.injectAt, 'postTools')
+})
+
+/* ========================= usage 归一与累加（§14 自有账本） ========================= */
+
+test('normalizeUsage：按 OpenAI 兼容层的 details 取数，不反推', () => {
+    const u = normalizeUsage({
+        prompt_tokens: 3237, completion_tokens: 128, total_tokens: 3365,
+        prompt_tokens_details: {cached_tokens: 3072},
+        completion_tokens_details: {reasoning_tokens: 96},
+    })
+    assert.deepEqual(u, {promptTokens: 3237, completionTokens: 128, totalTokens: 3365, cachedTokens: 3072, reasoningTokens: 96, reported: true})
+})
+
+test('normalizeUsage：上游没回 usage 时 reported=false，绝不"猜 0 当成全命中"', () => {
+    assert.equal(normalizeUsage(undefined).reported, false)
+    assert.equal(normalizeUsage({}).cachedTokens, 0)
+    const m = deriveUsageMetrics(normalizeUsage({}), 1)
+    assert.equal(m.hasUsage, false)
+    assert.equal(m.nonCachedRatio, null, '没有数据时比例必须是 null，不是 0')
+})
+
+test('normalizeUsage：负数与脏值按 0 计，snake_case 与 camel 两种字段名都认', () => {
+    assert.equal(normalizeUsage({prompt_tokens: -5}).promptTokens, 0)
+    assert.equal(normalizeUsage({input_tokens: 100, output_tokens: 20}).promptTokens, 100)
+    assert.equal(normalizeUsage({cached_tokens: 64}).cachedTokens, 64, '少数网关把 cached 平铺在顶层')
+    assert.equal(normalizeUsage({prompt_tokens: '123'}).promptTokens, 123)
+})
+
+test('addUsage：多轮累加（每 run 的量就是靠它合出来的）', () => {
+    const a = normalizeUsage({prompt_tokens: 1000, completion_tokens: 50, total_tokens: 1050, prompt_tokens_details: {cached_tokens: 512}})
+    const b = normalizeUsage({prompt_tokens: 1200, completion_tokens: 80, total_tokens: 1280, prompt_tokens_details: {cached_tokens: 1024}})
+    const sum = addUsage(addUsage(createEmptyUsage(), a), b)
+    assert.equal(sum.promptTokens, 2200)
+    assert.equal(sum.cachedTokens, 1536)
+    assert.equal(sum.totalTokens, 2330)
+    assert.equal(sum.reasoningTokens, 0)
+    assert.deepEqual(addUsage(null, null), {...createEmptyUsage(), reported: false}, '空值相加不炸')
+})
+
+test('deriveUsageMetrics：主指标是非缓存 token（D41），不是命中率', () => {
+    const u = normalizeUsage({prompt_tokens: 3237, completion_tokens: 128, prompt_tokens_details: {cached_tokens: 3072}})
+    const m = deriveUsageMetrics(u, 7)
+    assert.equal(m.billablePromptTokens, 165)
+    assert.equal(m.cacheReadTokens, 3072)
+    assert.equal(m.nonCachedRatio, Number((165 / 3237).toFixed(4)))
+    assert.equal(m.modelCalls, 7)
+    assert.equal(m.hasUsage, true)
+})
+
+test('deriveUsageMetrics：cached 大于 prompt 的异常回传不折成负数', () => {
+    const u = normalizeUsage({prompt_tokens: 100, prompt_tokens_details: {cached_tokens: 500}})
+    assert.equal(deriveUsageMetrics(u, 1).billablePromptTokens, 0)
+})
+
+test('usageCallAlert：打满但正常收尾不该告警，超出上限才报', () => {
+    /** 6 次调用 + 正常 break = "这轮活多"，不是"在打循环"。报它就是把告警做成噪声 */
+    assert.equal(usageCallAlert({modelCalls: 6, maxIterations: 6}).level, 'ok')
+    assert.equal(usageCallAlert({modelCalls: 7, maxIterations: 6}).level, 'warn', '需要额外补收尾（超出上限）才是信号')
+    assert.equal(usageCallAlert({modelCalls: 8, maxIterations: 6, hardAt: 8}).level, 'critical')
+    assert.equal(usageCallAlert({modelCalls: 3, maxIterations: 6}).level, 'ok')
+    const t = usageCallAlert({modelCalls: 1, maxIterations: 6})
+    assert.equal(t.warnAt, 6, '默认阈值就是上限，且要把阈值本身回传，日志里才说得清为什么没报')
+    assert.equal(usageCallAlert({modelCalls: 3, maxIterations: 6, warnAt: 2}).overWarn, true, '阈值可显式压低')
 })
 
 /* ========================= createBudgetMeter（PR-K1 增量测量） ========================= */

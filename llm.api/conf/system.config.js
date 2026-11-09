@@ -206,6 +206,12 @@ export default {
         segmentTextChars: parseInt(process.env['limits_segmentTextChars'] || 2000),
         segmentsMaxCount: parseInt(process.env['limits_segmentsMaxCount'] || 8),
         segmentsTotalChars: parseInt(process.env['limits_segmentsTotalChars'] || 12000),
+        /**
+         * 每 run 模型调用次数的告警/熔断阈值（§14）。
+         * 不设默认熔断：阈值属于运维判断，代码不该替它决定；不设就是"只观测不断"。
+         */
+        runModelCallsWarn: parseInt(process.env['limits_runModelCallsWarn'] || '0') || null,
+        runModelCallsHardLimit: parseInt(process.env['limits_runModelCallsHardLimit'] || '0') || null,
     },
     /** 两级缓存（PR-10）：memory 套件当前只用 extractDedupeSeconds，其余为整段一致性预置 */
     /**

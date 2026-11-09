@@ -20,6 +20,7 @@ import memoryProfileSchema from './memoryProfileSchema.js'
 import memoryNamespaceSchema from './memoryNamespaceSchema.js'
 import sessionCheckpointSchema from './sessionCheckpointSchema.js'
 import sandboxUsageSchema from './sandboxUsageSchema.js'
+import llmUsageSchema from './llmUsageSchema.js'
 
 const mongodbConfig = llm.config.mongodbConfig
 
@@ -57,3 +58,5 @@ export const MemoryProfile = conn.model('MemoryProfile', memoryProfileSchema, 'm
 export const MemoryNamespace = conn.model('MemoryNamespace', memoryNamespaceSchema, 'memoryNamespace')
 export const SessionCheckpoint = conn.model('SessionCheckpoint', sessionCheckpointSchema, 'sessionCheckpoint')
 export const SandboxUsage = conn.model('SandboxUsage', sandboxUsageSchema, 'sandboxUsage')
+/** §14 自有账本：一行一个 run 的模型用量 */
+export const LlmUsage = conn.model('LlmUsage', llmUsageSchema, 'llmUsage')

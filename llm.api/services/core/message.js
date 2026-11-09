@@ -117,6 +117,8 @@ function toProcessSummary(extInfo) {
          */
         segments: extInfo.segments || [],
         segmentSummary: extInfo.segmentSummary || null,
+        /** §14/G-6：本 run 的用量与调用次数（历史页与告警都读它） */
+        usage: extInfo.usage || null,
     }
 }
 

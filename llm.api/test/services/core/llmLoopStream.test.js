@@ -28,15 +28,88 @@ import {
     FINALIZE_HINT_TEXT,
 } from '../../../services/core/llmLoop.js'
 
+test('drainAssistantStream：usage 帧（choices 为空数组）必须被读到', async () => {
+    /**
+     * 这是 §14 账本没有数据来源的代码根因：旧实现的 `if (!choice) continue` 在 usage 帧上直接跳过，
+     * 而上游 P-1 实测确认 usage 一直都在 —— 是我们丢了。
+     */
+    const chunks = [
+        textChunk('答'),
+        {choices: [], usage: {prompt_tokens: 900, completion_tokens: 30, total_tokens: 930, prompt_tokens_details: {cached_tokens: 512}}},
+    ]
+    const r = await drainAssistantStream(chunks)
+    assert.equal(r.usageChunks, 1)
+    assert.equal(r.usage.promptTokens, 900)
+    assert.equal(r.usage.cachedTokens, 512)
+    assert.equal(r.usage.reported, true)
+    assert.equal(r.content, '答', '读 usage 不影响正文聚合')
+    assert.equal(r.chunkCount, 2)
+})
+
+test('drainAssistantStream：全程没有 usage 帧时 reported=false（账本要能区分 0 与没回）', async () => {
+    const r = await drainAssistantStream([textChunk('答')])
+    assert.equal(r.usageChunks, 0)
+    assert.equal(r.usage.reported, false)
+    assert.equal(r.usage.promptTokens, 0)
+})
+
+test('drainAssistantStream：多帧 usage 会累加（少数网关每帧都带）', async () => {
+    const chunks = [
+        {choices: [{index: 0, delta: {content: 'a'}}], usage: {prompt_tokens: 10, completion_tokens: 1}},
+        {choices: [{index: 0, delta: {content: 'b'}}], usage: {prompt_tokens: 10, completion_tokens: 2}},
+    ]
+    const r = await drainAssistantStream(chunks)
+    assert.equal(r.usageChunks, 2)
+    assert.equal(r.usage.completionTokens, 3, '逐帧上报时取的是累加值')
+})
+
 /* ---------- 构造假 chunk 的小工具（形态取自 OpenAI 兼容层的真实响应） ---------- */
 
+/**
+ * @description 造一个流式 chunk
+ * @param {Object} delta choice.delta 内容
+ * @param {String|null} [finish] finish_reason
+ * @returns {Object} 假 chunk
+ */
 const chunkOf = (delta, finish = null) => ({choices: [{index: 0, delta, finish_reason: finish}], usage: null})
+/**
+ * @description 造一个只带正文的 chunk
+ * @param {String} t 正文片段
+ * @returns {Object} 假 chunk
+ */
 const textChunk = (t) => chunkOf({content: t})
+/**
+ * @description 造一个只带推理的 chunk
+ * @param {String} t 推理片段
+ * @returns {Object} 假 chunk
+ */
 const reasonChunk = (t) => chunkOf({reasoning_content: t})
-const usageChunk = (finish = 'stop') => ({choices: [], usage: {total_tokens: 7}})
+/**
+ * @description 造末帧（choices 为空数组，只带 usage）
+ * @returns {Object} 假 chunk
+ */
+const usageChunk = () => ({choices: [], usage: {total_tokens: 7}})
+/**
+ * @description 造一个只带 finish_reason 的收帧 chunk
+ * @param {String} [finish] finish_reason
+ * @returns {Object} 假 chunk
+ */
 const finishChunk = (finish = 'stop') => chunkOf({}, finish)
+/**
+ * @description 造一个工具调用增量 chunk
+ * @param {Number} index 工具调用序号
+ * @param {String} id 调用标识
+ * @param {String} name 函数名
+ * @param {String} args 参数 JSON 片段
+ * @returns {Object} 假 chunk
+ */
 const toolChunk = (index, id, name, args) => chunkOf({tool_calls: [{index, id, function: {name, arguments: args}}]})
-/** 只作为 async generator 提供，验证与数组形态等价（真实 chatStream 是可迭代对象） */
+/**
+ * @description 把 chunk 数组包成 async generator（真实 chatStream 是可迭代对象）
+ * @param {Object[]} chunks 假 chunk 数组
+ * @yields {Object} 逐个产出 chunk
+ * @returns {AsyncGenerator<Object>} 假流
+ */
 async function* asStream(chunks) {
     for (const c of chunks) {
         yield c
@@ -221,6 +294,10 @@ async function simLoop({rounds, maxIterations = 6, skillContext = null, skillSel
     let toolRounds = 0
     let skillReloads = 0
 
+    /**
+     * @description 复刻 llmChat 的 emitReset：先记事件再清空末段正文
+     * @returns {void}
+     */
     const emitReset = () => {
         events.push({type: 'reset'})
         answerContent = ''
@@ -329,12 +406,29 @@ async function simLoop({rounds, maxIterations = 6, skillContext = null, skillSel
 
 /** 造一轮"要求调工具"的假响应；id 用自增计数，保证可复现（不用随机数） */
 let callSeq = 0
+/**
+ * @description 造一轮会触发工具调用的假流
+ * @param {String} name 工具名
+ * @param {String} [withText] 同轮先说半句的正文（用来复现"半句被 reset 抹掉"）
+ * @returns {Object[]} 该轮的假 chunk 数组
+ */
 const toolRound = (name, withText) => ([
     ...(withText ? [textChunk(withText)] : []),
     toolChunk(0, `call-${++callSeq}`, name, '{"a":1}'),
     finishChunk('tool_calls'),
 ])
+/**
+ * @description 造一轮纯文本回答的假流
+ * @param {String} t 回答正文
+ * @returns {Object[]} 该轮的假 chunk 数组
+ */
 const textRound = (t) => ([textChunk(t), finishChunk('stop')])
+/**
+ * @description 造 n 轮工具调用的假流序列（复现 maxIterations 打满）
+ * @param {Number} n 轮数
+ * @param {Boolean} [withText] 每轮是否先说"第 k 段"
+ * @returns {Object[][]} 每轮一个假 chunk 数组
+ */
 const toolRounds = (n, withText) => Array.from({length: n}, (unused, i) => toolRound(`t${i}`, withText ? `第${i + 1}段` : undefined))
 
 /* ---------- 迭代上限与收尾补救的纯函数 ---------- */
