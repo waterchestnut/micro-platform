@@ -249,6 +249,18 @@ export default {
     stream: {
         pingIntervalMs: parseInt(process.env['stream_pingIntervalMs'] || '8000'),
     },
+    /**
+     * u2u（用户间聊天）相关配置。
+     */
+    u2u: {
+        /**
+         * 实时推送开关。默认开——它是**缺陷修复**而不是新功能：
+         * 服务端曾把 `publishU2uEvent` 连定义带调用整段注释掉，而前端收到 `connected`
+         * 就把轮询兜底关掉（`u2u.tsx:728`），合起来是"页面开着就看不到对方新消息"。
+         * 留开关只为上线首批止血；关掉等于把那个缺陷放回去。
+         */
+        pushEnabled: process.env['u2u_pushEnabled'] !== 'false',
+    },
     cache: {
         skillEnabled: process.env['cache_skill'] !== 'false',
         skillTtlSeconds: Math.min(parseInt(process.env['cache_skillTtlSeconds'] || parseInt(process.env['cacheExpiresTime'] || 60 * 24 * 7) * 60) || 3600, 4 * 3600),

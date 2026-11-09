@@ -6,8 +6,10 @@
 
 import conversationDac from '../../daos/core/dac/conversationDac.js'
 import messageDac from '../../daos/core/dac/messageDac.js'
+import redisClient from '../../daos/cache/redisClient.js'
 import {getUserDetail, getUserList} from '../../grpc/clients/userInfo.js'
 import {assertCanContact} from './mentorContact.js'
+import {fanoutU2uEvent, u2uPushTargets} from './u2uPush.js'
 import {md5} from "../../tools/security.js";
 
 const tools = llm.tools
@@ -299,10 +301,22 @@ export async function sendU2uMessage(curUserInfo, params = {}) {
     /*刷新会话updateTime，用于会话列表按最近活跃排序*/
     await conversationDac.update({conversationCode})
 
-    /*通知对方（推送失败不阻断，前端可轮询兜底）*/
-    /*const otherUsers = (conv.userCodes || []).filter(_ => _ !== curUserInfo.userCode)*/
-    /*await publishU2uEvent(conversationCode, otherUsers, 'message', serializeMessage(messageInfo))
-        .catch(err => logger.error(`u2u 消息推送失败: ${err.message}`))*/
+    /**
+     * 通知会话其他成员（v1.30 的修复同步到底座）。
+     * 旧注释说"前端可轮询兜底"，但前端的兜底是 `if (connectedRef.current) return;`
+     * ——连接一建成就把轮询关了，而这里从来没发推送，于是"页面开着看不到对方新消息"。
+     * 详见 `services/core/u2uPush.js` 文件头。
+     */
+    if (llm.config?.u2u?.pushEnabled !== false) {
+        await fanoutU2uEvent({
+            publish: (channel, message) => redisClient.client.publish(channel, message),
+            targets: u2uPushTargets(conv.userCodes, curUserInfo.userCode),
+            dataFor: (userCode) => serializeMessageForUser(messageInfo, userCode),
+            conversationCode,
+            event: 'message',
+            log: logger,
+        })
+    }
 
     return serializeMessageForUser(messageInfo, curUserInfo.userCode)
 }
@@ -368,10 +382,17 @@ export async function readU2uMessages(curUserInfo, params = {}) {
     }
     await messageDac.update({extInfo: {readStatus: true, readTime}}, filter, {}, true)
 
-    /*已读回执通知对方（可选）*/
-    /* const otherUsers = (conv.userCodes || []).filter(_ => _ !== curUserInfo.userCode)*/
-    /*await publishU2uEvent(conversationCode, otherUsers, 'read', {upToTime: readTime})
-        .catch(err => logger.error(`u2u 已读推送失败: ${err.message}`))*/
+    /** 已读回执：同样只发给别人，发给自己会出现"我一看就把自己发的全标成已读"的假回执 */
+    if (llm.config?.u2u?.pushEnabled !== false) {
+        await fanoutU2uEvent({
+            publish: (channel, message) => redisClient.client.publish(channel, message),
+            targets: u2uPushTargets(conv.userCodes, curUserInfo.userCode),
+            dataFor: () => ({upToTime: readTime}),
+            conversationCode,
+            event: 'read',
+            log: logger,
+        })
+    }
 
     return {conversationCode, readTime}
 }

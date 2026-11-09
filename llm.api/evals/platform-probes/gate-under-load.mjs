@@ -99,7 +99,12 @@ async function one(i) {
             const j = await r.json().catch(() => ({}))
             return {
                 i, kind: 'rejected', http: r.status, code: j.code, msg: j.msg,
-                /** 判定依据走 `data.reason`：让探针不必靠文案猜是被哪条规则挡的 */
+                /**
+                 * `success:false` 是四端 x-sdk 唯一的错误通道（`jsonResponseHandler` 里
+                 * `chunk.success === false` 才走 onError）。缺了它，拒绝会被当成一条正常内容，
+                 * 用户看到的是空回答——所以这个字段不是风格问题，是"能不能看见拒绝"的问题。
+                 */
+                success: j.success, sdkName: j.name, message: j.message,
                 reason: j?.data?.reason, reportedActive: j?.data?.active, reportedLimit: j?.data?.limit,
                 retryAfter: r.headers.get('retry-after'), ms: Date.now() - t0,
             }
@@ -188,6 +193,15 @@ const checks = {
             ? rejected.every(r => r.reason === 'user-full')
             : rejected.every(r => r.reason === 'global-full'),
     },
+    /**
+     * 单独一条判据：`success:false`。
+     * 四端的 `jsonResponseHandler` 只认这个字段才走 onError；没有它，拒绝会渲染成一条空回答，
+     * 那比"报错"严重得多——用户会以为模型真的回答了空内容。
+     */
+    xSdk错误通道可用: {
+        got: JSON.stringify([...new Set(rejected.map(r => `${r.success}/${r.sdkName}`))]),
+        ok: rejected.length === 0 || rejected.every(r => r.success === false && r.sdkName === 'ConcurrencyLimited'),
+    },
     没有异常: {got: errored.length, ok: errored.length === 0},
     中途读数确实看到在途: {got: `active=${midStats.active}`, ok: Number(midStats.active) === expectAdmitted},
     /** 在途中就要能判平：只在收尾判平的哨兵发现不了"越用越紧" */
@@ -200,7 +214,8 @@ const allOk = Object.values(checks).every(c => c.ok)
 log('判定', {
     各条: checks,
     结论: allOk
-        ? `✅ 闸真挡得住：${LIMIT} 格进流、其余 ${rejected.length} 条在 SSE 头之前就被拒（HTTP 200 + code 4290 + Retry-After），`
+        ? `✅ 闸真挡得住：${admitted.length} 条进流（limit=${LIMIT}, perUser=${PER_USER}, multiUser=${MULTI_USER}）、`
+            + `其余 ${rejected.length} 条在 SSE 头之前就被拒（HTTP 200 + code 4290 + success:false + Retry-After）；`
             + '在途期间 accountingGap=0，收尾后 active / overRelease 归零（说明每条进流的都在 finally 里注销了）'
         : `❌ 有不符合预期的项，见上面各条读数——特别是"收尾格子清零"若为假，就是只进不出，症状会表现为整站逐渐变慢`,
 })

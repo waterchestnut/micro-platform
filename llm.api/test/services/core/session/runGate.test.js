@@ -59,17 +59,31 @@ describe('decideAdmission', () => {
     })
 })
 
-describe('rejectResponse：拒绝的对外形态', () => {
-    test('HTTP 200 + code 4290，走本项目既有约定', () => {
-        const r = rejectResponse({reason: 'global-full', retryAfterMs: 1500})
-        assert.equal(r.httpStatus, 200)
-        assert.equal(r.bodyCode, 4290)
+describe('rejectResponse：拒绝的对外形态（四端实测的结果，见函数注释）', () => {
+    test('HTTP 200 + 两套约定并存', () => {
+        const r = rejectResponse({reason: 'global-full', active: 3, limit: 3, retryAfterMs: 1500})
+        assert.equal(r.httpStatus, 200, '不是 429：四端 x-sdk 对非 2xx 直接 throw 且不读响应体')
+        assert.equal(r.body.code, 4290, 'retSchema 口径的调用方靠它分支')
+        assert.equal(r.body.msg, r.body.message, 'msg 与 message 必须同值，否则两套约定会给出两句不同的话')
         assert.equal(r.headers['Retry-After'], '2', 'Retry-After 是秒（RFC），不是毫秒')
     })
 
+    /**
+     * 这条是整个形态的关键判据：x-sdk 的 `jsonResponseHandler` 里
+     * `chunk.success === false` 才走 onError，否则走 onUpdate/onSuccess ⇒ 空回答。
+     */
+    test('必须带 success:false 与 name：否则四端会把拒绝渲染成一条空回答', () => {
+        const b = rejectResponse({reason: 'global-full', active: 3, limit: 3, retryAfterMs: 1500}).body
+        assert.equal(b.success, false)
+        assert.equal(b.name, 'ConcurrencyLimited')
+        assert.ok(b.message?.length > 0)
+        assert.deepEqual(b.data, {reason: 'global-full', active: 3, limit: 3})
+    })
+
     test('两种拒绝的文案能区分开（用户看得懂自己被什么挡住了）', () => {
-        assert.match(rejectResponse({reason: 'user-full'}).message, /你有多[个個]|你多个问题|等待其中一个/)
-        assert.match(rejectResponse({reason: 'global-full'}).message, /繁忙/)
+        assert.match(rejectResponse({reason: 'user-full'}).body.message, /你多个问题|等待其中一个/)
+        assert.match(rejectResponse({reason: 'global-full'}).body.message, /繁忙/)
+        assert.equal(rejectResponse({reason: 'user-full'}).body.data.reason, 'user-full')
     })
 
     /** 给 0 会被读成"立刻重试"，那等于自己造重试风暴 */

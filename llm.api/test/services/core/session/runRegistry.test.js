@@ -26,7 +26,10 @@ describe('admitRun / releaseRun', () => {
         assert.equal(admitRun({messageCode: 'm2', userCode: 'u2', cfg: CFG}).admit, true)
         const third = admitRun({messageCode: 'm3', userCode: 'u3', cfg: CFG})
         assert.equal(third.admit, false)
-        assert.equal(third.response.bodyCode, 4290)
+        assert.equal(third.response.body.code, 4290)
+        /** 四端的错误通道只认 `success:false`，缺了它拒绝会渲染成空回答 ⇒ 在这里也钉一次 */
+        assert.equal(third.response.body.success, false)
+        assert.equal(third.response.body.data.reason, 'global-full')
         assert.equal(snapshot().active, 2)
         assert.equal(snapshot().rejected, 1)
     })
