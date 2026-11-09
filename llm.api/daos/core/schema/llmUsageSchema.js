@@ -59,6 +59,19 @@ const llmUsageSchema = new Schema({
     reasoningTokens: {type: Number, default: 0},
     hasUsage: {type: Boolean, default: false, description: '上游是否真的回了 usage'},
     callAlert: {type: String, default: 'ok', description: '调用次数告警：ok|warn|critical'},
+    /**
+     * PR-0.5：上游重试与换档留痕。四列都是"看板上必须能区分慢与抖"的最小集：
+     * - `upstreamAttempts` 本 run 真正发起过几次上游调用（含重试）；
+     * - `upstreamRetried` 其中属于重试的次数（= attempts - 首轮），成本就乘在这里；
+     * - `fallbackFrom`/`fallbackTo` 换档的来龙去脉；不换档就留空。
+     *
+     * 为什么单列而不塞进 extInfo：**"重试花了多少钱"是要按天/按频道聚合的问题**，
+     * 塞在大文档里就没法聚合，而这张表存在的理由正是窄表可聚合（见文件头）。
+     */
+    upstreamAttempts: {type: Number, default: 0, description: '本 run 发起上游调用的次数（含重试）'},
+    upstreamRetried: {type: Number, default: 0, description: '其中属于重试的次数'},
+    fallbackFrom: {type: String, default: '', description: '换档前的档位 key（未换为空）'},
+    fallbackTo: {type: String, default: '', description: '换档后的档位 key（未换为空）'},
     loopExit: {type: String, default: '', description: '主循环退出方式'},
     progress: {type: String, default: '', description: '本轮进度'},
     latencyMs: {type: Number, default: 0},

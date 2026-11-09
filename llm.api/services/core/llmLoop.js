@@ -424,6 +424,42 @@ export function describeError(e) {
     return {kind: 'unknown', message: raw.slice(0, 500), status}
 }
 
+/**
+ * @description 解析 429/503 的 `Retry-After`（秒或 HTTP 日期）成毫秒
+ * @param {Object|Array|Function} headers SDK 的错误对象上带的是 `Headers`，形态各家不同，这里都兜一下
+ * @returns {Number} 毫秒；拿不到就 0
+ * @description
+ * 上游明确告诉你"什么时候再来"时，它比任何本地猜测都准；但**必须夹在 `capMs` 之内**——
+ * 不能因为上游说"300 秒后再试"就把一个在线请求挂在那儿，那不叫重试叫排队。
+ */
+export function parseRetryAfterMs(headers) {
+    if (!headers) {
+        return 0
+    }
+    let raw
+    try {
+        if (typeof headers.get === 'function') {
+            raw = headers.get('retry-after') || headers.get('Retry-After')
+        } else if (Array.isArray(headers)) {
+            const hit = headers.find(([k]) => String(k).toLowerCase() === 'retry-after')
+            raw = hit ? hit[1] : undefined
+        } else {
+            raw = headers['retry-after'] ?? headers['Retry-After']
+        }
+    } catch (e) {
+        return 0
+    }
+    if (raw === undefined || raw === null || raw === '') {
+        return 0
+    }
+    const secs = Number(raw)
+    if (Number.isFinite(secs)) {
+        return Math.max(0, Math.round(secs * 1000))
+    }
+    const at = Date.parse(String(raw))
+    return Number.isNaN(at) ? 0 : Math.max(0, at - Date.now())
+}
+
 /* ---------- 迭代上限：配置化（§2E-3 修法第 3 条） ---------- */
 
 /** 兜底上限：与抽取前的硬编码值一致，保证不配置时行为不变 */
@@ -619,6 +655,260 @@ export function steerAction(mode, phase) {
     return {injectAt: 'boundary', abortCurrentStream: false}
 }
 
+/* ---------- PR-0.5：上游重试与备选档位（纯决策与包装器，接线在 llmChat） ---------- */
+
+/**
+ * @description 备选档位的"够不够装"判定
+ * @param {Number} [tokens] 本次要发出去的 prompt token 估算值
+ * @param {Object} [target] 备选档位的配置节点
+ * @param {Number} [slackTokens] 预算余量（与 `context.slackTokens` 同口径）
+ * @returns {{ok: Boolean, reason: String}} 判定
+ * @description
+ * 换档不是"换个模型再试一次"这么简单：备选档的上下文窗口通常更小（比如从 pro 换到 low），
+ * 而这一轮的 messages 是按主档窗口装配的。**换到一个装不下的档位，会把一次"可重试的 503"
+ * 换成一次"必然失败的 400"**——不但白花一次调用，还会让整轮以 permanent 错误收场。
+ * 所以换档前必须核一次窗口，核不过就老老实实失败。
+ */
+export function canFallbackTo({tokens = 0, target = null, slackTokens = 0} = {}) {
+    if (!target?.model) {
+        return {ok: false, reason: 'no-target'}
+    }
+    const need = Number(tokens) + Number(target.maxTokens || 0) + Number(slackTokens || 0)
+    const have = Number(target.contextWindow || 0)
+    if (!(have > 0)) {
+        return {ok: false, reason: 'target-window-unknown'}
+    }
+    return have >= need
+        ? {ok: true, reason: ''}
+        : {ok: false, reason: `装不下：need ${need} > have ${have}`}
+}
+
+/**
+ * @description 带重试与换档的上游调用包装
+ * @param {Object} params 参数
+ * @param {Function} params.invoke 真正打一次上游：`({attempt, markFirstByte, usingFallback})`
+ * @param {Function} [params.errorInfoOf] 把异常归一成 `{kind, message, status}`（默认 `describeError`）
+ * @param {Function} [params.retryAfterMsOf] 从异常里取 429 的 Retry-After（毫秒）
+ * @param {Function} [params.fallbackUsable] 换档前的可行性检查 `({usingFallback}) => {ok, reason}`
+ * @param {Object} [params.cfg] 重试配置
+ * @param {Function} [params.sleep] 等待实现（测试注入，避免真等）
+ * @param {Function} [params.log] 观测回调 `({note, ...})`
+ * @param {Function} [params.rng] 随机源
+ * @returns {Promise<{value: any, attempts: Number, usingFallback: Boolean}>} 成功结果与过程计数
+ * @throws 最后一次异常（原样抛出，不包装：上层要按原始错误决定落库形态）
+ * @description
+ * `markFirstByte` 是安全边界：`invoke` 内部**每次向客户端下发内容前**都要调它一次。
+ * 一旦调过，本次失败就绝不重试（见 `upstreamRetryDecision` 规则 1）。
+ */
+export async function withUpstreamRetry({
+    invoke,
+    errorInfoOf = describeError,
+    retryAfterMsOf = () => 0,
+    /**
+     * 可行性检查**默认放行**：换档是配置了 `fallbackModel` 就该发生的事，
+     * 调用方接了钩子才有"窗口装不下"这类额外约束。
+     * （第一版这里默认返回 `ok:false`，结果没接钩子时换档永远不发生，
+     * 测试表现为"主档试尽就失败"——一个静默失效的功能比报错更难发现。）
+     */
+    fallbackUsable = () => ({ok: true, reason: ''}),
+    cfg = {},
+    sleep = (ms) => new Promise(r => setTimeout(r, ms)),
+    log = () => {},
+    rng = Math.random,
+} = {}) {
+    let attempt = 0
+    let usingFallback = false
+    /* eslint-disable no-constant-condition */
+    while (true) {
+        attempt++
+        const state = {firstByteSent: false}
+        try {
+            const value = await invoke({
+                attempt,
+                usingFallback,
+                markFirstByte: () => {
+                    state.firstByteSent = true
+                },
+            })
+            return {value, attempts: attempt, usingFallback}
+        } catch (e) {
+            const errorInfo = errorInfoOf(e)
+            /**
+             * 已经决定要换档、却在换档这一步被可行性检查拦下时，不再回到主档反复试：
+             * 主档已经试尽 maxAttempts 次了，回到它只会是同一个 503。
+             * 所以这里把 `fallbackModel` 临时摘掉再问一次决策——语义是"没有备选可用"。
+             */
+            let askCfg = cfg
+            if (usingFallback) {
+                askCfg = {...cfg, fallbackModel: ''}
+            } else if (cfg.fallbackModel) {
+                /** 只在决策真的要换档时才核窗口：核不动就当没有备选（宁可失败，不要换成必然失败） */
+                const probe = upstreamRetryDecision({errorInfo, attempt, firstByteSent: state.firstByteSent, cfg, rng})
+                if (probe.action === 'fallback') {
+                    const usable = fallbackUsable({usingFallback})
+                    if (!usable?.ok) {
+                        log({note: '换档被可行性检查拦住', reason: usable?.reason || 'unknown'})
+                        askCfg = {...cfg, fallbackModel: ''}
+                    }
+                }
+            }
+            const d = upstreamRetryDecision({
+                errorInfo,
+                attempt,
+                firstByteSent: state.firstByteSent,
+                cfg: askCfg,
+                retryAfterMs: retryAfterMsOf(e),
+                rng,
+            })
+            log({note: `上游第 ${attempt} 次失败`, action: d.action, reason: d.reason, delayMs: d.delayMs, usingFallback})
+            if (d.action === 'retry') {
+                if (d.delayMs > 0) {
+                    await sleep(d.delayMs)
+                }
+                continue
+            }
+            if (d.action === 'fallback') {
+                usingFallback = true
+                continue
+            }
+            /** 原样抛出：上层要按 `describeError` 的 kind 决定落库是 abort 还是 error */
+            throw e
+        }
+    }
+}
+
+
+/**
+ * 可重试的上游状态码。
+ * 只列"重试有意义"的那些：**429 与 5xx 是暂时性的**，重试会换到不同的后端实例或等窗口过去。
+ * 故意不列 400/401/403/404——那些是请求本身有问题或鉴权坏了，重试只会把 relay 的额度再烧一遍。
+ */
+export const UPSTREAM_RETRYABLE_STATUS = [408, 409, 425, 429, 500, 502, 503, 504, 529]
+
+/**
+ * 不可重试的错误特征：正文已经超了窗口这类问题，重试一万次也是同一个结果。
+ * 命中它不但不该重试，还该把"该走压缩/该报错"的信号留出来。
+ */
+export const UPSTREAM_PERMANENT_PATTERNS = [
+    /context.{0,12}(length|window).{0,12}(exceed|over|limit)/i,
+    /maximum context length/i,
+    /too many tokens/i,
+    /invalid.{0,8}api.{0,8}key/i,
+    /insufficient (quota|balance|credit)/i,
+    /content_policy|content filter|flagged/i,
+]
+
+/**
+ * @description 判断一个上游错误是不是"重试有可能变好"
+ * @param {Object} errorInfo `describeError` 的产物 {kind, message, status}
+ * @returns {{retryable: Boolean, permanent: Boolean, reason: String}} 判定
+ */
+export function classifyUpstreamError(errorInfo = {}) {
+    const msg = String(errorInfo.message || '')
+    /**
+     * 永久性错误优先判：一条 400 的"上下文超长"如果只看状态码就会被放进取退重试里，
+     * 结果是**同一份必然失败的请求烧三次钱**。顺序不能反过来。
+     */
+    if (UPSTREAM_PERMANENT_PATTERNS.some(re => re.test(msg))) {
+        return {retryable: false, permanent: true, reason: 'permanent'}
+    }
+    /**
+     * 中断不是故障（与 `describeError` 的口径一致）：客户端断开引发的 AbortError 绝不重试，
+     * 否则"用户关了页面"会变成"服务端替他重试三轮"。
+     */
+    if (errorInfo.kind === 'abort') {
+        return {retryable: false, permanent: false, reason: 'abort'}
+    }
+    const status = Number(errorInfo.status)
+    if (status > 0) {
+        return UPSTREAM_RETRYABLE_STATUS.includes(status)
+            ? {retryable: true, permanent: false, reason: `status-${status}`}
+            : {retryable: false, permanent: false, reason: `status-${status}-not-retryable`}
+    }
+    /**
+     * 没有状态码的 api 错误（连接被拒、DNS、socket 断开、超时）**算可重试**：
+     * 现网最常见的"relay 抖动"正是这一类——它连状态码都拿不到。
+     */
+    if (errorInfo.kind === 'api') {
+        return {retryable: true, permanent: false, reason: 'transport'}
+    }
+    return {retryable: false, permanent: false, reason: errorInfo.kind || 'unknown'}
+}
+
+/**
+ * @description 退避时长：满抖动（full jitter）
+ * @param {Number} attempt 第几次尝试（从 1 开始）
+ * @param {Number} [baseMs] 基准
+ * @param {Number} [capMs] 上限
+ * @param {Function} [rng] 随机源（0~1），测试注入定值
+ * @returns {Number} 毫秒
+ */
+export function backoffMs({attempt = 1, baseMs = 300, capMs = 4000, rng = Math.random} = {}) {
+    /** 指数部分按 attempt-1：第 1 次重试就是 baseMs 量级 */
+    const exp = Math.min(capMs, baseMs * 2 ** Math.max(0, attempt - 1))
+    /** 满抖动取 [0, exp]，不是 exp 的一半起步——多实例同时挂时会形成 thundering herd，满抖动才拉得开 */
+    return Math.round(Math.max(0, Math.min(1, rng())) * exp)
+}
+
+/**
+ * @description 一次上游调用失败后，决定"重试 / 换档 / 放弃"
+ * @param {Object} params 参数
+ * @param {Object} params.errorInfo `describeError` 的产物
+ * @param {Number} params.attempt 刚才那次是第几次（1=首发）
+ * @param {Boolean} params.firstByteSent **是否已经向客户端下发过首字节**
+ * @param {Object} [params.cfg] 重试配置（enabled/maxAttempts/baseMs/capMs/fallbackModel）
+ * @param {Number} [params.retryAfterMs] 上游 429 的 Retry-After（毫秒）
+ * @param {Function} [params.rng] 随机源
+ * @returns {{action: String, delayMs: Number, reason: String, attempt: Number}}
+ *          action: 'retry' | 'fallback' | 'fail'
+ * @description
+ * 三条硬规则，按优先级排：
+ * 1. **下发过首字节就绝不重试**（`firstByteSent`）。这是本 PR 的边界：一次已经吐了字的调用
+ *    在客户端看来是"正在回答"，重发会让用户看到重复内容、段序错乱、`reset` 之外的第二种拼接形态。
+ *    所以重试只覆盖"首字节前的失败"——那类失败对客户端是**不可见的**，重试才是安全的。
+ * 2. 同一档位最多试 `maxAttempts` 次；用尽了还有 `fallbackModel` 就换档**一次**（不再递归换档，
+ *    避免"A 挂了切 B、B 挂了切回 A"这种环）。
+ * 3. 永久错误直接放弃（见 `classifyUpstreamError`）。
+ */
+export function upstreamRetryDecision({
+    errorInfo = {},
+    attempt = 1,
+    firstByteSent = false,
+    cfg = {},
+    retryAfterMs = 0,
+    rng = Math.random,
+} = {}) {
+    if (cfg.enabled !== true) {
+        return {action: 'fail', delayMs: 0, reason: 'disabled', attempt}
+    }
+    /** 规则 1：首字节后不重试。这一条必须排在可重试判定之前——它比"错误类型"更硬 */
+    if (firstByteSent) {
+        return {action: 'fail', delayMs: 0, reason: 'first-byte-sent', attempt}
+    }
+    const cls = classifyUpstreamError(errorInfo)
+    if (!cls.retryable) {
+        return {action: 'fail', delayMs: 0, reason: cls.reason, attempt}
+    }
+    const maxAttempts = Math.max(1, Number(cfg.maxAttempts) || 3)
+    if (attempt < maxAttempts) {
+        /**
+         * 429 的 `Retry-After` 优先于我们的指数退避：上游明确告诉你什么时候再来，
+         * 比任何抖动猜测都准。但仍要夹在 `capMs` 之内——不能因为上游说"5 分钟后再试"
+         * 就把一个在线请求挂在那儿，那不是重试是排队。
+         */
+        const cap = Number(cfg.capMs) || 4000
+        const delay = Number(retryAfterMs) > 0
+            ? Math.min(Number(retryAfterMs), cap)
+            : backoffMs({attempt: attempt + 1, baseMs: Number(cfg.baseMs) || 300, capMs: cap, rng})
+        return {action: 'retry', delayMs: delay, reason: cls.reason, attempt}
+    }
+    /** 规则 2：本档试尽了，才考虑换档；换档只此一次 */
+    if (cfg.fallbackModel && attempt >= maxAttempts) {
+        return {action: 'fallback', delayMs: 0, reason: `${cls.reason}-exhausted`, attempt}
+    }
+    return {action: 'fail', delayMs: 0, reason: `attempts-exhausted(${cls.reason})`, attempt}
+}
+
 export default {
     resolveProtocol,
     accumulateToolCalls,
@@ -643,6 +933,13 @@ export default {
     exhaustedFallback,
     detachAction,
     steerAction,
+    classifyUpstreamError,
+    backoffMs,
+    upstreamRetryDecision,
+    canFallbackTo,
+    withUpstreamRetry,
+    UPSTREAM_RETRYABLE_STATUS,
+    UPSTREAM_PERMANENT_PATTERNS,
     RUN_PHASES,
     DEFAULT_MAX_ITERATIONS,
     MAX_ITERATIONS_CEILING,
