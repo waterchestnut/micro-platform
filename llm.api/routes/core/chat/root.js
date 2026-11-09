@@ -56,14 +56,12 @@ export default async function (fastify, opts) {
                 Object.entries(r.headers || {}).forEach(([k, v]) => reply.header(k, v))
                 logger.warn(`并发闸拒绝: reason=${gated.decision.reason}, active=${gated.decision.active}, limit=${gated.decision.limit}, userCode=${request.userInfo.userCode}, conversationCode=${request.reqParams?.conversationCode}`)
                 /**
-                 * 把判定依据一起回给客户端：`msg` 是给人看的，`reason/active/limit` 是给代码看的。
-                 * 只给文案的话，前端要区分"我被个人额度挡了"与"全站满了"就只能猜字符串——
-                 * 而猜字符串正是 §2E-6 里四端各自把 `progress` 折成 `done` 的那类错误的源头。
+                 * 直接回整个 body：里面同时有 `success:false`+`message`（x-sdk 的错误通道）
+                 * 和 `code:4290`+`msg`+`data`（本项目 retSchema 口径）。
+                 * 注意**不能再套 retSchema**——那会把 `success` 抹掉，拒绝就会走 onSuccess 分支，
+                 * 用户看到的是一条空回答而不是一句"请稍后再问"。
                  */
-                return reply.code(r.httpStatus).send({
-                    code: r.bodyCode, msg: r.message,
-                    data: {reason: gated.decision.reason, active: gated.decision.active, limit: gated.decision.limit},
-                })
+                return reply.code(r.httpStatus).send(r.body)
             }
         }
 

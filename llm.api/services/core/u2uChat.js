@@ -244,7 +244,17 @@ function serializeMessageForUser(messageInfo, userCode) {
  */
 export async function sendU2uMessage(curUserInfo, params = {}) {
     const {targetUserCode, content, messageCode, messageType, attachments} = params
-    if (!tools.isExist(content) && !attachments.length) {
+    /**
+     * 身份必须在最前面判，而且要给出 401。
+     * 抽取前这里直接摸 `curUserInfo.userCode`，没有 user-info 头时抛的是
+     * `Cannot read properties of undefined` ⇒ 一次"没登录"的探测在对外表现上等同服务异常（与 §2E-4 同类错误）。
+     */
+    if (!curUserInfo?.userCode) {
+        const err = new Error('缺少有效的用户身份（userCode）')
+        err.statusCode = 401
+        throw err
+    }
+    if (!tools.isExist(content) && !attachments?.length) {
         throw new Error('消息内容不能为空')
     }
     if (tools.isExist(content) && content.length > MAX_CONTENT_LENGTH) {
@@ -253,23 +263,27 @@ export async function sendU2uMessage(curUserInfo, params = {}) {
     if (!tools.isExist(targetUserCode)) {
         throw new Error('targetUserCode不能为空')
     }
-    if (targetUserCode === curUserInfo.userCode) {
-        throw new Error('不能和自己聊天')
-    }
 
     /**
      * PR-E0.7 写侧：建会话/发消息前必须过关系校验。
-     * 这里原本只校验"目标用户存在"（下一行），任何人拿任意 userCode 都能建会话，
-     * 而会话可见性按成员制 ⇒ 一次越权换到的是对方全部历史。
-     * 判定口径 = 双向可联系集合包含；取数只用当前用户、不做反向探测；
-     * 关系服务不可达或超时则 fail-closed（超时由 grpc/clients/userInfo.js 的
-     * callWithDeadline 提供——**没有截止的 fail-closed 等于 fail-never**）。
+     * 抽取前这里只校验"目标用户存在"（`:243-262`），任何人拿任意 userCode 都能建会话，
+     * 而会话可见性按成员制 ⇒ 一次越权换到的是对方全部历史（§2F.37、D54）。
+     * 判定口径 = 双向可联系集合包含（D53），取数只用当前用户、不做反向探测（D61③），
+     * 关系服务不可达时 fail-closed（D61）。
+     * 自己与自己在上一条已被内容校验拦不住，这里由 `allowSelf=false` 统一拒绝。
      */
     await assertCanContact(curUserInfo.userCode, targetUserCode)
 
     const targetUser = await resolveUser(targetUserCode)
     if (!targetUser) {
-        throw new Error('目标用户不存在')
+        /**
+         * 403 而不是 500，且文案不区分"用户不存在"与"不可联系"：
+         * 这条接口否则就是工号存在性的探测口——能用返回值枚举全站账号的接口，
+         * 和能用返回值读全站问答的接口，是同一类缺陷（§2E-4 的教训）。
+         */
+        const err = new Error('目标用户不存在或不可联系')
+        err.statusCode = 403
+        throw err
     }
 
     const conversationCode = genConversationCode(curUserInfo.userCode, targetUserCode)
@@ -302,10 +316,15 @@ export async function sendU2uMessage(curUserInfo, params = {}) {
     await conversationDac.update({conversationCode})
 
     /**
-     * 通知会话其他成员（v1.30 的修复同步到底座）。
-     * 旧注释说"前端可轮询兜底"，但前端的兜底是 `if (connectedRef.current) return;`
-     * ——连接一建成就把轮询关了，而这里从来没发推送，于是"页面开着看不到对方新消息"。
-     * 详见 `services/core/u2uPush.js` 文件头。
+     * 通知会话其他成员（v1.30：缺陷修复）。
+     * 旧注释写的是"推送失败不阻断，前端可轮询兜底"——**但兜底在这条链上是反的**：
+     * 前端收到 `connected` 就把轮询关掉了（`u2u.tsx:728`），而这里从来没发过推送，
+     * 所以"页面开着看不到新消息"一直存在。详见 `services/core/u2uPush.js` 文件头。
+     *
+     * 三条口径：
+     * 1. **按接收人各发一份**：`fromMe` 是按人算的字段（前端靠它决定气泡左右）；
+     * 2. 失败不阻断——消息此刻已经落库，通知没送到不能把"发出去了"报成"发送失败"；
+     * 3. 可用 `u2u_pushEnabled=false` 一键关掉（上线首批观察期用它）。
      */
     if (llm.config?.u2u?.pushEnabled !== false) {
         await fanoutU2uEvent({
@@ -382,7 +401,11 @@ export async function readU2uMessages(curUserInfo, params = {}) {
     }
     await messageDac.update({extInfo: {readStatus: true, readTime}}, filter, {}, true)
 
-    /** 已读回执：同样只发给别人，发给自己会出现"我一看就把自己发的全标成已读"的假回执 */
+    /**
+     * 已读回执通知（v1.30）。前端 `u2u.tsx:682` 收到 `event:'read'` 调 `markSentRead(convCode)`，
+     * 也就是"把我发出去的消息标成已读"——所以这个事件同样**只能发给别人，不能发给自己**，
+     * 发给自己会出现"我一看就把自己发的全标成已读"的假回执。
+     */
     if (llm.config?.u2u?.pushEnabled !== false) {
         await fanoutU2uEvent({
             publish: (channel, message) => redisClient.client.publish(channel, message),
@@ -415,16 +438,9 @@ export async function deleteU2uMessage(curUserInfo, params = {}) {
 }
 
 /**
- * @description 向指定用户发布u2u实时事件（Redis pub/sub）
- * @author xianyang
- * @param {String} conversationCode 会话标识
- * @param {Array} targetUserCodes 目标用户标识列表
- * @param {String} event 事件类型：message/read
- * @param {Object} data 业务数据
+ * 已读回执通知对方（可选）
+ * —— 旧的 `publishU2uEvent` 定义（连定义带调用整段被注释在 git 里）已由
+ * `services/core/u2uPush.js` 取代：那里的 `fanoutU2uEvent` 是纯函数，能离线测，
+ * 并且**按接收人各发一份**（`fromMe` 是按人算的）。
  */
-/*export async function publishU2uEvent(conversationCode, targetUserCodes, event, data) {
-    const payload = JSON.stringify({event, conversationCode, data, timestamp: new Date().toISOString()})
-    await Promise.all((targetUserCodes || []).map(userCode => {
-        return redisClient.client.publish(`u2u:msg:${userCode}`, payload)
-    }))
-}*/
+
