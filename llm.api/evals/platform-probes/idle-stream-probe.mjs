@@ -10,6 +10,13 @@
  * 为什么用 u2u 长连接：它是现成唯一"会长时间真的静默"的 SSE 通道
  * （等对方发消息，没有内容可发），不需要为了造静默去消耗模型 token。
  *
+ * **本文件已被 `p9b-run.mjs` 取代（v1.27）**，保留只为记下当时踩的坑：
+ * 1. 它假设身份来自 `school-sim-session.json` 那批账号——那批 token 会过期，且过期本身
+ *    是 P-9b 要测的一环，不该写死成一个文件；
+ * 2. 它不校验"消息到底到没到"，只看连接活不活——**正是这一点让它无法区分"连接活着"与
+ *    "连接活着但已瞎"**，而 P-9b 真正的答案是后者（u2u 的 publish 从未生效）。
+ * 现在要跑 P-9b 请用 `p9b-run.mjs`（自带服务端 message/list 对照与帧原文）。
+ *
  * 用法（在 `src/` 下）：
  *   node evals/platform-probes/idle-stream-probe.mjs                 # 默认 130s 观察窗
  *   node evals/platform-probes/idle-stream-probe.mjs --wait=200 --conv=<conversationCode>
