@@ -1,0 +1,111 @@
+/**
+ * @fileOverview 主循环行为回归探针：对比 llmLoop 抽取前后的事件形态
+ * @module evals/relay-probes/loop-regression
+ * @description
+ * `execChat` 的纯决策逻辑抽到 `services/core/llmLoop.js` 时承诺**行为逐字一致**（§纪律 2）。
+ * 单测守的是函数本身，这个探针守的是"接线后整条循环没有变"：
+ * 用同一类会触发工具的提问打一次流式对话，统计事件形态并与基线比对。
+ *
+ * 用法（需要本地或 dev 的 llm.api 可达）：
+ *   # 终端 A：cd src && $env:PORT=12008; npx fastify start -l error app.js
+ *   # 终端 B：cd src && node evals/relay-probes/loop-regression.mjs
+ *   node evals/relay-probes/loop-regression.mjs --base=http://127.0.0.1:12008
+ *
+ * 说明：
+ * - 直连 llm.api 时用它信任的 `user-info` 头（网关同款），不需要 accessToken；
+ * - 会真实调用模型与搜索工具，产生 token 费用；
+ * - **基线值来自 v1.6 的实测**（同族问题、协议 2）：`meta` 先到、6 次 `reset`、6 次 `tool_result`、
+ *   结束时可见字符为 0、落库 `iterationCount=6`。模型输出本身不确定，因此**只比对结构不变量**，
+ *   不比对文本内容。
+ */
+const BASE = (process.argv.find(a => a.startsWith('--base=')) || '--base=http://127.0.0.1:12008').split('=')[1]
+const USER = {userCode: process.env.PROBE_USER || 'menglb', realName: '探针'}
+const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64')
+const log = (t, o) => console.log(JSON.stringify({probe: t, ...o}))
+
+const conversationCode = `loop-regression-${Date.now()}`
+const query = '帮我搜一下 2026 年 11 月国内高校有哪些公开的教研相关新闻，简要列出来源。'
+
+const t0 = Date.now()
+let metaFirst = null, deltas = 0, resets = 0, toolResults = 0, sources = 0, done = false, error = null
+let chars = 0, charsLost = 0, acc = 0
+const order = []
+
+const r = await fetch(`${BASE}/core/chat/stream`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', Accept: 'text/event-stream', 'user-info': b64(USER)},
+    body: JSON.stringify({
+        query,
+        conversationCode,
+        options: {channel: 'xxzx_common', protocol: 2, cache: false, streamToolResults: true},
+    }),
+    signal: AbortSignal.timeout(240000),
+})
+
+if (!r.ok) {
+    log('请求失败', {status: r.status, body: (await r.text().catch(() => '')).slice(0, 300)})
+    process.exit(1)
+}
+
+const dec = new TextDecoder()
+let buf = ''
+for await (const cv of r.body) {
+    buf += dec.decode(cv, {stream: true})
+    let i
+    while ((i = buf.indexOf('\n\n')) >= 0) {
+        const f = buf.slice(0, i); buf = buf.slice(i + 2)
+        const ev = /event:(\S+)/.exec(f)?.[1] || 'delta'
+        const data = (/data:([\s\S]+)/.exec(f)?.[1] || '').replace(/\n/g, '')
+        if (metaFirst === null) metaFirst = ev
+        order.push(ev)
+        let j = null; try { j = JSON.parse(data) } catch { /* 非 JSON */ }
+        if (ev === 'delta') {
+            deltas++
+            const c = j?.content || ''
+            acc += c.length; chars += c.length
+        } else if (ev === 'reset') {
+            resets++
+            charsLost += acc; acc = 0
+        } else if (ev === 'tool_result') toolResults++
+        else if (ev === 'sources') sources++
+        else if (ev === 'done') done = true
+        else if (ev === 'error') error = data.slice(0, 160)
+    }
+}
+
+/* 查落库形态 */
+await new Promise(res => setTimeout(res, 4000))
+const lr = await fetch(`${BASE}/core/message/list`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'user-info': b64(USER)},
+    body: JSON.stringify({filter: {conversationCode}, pageIndex: 1, pageSize: 2}),
+})
+const lj = await lr.json().catch(() => null)
+const m = (lj?.data?.rows || [])[0]
+
+const invariants = {
+    '首事件是 meta': metaFirst === 'meta',
+    '有 done 或 error 收尾': done || !!error,
+    'tool_result 与 reset 数量同阶（每次工具调用一次 reset）': Math.abs(toolResults - resets) <= 1,
+    '落库 progress 正常': ['finish', 'abort'].includes(m?.progress),
+    'iterationCount 与 reset 次数同阶': Math.abs((m?.process?.iterationCount || 0) - resets) <= 2,
+    'process.toolCalls 有名字可展示': (m?.process?.toolCalls || []).every(x => typeof x.name === 'string' && x.name),
+    'answer 长度与实收末段一致（reset 后重新计数）': Math.abs((m?.answer || '').length - acc) <= 40,
+}
+const failed = Object.entries(invariants).filter(([, v]) => !v).map(([k]) => k)
+
+log('结构不变量', {
+    conversationCode,
+    ms: Date.now() - t0,
+    首事件: metaFirst,
+    delta: deltas,
+    reset: resets,
+    tool_result: toolResults,
+    sources,
+    实收字符: chars,
+    被reset抹掉字符: charsLost,
+    末段字符: acc,
+    落库: m ? {progress: m.progress, answerLen: (m.answer || '').length, iterationCount: m.process?.iterationCount, answerRounds: m.process?.answerRounds, tools: (m.process?.toolCalls || []).map(x => x.name)} : null,
+    error,
+    判定: failed.length ? `❌ 不满足：${failed.join('; ')}` : '✅ 全部结构不变量通过（llmLoop 抽取未改变行为）',
+})
