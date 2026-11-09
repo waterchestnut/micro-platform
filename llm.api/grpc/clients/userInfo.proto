@@ -16,6 +16,10 @@ service UserInfo {
   rpc getUserDetail (UserDetailRequest) returns (UserSchema) {}
   rpc getUserList (UserListRequest) returns (UserListResponse) {}
   rpc hasPriv (HasPrivRequest) returns (HasPrivResponse) {}
+
+  // 导师关系：可联系范围（PR-R0）。与 ucenter 的 grpc/servers/userInfo.proto 必须同步
+  rpc getMentorStudents (MentorScopeRequest) returns (MentorUsersResponse) {}
+  rpc getMentorTeachers (MentorScopeRequest) returns (MentorUsersResponse) {}
 }
 
 // 结构化数据：使用message定义。
@@ -80,4 +84,14 @@ message UserSchema {
   repeated string groupCodes = 24;
   repeated Department departments = 25;
   string mainJobCode = 26;
+}
+
+// 导师关系查询入参：只接受"查询主体"的工号，不接受外部传入他人工号做关系探测
+message MentorScopeRequest {
+  string userCode = 1;
+}
+
+// 只回工号列表：判定用得到就够了，明细留在 ucenter 侧，避免 gRPC 成为跨系统的数据出口
+message MentorUsersResponse {
+  repeated string userCodes = 1;
 }

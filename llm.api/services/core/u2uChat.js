@@ -7,6 +7,7 @@
 import conversationDac from '../../daos/core/dac/conversationDac.js'
 import messageDac from '../../daos/core/dac/messageDac.js'
 import {getUserDetail, getUserList} from '../../grpc/clients/userInfo.js'
+import {assertCanContact} from './mentorContact.js'
 import {md5} from "../../tools/security.js";
 
 const tools = llm.tools
@@ -253,6 +254,16 @@ export async function sendU2uMessage(curUserInfo, params = {}) {
     if (targetUserCode === curUserInfo.userCode) {
         throw new Error('不能和自己聊天')
     }
+
+    /**
+     * PR-E0.7 写侧：建会话/发消息前必须过关系校验。
+     * 这里原本只校验"目标用户存在"（下一行），任何人拿任意 userCode 都能建会话，
+     * 而会话可见性按成员制 ⇒ 一次越权换到的是对方全部历史。
+     * 判定口径 = 双向可联系集合包含；取数只用当前用户、不做反向探测；
+     * 关系服务不可达或超时则 fail-closed（超时由 grpc/clients/userInfo.js 的
+     * callWithDeadline 提供——**没有截止的 fail-closed 等于 fail-never**）。
+     */
+    await assertCanContact(curUserInfo.userCode, targetUserCode)
 
     const targetUser = await resolveUser(targetUserCode)
     if (!targetUser) {

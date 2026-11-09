@@ -3,21 +3,22 @@
  * @module plugins/lifecycle
  * @description
  * 三个单例在**模块加载时**就建立了连接，而 `app.close()` 不会释放它们：
- * - `daos/core/schema/index.js`：顶层 `await mongoose.createConnection(...)`
- * - `daos/cache/redisClient.js`：`new Redis(llm.config.redisConfig)`
- * - `daos/redlock.js`：`new Redis(configPath)`
+ * - `daos/core/schema/index.js:43`：顶层 `await mongoose.createConnection(...)`
+ * - `daos/cache/redisClient.js:11`：`new Redis(llm.config.redisConfig)`
+ * - `daos/redlock.js:13`：`new Redis(configPath)`
  *
  * 后果有两条，是同一条缺陷的两面：
- * 1. **测试**：`test/routes/*.test.js` 的用例本身通过，但文件不退出 ⇒ `npm test` 会一直挂着
- *    （或需要 `--test-force-exit` 才能收尾）。
- * 2. **生产**：`server.js` 的 `closeWithGrace({delay: 500})` 之后并没有人关连接，
- *    优雅停机实际靠 SIGKILL 收尾。
+ * 1. **测试**：`test/routes/*.test.js` 的用例本身通过，但文件不退出 ⇒ `npm test` 里长期挂着
+ *    两个 `cancelled`（v1.0 之前甚至整条 `npm test` 跑不完）。
+ * 2. **生产**：`server.js:32` 的 `closeWithGrace({delay: 500})` 之后并没有人关连接，
+ *    优雅停机实际靠 SIGKILL 收尾 ⇒ `docs/session-run-plan.md` §2B.3、PR-E0.4。
  *
  * 三条纪律：
  * - **绝不因为清理卡住而拖长停机**：每一项都 try/catch 并限时竞速，超时就放弃等待；
- * - **只关"确实建过"的连接**：ioredis 用 `disconnect()` 强制关闭，不用 `quit()`
+ * - **只关"确实建过"的连接**：ioredis 的 `disconnect()` 是强制关闭，不用 `quit()`
  *   （quit 会等排队命令跑完，重连态下可能永不返回）；
  * - 不新增模块级副作用：全部用动态 import，插件自身加载时不建任何连接。
+ * @author menglb 2026-11-08
  */
 
 import fp from 'fastify-plugin'
@@ -39,6 +40,20 @@ export default fp(async function (fastify, opts) {
     fastify.addHook('onClose', async (instance) => {
         const budget = Number(process.env.FASTIFY_CLOSE_RESOURCE_TIMEOUT_MS || 3000)
         const closed = []
+
+        /*
+         * 0) 在途检查点必须先落地，再关连接——顺序反了就是"想续跑但现场没了"。
+         *    SIGTERM 之后仍在跑的 run 不会走到 persistTurn，它能留下的只有
+         *    scheduleCheckpoint 排队的 preCreate/postCreate/postTools 现场。
+         *    （PR-E0.4；被截断的 run 目前仍**没有 message 行**，那要等 `processing` 行，见 §26.2 PR-G。）
+         */
+        try {
+            const {flushCheckpoints} = await import('../services/core/session/checkpoint.js')
+            const r = await bounded(flushCheckpoints(budget), budget + 200)
+            closed.push(`checkpoints:${r}`)
+        } catch (e) {
+            closed.push(`checkpoints:error(${String(e.message || e).slice(0, 60)})`)
+        }
 
         /*1) mongodb：从任一 Model 拿到它所属的 Connection，不要求 schema 模块额外导出*/
         try {

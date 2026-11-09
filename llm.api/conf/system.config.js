@@ -98,6 +98,19 @@ export default {
         baseIntranetUrl: process.env['UCENTER_URI_INTRANET'],
         /** rpc服务的地址 */
         grpcHost: process.env['UCENTER_GRPC'],
+        /**
+         * u2u 热路径的 gRPC 截止。
+         * grpc-js 不给 deadline 就是无限等：ucenter 连接在但服务不返回时既不 resolve 也不 reject，
+         * `mentorContact` 的 fail-closed 就永远不触发，发消息的人卡死在关系校验上。
+         * 这个值的作用是"让拒绝有可能发生"，不是性能参数。
+         */
+        grpcTimeoutMs: parseInt(process.env['UCENTER_GRPC_TIMEOUT_MS'] || 3000),
+        /**
+         * u2u 建会话/发消息的关系校验开关（PR-E0.7 写侧）。
+         * **默认开**：设成 false 只用于发布顺序应急（ucenter 的 mentor 接口必须先上线），
+         * 且每次放行都会留下 warn，便于事后审计。
+         */
+        contactCheckEnabled: process.env['U2U_CONTACT_CHECK_ENABLED'] !== 'false',
         /** 最大传送数据：256M */
         maxMessageLength: 256 * 1024 * 1024,
     },
