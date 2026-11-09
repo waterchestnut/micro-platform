@@ -67,7 +67,10 @@ export default async function (fastify, opts) {
             const ret = await execChat(request.userInfo, request.reqParams.query, request.reqParams.conversationCode, {
                 ...request.reqParams.options, signal, streamCallback: (content, eventType) => {
                     channel.emit(content, eventType)
-                }
+                },
+                /** PR-0.3：把 fastify 的 reqId 与入站 traceId 交给 run，日志才接得上 */
+                reqId: request.id,
+                inboundTraceId: request.headers['x-trace-id'],
             })
             aborted = ret === 'aborted'
             channel.emit(aborted ? 'aborted' : 'done', aborted ? 'abort' : 'done')
@@ -75,7 +78,8 @@ export default async function (fastify, opts) {
             console.error(err);
             channel.emit(err.message || '处理出错，请稍等再试', 'error')
         }
-        logger.info(`SSE 结束: seq=${channel.close()}, aborted=${aborted}`)
+        /** 两侧的键都写上：reqId 接 HTTP 层日志，traceId（=messageCode）接 run 层日志与账本 */
+        logger.info(`SSE 结束: reqId=${request.id}, seq=${channel.close()}, aborted=${aborted}`)
         stream.end()
         return reply
     })

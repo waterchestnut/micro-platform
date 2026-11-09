@@ -15,6 +15,8 @@ import messageDac from '../../daos/core/dac/messageDac.js'
 /** §14 自有账本：模型用量按 run 落一行，看板与预算都从这张窄表出 */
 import llmUsageDac from '../../daos/core/dac/llmUsageDac.js'
 import {waitTime} from '../../tools/index.js'
+/** run 级 traceId 的构造与传播（PR-0.3）：日志绑定、上游头、SSE 载荷共用一份真值 */
+import {buildTrace, withTrace, traceHeaders} from '../../tools/traceContext.js'
 import {getAnswerCache, saveAnswerCache} from './answerCache.js'
 import {calcTextTokenCount, calcMessagesTokenCount, calcContextBudget, getTokenizerOptions, TOKENIZER_VERSION} from '../openai/util.js'
 import {getMessages} from './message.js'
@@ -138,6 +140,21 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     }
 
     let messageCode = options.messageCode || tools.getUUID()
+    /**
+     * run 级 trace（PR-0.3）。**traceId 就是 messageCode**：不引入第三个标识符——
+     * 同一个数存两处就会分叉（本项目在 usage 上真发生过），所以 traceId 只做传播，不新增存储列。
+     */
+    const trace = buildTrace({
+        messageCode,
+        conversationCode,
+        userCode: curUserInfo?.userCode,
+        channel,
+        llmModel,
+        reqId: options.reqId,
+        inboundTraceId: options.inboundTraceId,
+    })
+    /** 本轮 run 级日志都走这个 child logger：没有 traceId 的日志等于没有日志 */
+    const tlog = withTrace(logger, trace)
     let messages = []
 
     /*协议 2 的客户端按事件名分派，因此默认下发工具结果，且 reset 不再携带兼容哨兵*/
@@ -147,7 +164,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
 
     const emitMeta = (meta) => {
         if (clientProtocol === 2 && options.streamCallback) {
-            options.streamCallback(JSON.stringify({type: 'meta', messageCode, conversationCode, protocol: 2, ...meta}), 'meta')
+            /** meta 里带 traceId（值就是 messageCode）：前端报错卡片可以显示"反馈请附这串号" */
+            options.streamCallback(JSON.stringify({type: 'meta', messageCode, traceId: trace.traceId, conversationCode, protocol: 2, ...meta}), 'meta')
         }
     }
 
@@ -206,7 +224,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         try {
             segList = await llmRagSearch(query, options.ragParams?.resCode, options.ragParams || {})
         } catch (e) {
-            logger.error(`增强检索失败，本轮跳过 RAG: ${e.message}`)
+            tlog.error(`增强检索失败，本轮跳过 RAG: ${e.message}`)
         }
         if (segList?.length) {
             let template = tmplParse(llmChannelData.ragPrompt)
@@ -240,10 +258,10 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                 'role': 'system',
                 'content': prompt
             })
-            logger.info(`已注入 ${skillContext.candidates.length} 个候选 Skills`)
+            tlog.info(`已注入 ${skillContext.candidates.length} 个候选 Skills`)
         }
     } catch (error) {
-        logger.warn(`Skills 初始化失败: ${error.message}`)
+        tlog.warn(`Skills 初始化失败: ${error.message}`)
         // Skills 初始化失败不影响主流程
     }
 
@@ -268,7 +286,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         recallSnapshotText = recallRet.text || ''
         profileDocVersion = recallRet.docVersion ?? null
         if (recallRet.text) {
-            logger.info(`记忆召回注入 ${recalledItems.length} 条 / ${recallStats?.tokens ?? 0} tokens${recallRet.fromCache ? '（缓存）' : ''}`)
+            tlog.info(`记忆召回注入 ${recalledItems.length} 条 / ${recallStats?.tokens ?? 0} tokens${recallRet.fromCache ? '（缓存）' : ''}`)
         }
     }
 
@@ -306,12 +324,14 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     messages = assembled.messages
     contextUsage = assembled.usage
     if (historyDropped.length || assembled.dropped.length) {
-        logger.warn(`历史预算 ${historyBudget} / 总预算 ${contextBudget}，历史丢弃 ${historyDropped.length} 轮，装配再丢弃 ${assembled.dropped.length} 条`)
+        tlog.warn(`历史预算 ${historyBudget} / 总预算 ${contextBudget}，历史丢弃 ${historyDropped.length} 轮，装配再丢弃 ${assembled.dropped.length} 条`)
     }
 
     const openai = new OpenAI({
         apiKey: llmConfig.apiKey,
         baseURL: llmConfig.baseURL,
+        /** 上游请求头带 traceId：relay/网关侧的日志才能与我们这一侧对上 */
+        defaultHeaders: traceHeaders(trace),
     })
 
     // 检查当前频道是否启用了MCP工具
@@ -466,7 +486,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             /** 压缩会就地改写已有消息 ⇒ 增量测量结果作废，下一轮（若有）重新全量测 */
             budgetMeter.invalidate()
             const finalizeBody = buildFinalizeBody(createBody, messages)
-            logger.info(`无工具收尾调用开始: messages=${finalizeBody.messages.length}, maxIterations=${maxIterations}`)
+            tlog.info(`无工具收尾调用开始: messages=${finalizeBody.messages.length}, maxIterations=${maxIterations}`)
             trackCall()
             const finalizeStream = await openai.chat.completions.create(finalizeBody, {signal: options.signal})
             const drained = await drainAssistantStream(finalizeStream, {
@@ -486,11 +506,11 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                 now: Date.now(),
             })
             roundStartedAt = Date.now()
-            logger.info(`无工具收尾调用完成: 本轮answerLen=${drained.content.length}, finishReason=${drained.finishReason}`)
+            tlog.info(`无工具收尾调用完成: 本轮answerLen=${drained.content.length}, finishReason=${drained.finishReason}`)
             return drained.content.length > 0
         } catch (e) {
             /** 收尾调用失败不该再拖垮整轮：落到 exhaustedFallback 的"部分内容 + 可读原因" */
-            logger.error(`无工具收尾调用失败: ${String(e?.message || e).slice(0, 300)}`)
+            tlog.error(`无工具收尾调用失败: ${String(e?.message || e).slice(0, 300)}`)
             return false
         }
     }
@@ -512,7 +532,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     const persistTurn = async (progress, errorMessage) => {
         if (persisted) {
             /** 重复落库会写出两条同 messageCode 的记录，历史与记忆采集都会翻倍 ⇒ 直接拒绝 */
-            logger.warn(`本轮已落库，忽略重复 persistTurn: progress=${progress}`)
+            tlog.warn(`本轮已落库，忽略重复 persistTurn: progress=${progress}`)
             return
         }
         /** 现算快照：abort/error 路径不会走到收尾代码，读"稍后赋值"的外层变量会拿到过期初始值 */
@@ -589,7 +609,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                 latencyMs: Date.now() - turnStart,
             })
         } catch (e) {
-            logger.error(`模型用量落账失败: messageCode=${messageCode}, ${String(e?.message || e).slice(0, 200)}`)
+            tlog.error(`模型用量落账失败: messageCode=${messageCode}, ${String(e?.message || e).slice(0, 200)}`)
         }
         /** 采集失败已在内部吞掉，不影响聊天主链路 */
     await captureTurn({
@@ -670,7 +690,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             if (contextUsage) {
                 contextUsage = {...contextUsage, total: loopTokens, loopIteration: iterationCount}
             }
-            logger.info(`=== 迭代 ${iterationCount} 开始, createBody.tools: ${JSON.stringify(createBody.tools?.map(t => t.function.name))}`)
+            tlog.info(`=== 迭代 ${iterationCount} 开始, createBody.tools: ${JSON.stringify(createBody.tools?.map(t => t.function.name))}`)
             /** 请求前的字节级现场：续跑从这里恢复 */
             scheduleCp('preCreate', {
                 messages: messages.map(m => ({...m})),
@@ -730,10 +750,10 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                     // 如果有工具，也添加到请求中
                     if (selectedSkill.tools.length > 0) {
                         createBody.tools = [...(createBody.tools || []), ...selectedSkill.tools]
-                        logger.info(`已添加工具到请求: ${selectedSkill.tools.map(t => t.function.name).join(', ')}`)
+                        tlog.info(`已添加工具到请求: ${selectedSkill.tools.map(t => t.function.name).join(', ')}`)
                     }
 
-                    logger.info(`动态加载技能详情: ${selectedSkill.name}`)
+                    tlog.info(`动态加载技能详情: ${selectedSkill.name}`)
 
                     /** 段留存：这段正文马上要被 reset 抹掉了，先折进 segments（PR-B） */
                     segments.seal({
@@ -757,7 +777,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                 toolCalls = pruneToolCalls(toolCalls)
 
                 if (toolCalls.length > 0) {
-                    logger.info(`收到 ${toolCalls.length} 个工具调用: ${toolCalls.map(tc => tc.function.name).join(', ')}`)
+                    tlog.info(`收到 ${toolCalls.length} 个工具调用: ${toolCalls.map(tc => tc.function.name).join(', ')}`)
                     // 添加助手的消息到对话历史（包含工具调用请求）
                     messages.push(buildAssistantToolCallMessage(toolCalls))
 
@@ -846,7 +866,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                                 keptTokens: cut.keptTokens,
                                 content: typeof toolResult.content === 'string' ? toolResult.content : JSON.stringify(toolResult.content ?? ''),
                             })
-                            logger.info(`工具结果已裁剪 ${toolName || '-'}: ${cut.originalTokens} → ${cut.keptTokens} tokens`)
+                            tlog.info(`工具结果已裁剪 ${toolName || '-'}: ${cut.originalTokens} → ${cut.keptTokens} tokens`)
                         }
                         messages.push(cut.message)
                         toolCallTrace.push({id: toolResult.tool_call_id, name: toolName, result: clipTraceResult(toolResult.content)})
@@ -901,7 +921,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
          */
         loopExit = loopExitReason({broke: loopBroke, iterationCount, maxIterations})
         if (loopExit !== 'break') {
-            logger.warn(`主循环非正常退出: reason=${loopExit}, iterationCount=${iterationCount}/${maxIterations}, 末段answerLen=${answerContent.length}, answerList段数=${answerList.length}`)
+            tlog.warn(`主循环非正常退出: reason=${loopExit}, iterationCount=${iterationCount}/${maxIterations}, 末段answerLen=${answerContent.length}, answerList段数=${answerList.length}`)
         }
 
         /**
@@ -927,7 +947,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             if (options.streamCallback) {
                 options.streamCallback(JSON.stringify({role: 'assistant', content: fb.notice, messageCode}))
             }
-            logger.warn(`空答案兜底: reason=${fin.reason}, 保住部分正文=${fb.usedPartial}, progress=${fb.progress}, answerLen=${answerContent.length}`)
+            tlog.warn(`空答案兜底: reason=${fin.reason}, 保住部分正文=${fb.usedPartial}, progress=${fb.progress}, answerLen=${answerContent.length}`)
         }
 
         /**
@@ -950,12 +970,12 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
          */
         const tailSnap = usageSnapshot()
         if (tailSnap.alert.level !== 'ok') {
-            logger.warn(`模型调用次数告警: level=${tailSnap.alert.level}, modelCalls=${modelCalls}, warnAt=${tailSnap.alert.warnAt}, `
+            tlog.warn(`模型调用次数告警: level=${tailSnap.alert.level}, modelCalls=${modelCalls}, warnAt=${tailSnap.alert.warnAt}, `
                 + `maxIterations=${maxIterations}, loopExit=${loopExit}, conversationCode=${conversationCode}, messageCode=${messageCode}`)
         }
         if (!tailSnap.metrics.hasUsage) {
             /** 单独一条：账本没数据时，"0 token" 与"没读到 usage"是两种完全不同的故障 */
-            logger.warn(`本轮未取到 usage（上游未回传或帧序异常）: conversationCode=${conversationCode}, modelCalls=${modelCalls}`)
+            tlog.warn(`本轮未取到 usage（上游未回传或帧序异常）: conversationCode=${conversationCode}, modelCalls=${modelCalls}`)
         }
 
         let answerTokens = calcTextTokenCount(answerContent + answerReasoning, tokenizerOptions.tokenizer)
@@ -981,7 +1001,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                     answerTokens,
                 })
             } catch (e) {
-                logger.warn(`写答案缓存失败（不影响本轮回答）: ${String(e?.message || e).slice(0, 200)}`)
+                tlog.warn(`写答案缓存失败（不影响本轮回答）: ${String(e?.message || e).slice(0, 200)}`)
             }
         }
 
@@ -994,14 +1014,14 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
          * 记成 error 会让监控里的错误率被用户行为污染）；真异常把原始错误继续抛给路由，由它下发 event:error。
          */
         const turnErr = describeError(e)
-        logger.error(`主循环异常: kind=${turnErr.kind}, status=${turnErr.status ?? '-'}, message=${turnErr.message.slice(0, 300)}`)
+        tlog.error(`主循环异常: kind=${turnErr.kind}, status=${turnErr.status ?? '-'}, message=${turnErr.message.slice(0, 300)}`)
         const errProgress = turnErr.kind === 'abort' ? 'abort' : 'error'
         if (!persisted) {
             try {
                 await persistTurn(errProgress, `${turnErr.kind}:${turnErr.message}`)
             } catch (e2) {
                 /** 落库也失败时绝不掩盖原始异常：两份错误各留一次日志 */
-                logger.error(`异常路径落库失败: ${String(e2?.message || e2).slice(0, 200)}`)
+                tlog.error(`异常路径落库失败: ${String(e2?.message || e2).slice(0, 200)}`)
             }
         }
         if (errProgress === 'abort') {
