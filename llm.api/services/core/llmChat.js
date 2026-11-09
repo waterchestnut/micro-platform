@@ -50,6 +50,8 @@ import {
     buildFinalizeBody,
     exhaustedFallback,
 } from './llmLoop.js'
+/** 过程分段（PR-B）：把被 reset 抹掉的中间正文留住 */
+import {createSegmentLedger, SEGMENT_KINDS} from './segments.js'
 
 const tools = llm.tools
 const logger = llm.logger
@@ -357,6 +359,19 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     /** 被裁剪掉的工具全文，随消息留档，避免上下文爆炸同时不丢信息 */
     const toolOverflows = []
 
+    /**
+     * 过程分段账本（PR-B）：把"被 reset 抹掉的中间正文"留住。
+     * 现状实测分布里 40% 的轮次存在被抹掉的内容，抽取前它们只在流里出现过一次，
+     * 落库只剩最后一句或干脆空串，回放看不出这一轮到底查了什么、说过什么，评测也没有轨迹可算。
+     */
+    const segments = createSegmentLedger({
+        textChars: config.limits?.segmentTextChars,
+        maxSegments: config.limits?.segmentsMaxCount,
+        totalChars: config.limits?.segmentsTotalChars,
+    })
+    /** 每轮的起始时刻，用于段耗时 */
+    let roundStartedAt = Date.now()
+
     // 最多迭代多少次：原为硬编码 6，现按 请求 > 频道 > 全局配置 > 6 解析
     let iterationCount = 0
     const maxIterations = resolveMaxIterations({
@@ -383,6 +398,14 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             answerContent += drained.content
             answerReasoning += drained.reasoning
             iterationCount++
+            /** 收尾调用本身也是一个阶段：它解释"为什么这一轮多花了一次调用" */
+            segments.seal({
+                kind: SEGMENT_KINDS.FINALIZE,
+                text: drained.content,
+                startedAt: roundStartedAt,
+                now: Date.now(),
+            })
+            roundStartedAt = Date.now()
             logger.info(`无工具收尾调用完成: 本轮answerLen=${drained.content.length}, finishReason=${drained.finishReason}`)
             return drained.content.length > 0
         } catch (e) {
@@ -426,6 +449,9 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             /** 把"循环怎么退出的"和"是否补过收尾调用"落进 extInfo，空答案从此可解释、可统计 */
             loopExit,
             forcedFinal,
+            /** PR-B：过程分段。中间正文从此不再只存在于已经断开的那条 SSE 连接里 */
+            segments: segments.list(),
+            segmentSummary: segments.summary(),
             messageTokens: calcMessagesTokenCount(messages, tokenizerOptions),
             answerTokens: calcTextTokenCount(answerContent + answerReasoning, tokenizerOptions.tokenizer),
             tokenizerVersion: TOKENIZER_VERSION,
@@ -519,6 +545,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             }
 
             iterationCount++
+            roundStartedAt = Date.now()
             /*工具循环会持续往 messages 里塞结果，每轮请求前都要重新核对预算*/
             const loopTokens = compactToBudget(messages, contextBudget, {tokenizerOptions})
             if (contextUsage) {
@@ -586,6 +613,14 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
 
                     logger.info(`动态加载技能详情: ${selectedSkill.name}`)
 
+                    /** 段留存：这段正文马上要被 reset 抹掉了，先折进 segments（PR-B） */
+                    segments.seal({
+                        kind: SEGMENT_KINDS.SKILL_RELOAD,
+                        text: answerContent,
+                        startedAt: roundStartedAt,
+                        now: Date.now(),
+                        extra: selectedSkill.name,
+                    })
                     // 重置内容并重新请求
                     answerContent && answerList.push(answerContent)
                     answerContent = ''
@@ -706,6 +741,14 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                         }
                     }
 
+                    /** 段留存：本轮的半句正文到此为止，下一轮会被 reset 抹掉（PR-B 的主目标） */
+                    segments.seal({
+                        kind: SEGMENT_KINDS.TOOL_ROUND,
+                        text: answerContent,
+                        tools: toolCalls.map(tc => tc.function?.name).filter(Boolean),
+                        startedAt: roundStartedAt,
+                        now: Date.now(),
+                    })
                     // 重置内容变量为下一次迭代做准备
                     answerContent && answerList.push(answerContent)
                     answerContent = ''
@@ -764,6 +807,19 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             }
             logger.warn(`空答案兜底: reason=${fin.reason}, 保住部分正文=${fb.usedPartial}, progress=${fb.progress}, answerLen=${answerContent.length}`)
         }
+
+        /**
+         * 最终回答成段（全文已在 `message.answer`，这里只留字数与耗时）。
+         * 即使补过收尾调用也照样要封这一段：`finalize` 段记的是"那次调用产出多少字"，
+         * `answer` 段记的是"最终落库的答案是多少字"，两者在兜底路径上并不相等。
+         * 重复计数的问题在账本的 `summary()` 里按 `ref==='answer'` 不计入来解决。
+         */
+        segments.seal({
+            kind: SEGMENT_KINDS.ANSWER,
+            text: answerContent,
+            startedAt: roundStartedAt,
+            now: Date.now(),
+        })
 
         let answerTokens = calcTextTokenCount(answerContent + answerReasoning, tokenizerOptions.tokenizer)
         await persistTurn(fb.progress)
@@ -877,6 +933,9 @@ async function saveMessage(query, messageCode, messages, conversationCode, chann
             /** 循环退出方式（break/exhausted/…）与是否做过无工具收尾补落，空答案从此可解释、可统计 */
             loopExit: options.loopExit,
             forcedFinal: options.forcedFinal,
+            /** PR-B：过程分段与它的体积摘要（丢过段、留存多少字） */
+            segments: options.segments,
+            segmentSummary: options.segmentSummary,
             skills: options.skills,
             contextUsage: options.contextUsage,
             sources: options.sources,

@@ -83,6 +83,15 @@ const lr = await fetch(`${BASE}/core/message/list`, {
 const lj = await lr.json().catch(() => null)
 const m = (lj?.data?.rows || [])[0]
 
+/* PR-B：段留存的可观测量 */
+const segs = m?.process?.segments || []
+/** 真正**存进库**的中间正文（answer/finalize 段有意为空，全文在 message.answer） */
+const segStoredText = segs.reduce((n, s) => n + (s.text ? s.text.length : 0), 0)
+/** 承载最终正文的那一段：`answer` 段是权威（`finalize` 段记的是那次调用的产出，兜底路径上两者不等） */
+const segFinal = [...segs].reverse().find(s => s.ref === 'answer')
+/** 中间过程的真实字数（`ref==='answer'` 的那些段属于"最终正文"，另算） */
+const segBodyChars = segs.filter(s => s.ref !== 'answer').reduce((n, s) => n + (s.metrics?.chars || 0), 0)
+
 const invariants = {
     '首事件是 meta': metaFirst === 'meta',
     '有 done 或 error 收尾': done || !!error,
@@ -97,6 +106,26 @@ const invariants = {
     'process.loopExit 已落库可观测': ['break', 'exhausted', 'no-iterations', 'unknown'].includes(m?.process?.loopExit),
     'loopExit=exhausted 时要么补过收尾调用、要么 progress 不是 finish':
         m?.process?.loopExit !== 'exhausted' || m?.process?.forcedFinal === true || m?.progress !== 'finish',
+    /** PR-B：过程分段留存。这一条是"40% 轮次的中间内容只存在于已经断开的那条 SSE 连接里"的终结 */
+    'process.segments 已落库': Array.isArray(m?.process?.segments) && m.process.segments.length > 0,
+    '每段都带服务端给的 kind/category/title/metrics（前端零猜测）':
+        (m?.process?.segments || []).every(s => s.kind && s.category && s.title && s.metrics && typeof s.metrics.chars === 'number'),
+    /** 核心：客户端在流里看到过的每一个字，现在要么在 answer 里、要么在段里，一处都不该少 */
+    '落库 answer + 段存正文 == 实收字符（中间内容不再丢失）':
+        Math.abs((m?.answer || '').length + segStoredText - chars) <= 40,
+    '段里存的正文覆盖了被 reset 抹掉的字符': segStoredText >= charsLost - 40,
+    '默认预算内不丢段（segmentSummary.dropped.count=0）': (m?.process?.segmentSummary?.dropped?.count || 0) === 0,
+    /**
+     * 摘要口径唯一：**留存下来的过程字数**。
+     * 之前把"最终答案"也加进去过，于是同一个数既是过程量又是总量，谁也说不清它是什么；
+     * 兜底路径上"部分正文 + 原因"同时出现在过程段与 answer 里，那种口径必然重复计数。
+     */
+    'segmentSummary.processChars == 中间过程段的真实字数（含被丢掉的）':
+        (m?.process?.segmentSummary?.processChars ?? -1) === segBodyChars + (m?.process?.segmentSummary?.dropped?.chars || 0),
+    /** 承载最终正文的那一段（没打满→answer，打满→finalize）字数应与落库 answer 对齐 */
+    '承载最终正文的段与落库 answer 一致': Math.abs((segFinal?.metrics?.chars ?? -1) - (m?.answer || '').length) <= 40,
+    'answer/finalize 段不重复存正文（体积纪律）':
+        segs.filter(s => ['answer', 'finalize'].includes(s.kind)).every(s => s.text === '' && s.ref === 'answer'),
 }
 const failed = Object.entries(invariants).filter(([, v]) => !v).map(([k]) => k)
 
@@ -119,6 +148,12 @@ log('结构不变量', {
         loopExit: m.process?.loopExit,
         forcedFinal: m.process?.forcedFinal,
         tools: (m.process?.toolCalls || []).map(x => x.name),
+        /** PR-B：段留存形态。titles 是给人看的，metrics 是给评测算的 */
+        segments: segs.map(s => `${s.seq}:${s.kind}:${s.metrics.chars}字/${s.metrics.toolCount}工具/${s.metrics.ms}ms`),
+        segmentTitles: segs.map(s => s.title),
+        segmentSummary: m.process?.segmentSummary,
+        段存正文: segStoredText,
+        中间段真实字数: segBodyChars,
     } : null,
     error,
     判定: failed.length ? `❌ 不满足：${failed.join('; ')}` : '✅ 全部不变量通过（结构不变量 + §2E-3 空答案修复）',

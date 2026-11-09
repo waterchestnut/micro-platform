@@ -111,6 +111,12 @@ function toProcessSummary(extInfo) {
         /** 循环怎么退出的（break/exhausted/…）与是否补过无工具收尾调用；历史回放与探针都靠它解释空答案 */
         loopExit: extInfo.loopExit || null,
         forcedFinal: !!extInfo.forcedFinal,
+        /**
+         * PR-B：过程分段。视图只裁不筛——段数与字段都原样给前端，
+         * 让"这一轮模型做了什么"在历史回放里可见，而不是只有一句最终答案。
+         */
+        segments: extInfo.segments || [],
+        segmentSummary: extInfo.segmentSummary || null,
     }
 }
 

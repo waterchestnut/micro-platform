@@ -198,6 +198,14 @@ export default {
         maxIterations: parseInt(process.env['limits_maxIterations'] || '6'),
         /** 上限打满时是否补一次"无工具收尾调用"；设 false 则直接退化成"部分内容 + 可读原因" */
         maxIterationsFinalize: process.env['limits_maxIterationsFinalize'] !== 'false',
+        /**
+         * 过程分段（PR-B）的体积预算：单段 2000 字 × 8 段 + 总量 12000 字。
+         * 依据是"被 reset 抹掉的中间正文最多 6 段、字数在百级"，
+         * 增量因此与一条工具 trace 同量级；`answer`/`finalize` 段不存正文，不重复占体积。
+         */
+        segmentTextChars: parseInt(process.env['limits_segmentTextChars'] || 2000),
+        segmentsMaxCount: parseInt(process.env['limits_segmentsMaxCount'] || 8),
+        segmentsTotalChars: parseInt(process.env['limits_segmentsTotalChars'] || 12000),
     },
     /** 两级缓存（PR-10）：memory 套件当前只用 extractDedupeSeconds，其余为整段一致性预置 */
     cache: {
