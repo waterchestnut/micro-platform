@@ -44,6 +44,7 @@ import {
     drainAssistantStream,
     iterationDecision,
     loopExitReason,
+    describeError,
     resolveMaxIterations,
     finalizationDecision,
     buildFinalizeBody,
@@ -395,9 +396,22 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     /** persistTurn 要落这两个字段，必须在定义 persistTurn 之前就初始化（否则 abort 路径撞上 TDZ）*/
     let loopExit = 'unknown'
     let forcedFinal = false
+    /** 幂等标记：异常路径与正常路径都调 persistTurn，同一轮只能落一条档 */
+    let persisted = false
 
     /*中断也要留痕：已执行的工具副作用与部分回答需可追溯*/
-    const persistTurn = async (progress) => {
+    /**
+     * @description 落库本轮（幂等：同一轮只落一次，异常路径不会造成重复行）
+     * @param {String} progress 落库进度：finish/abort/error
+     * @param {String} [errorMessage] 异常归因文本，写进 message.error 供历史与排障使用
+     * @returns {Promise<void>}
+     */
+    const persistTurn = async (progress, errorMessage) => {
+        if (persisted) {
+            /** 重复落库会写出两条同 messageCode 的记录，历史与记忆采集都会翻倍 ⇒ 直接拒绝 */
+            logger.warn(`本轮已落库，忽略重复 persistTurn: progress=${progress}`)
+            return
+        }
         /** 落一条终态检查点（finish/abort），续跑与审计都以此为准 */
         scheduleCp(progress === 'abort' ? 'abort' : 'final', {
             messages: messages.map(m => ({...m})),
@@ -407,6 +421,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         await saveMessage(query, messageCode, messages, conversationCode, channel, channelGroup, llmModel, answerContent, answerReasoning, curUserInfo, {
             ...options,
             answerList,
+            /** 异常路径的归因（`describeError` 的 kind:message）；正常路径为 null */
+            error: errorMessage || null,
             /** 把"循环怎么退出的"和"是否补过收尾调用"落进 extInfo，空答案从此可解释、可统计 */
             loopExit,
             forcedFinal,
@@ -434,6 +450,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             recallStats,
             progress,
         })
+        /** 落库成功才算"已有档案"：放在 saveMessage 之后，这样 saveMessage 自己失败时异常路径还能再补一次 */
+        persisted = true
         /** 采集失败已在内部吞掉，不影响聊天主链路 */
     await captureTurn({
         curUserInfo,
@@ -488,283 +506,335 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         options.streamCallback(JSON.stringify({sources: ragSources}), 'sources')
     }
 
-    while (iterationCount < maxIterations) {
+    /**
+     * 主循环与其收尾（含退出方式判定、无工具收尾补落、落库与缓存）整体受 try/catch 保护。
+     * 用整段包裹而不是逐处 try：需要兜住的抛点有 create、流消费、四类工具分派、技能检测、预算压缩等多处，
+     * 逐个包必然会漏，而漏掉的那个恰好会让 persistTurn 被跳过。
+     */
+    try {
+        while (iterationCount < maxIterations) {
+            if (options.signal?.aborted) {
+                await persistTurn('abort')
+                return 'aborted'
+            }
+
+            iterationCount++
+            /*工具循环会持续往 messages 里塞结果，每轮请求前都要重新核对预算*/
+            const loopTokens = compactToBudget(messages, contextBudget, {tokenizerOptions})
+            if (contextUsage) {
+                contextUsage = {...contextUsage, total: loopTokens, loopIteration: iterationCount}
+            }
+            logger.info(`=== 迭代 ${iterationCount} 开始, createBody.tools: ${JSON.stringify(createBody.tools?.map(t => t.function.name))}`)
+            /** 请求前的字节级现场：续跑从这里恢复 */
+            scheduleCp('preCreate', {
+                messages: messages.map(m => ({...m})),
+                toolState: {pendingCalls: [], completedCalls: toolCallTrace.map(t => t.id)},
+            })
+            //console.log(`createBody ${JSON.stringify(createBody)}`)
+            const chatStream = await openai.chat.completions.create(createBody, {signal: options.signal})
+
+            /**
+             * 整轮流式响应的消费与聚合在 `llmLoop.drainAssistantStream` 里：
+             * 这样循环级测试可以注入假 stream（不依赖 OpenAI 客户端），且 SSE 下发时机与抽取前逐字一致。
+             */
+            const drained = await drainAssistantStream(chatStream, {
+                onDelta: (delta) => {
+                    options.streamCallback(JSON.stringify({role: 'assistant', ...delta, messageCode}))
+                },
+            })
+            answerContent += drained.content
+            answerReasoning += drained.reasoning
+            let toolCalls = drained.toolCalls      // 用于收集工具调用
+            let receivedToolCall = drained.receivedToolCall
+
+            /** 响应后的现场：正文 + 本轮要求调用的工具，中断在此处发生时能原样重放 */
+            scheduleCp('postCreate', {
+                messages: messages.map(m => ({...m})),
+                answer: answerContent,
+                toolState: {
+                    pendingCalls: (receivedToolCall ? toolCalls : []).map(tc => ({id: tc.id, name: tc.function?.name})),
+                    completedCalls: toolCallTrace.map(t => t.id),
+                },
+            })
+
+            /**
+             * 本轮走向：skill-check / tool-round / final。
+             * 抽取前是两条互斥的 if，这里换成一次判定，分支条件与顺序不变，抽出来是为了能离线穷举。
+             */
+            const decision = iterationDecision({
+                receivedToolCall,
+                rawToolCallCount: toolCalls.length,
+                answerContent,
+                skillContext,
+            })
+
+            // 检查大模型是否选择了某个技能（动态加载机制）
+            if (decision === 'skill-check') {
+                const selectedSkill = await skillChat.checkSkillSelection(answerContent, skillContext)
+                if (selectedSkill) {
+                    // 追加技能详细说明到消息
+                    messages.push({
+                        role: 'system',
+                        content: selectedSkill.prompt
+                    })
+
+                    // 如果有工具，也添加到请求中
+                    if (selectedSkill.tools.length > 0) {
+                        createBody.tools = [...(createBody.tools || []), ...selectedSkill.tools]
+                        logger.info(`已添加工具到请求: ${selectedSkill.tools.map(t => t.function.name).join(', ')}`)
+                    }
+
+                    logger.info(`动态加载技能详情: ${selectedSkill.name}`)
+
+                    // 重置内容并重新请求
+                    answerContent && answerList.push(answerContent)
+                    answerContent = ''
+                    emitReset()
+                    continue
+                }
+            }
+
+            // 如果收到了工具调用，处理它们
+            if (decision === 'tool-round') {
+                // 过滤掉空的工具调用
+                toolCalls = pruneToolCalls(toolCalls)
+
+                if (toolCalls.length > 0) {
+                    logger.info(`收到 ${toolCalls.length} 个工具调用: ${toolCalls.map(tc => tc.function.name).join(', ')}`)
+                    // 添加助手的消息到对话历史（包含工具调用请求）
+                    messages.push(buildAssistantToolCallMessage(toolCalls))
+
+                    /** 记忆、溢出取回、沙箱代码执行都要单独分派：否则会被当成 MCP 工具丢给 mcpToolManager 而找不到实现 */
+                    const {memoryCalls, overflowCalls, codeCalls, otherCalls} =
+                        classifyToolCalls(toolCalls, {isMemoryTool, isOverflowTool, isCodeTool})
+                    const memoryToolContext = {
+                        userCode: curUserInfo?.userCode, channel, workspaceId: memoryWorkspace,
+                        conversationCode, messageCode,
+                        curUserInfo, llmModel, llmParams: options.llmParams,
+                    }
+                    const memoryResults = await Promise.all(memoryCalls.map(async toolCall =>
+                        executeMemoryTool({toolCall, context: memoryToolContext})))
+                    /**
+                     * 取回被裁掉的工具结果：正文在本轮 toolOverflows 里，只在本轮有效（跨轮需重跑工具）。
+                     * 自己判失败不抛错，避免一个翻页请求打断整条工具循环。
+                     */
+                    const overflowResults = await Promise.all(overflowCalls.map(async toolCall => {
+                        let args = {}
+                        try {
+                            args = JSON.parse(toolCall?.function?.arguments || '{}')
+                        } catch { /* 按空参数处理，下面给出可读错误 */ }
+                        const ret = readOverflow({
+                            overflows: toolOverflows,
+                            ref: args.ref || toolCall?.id,
+                            offset: args.offset,
+                            limit: args.limit,
+                        })
+                        return {
+                            tool_call_id: toolCall?.id,
+                            role: 'tool',
+                            content: JSON.stringify(ret.success
+                                ? {...ret.data, tool_note: `仅本轮可取回；还剩 ${ret.data.remaining} 字符未读`}
+                                : ret),
+                        }
+                    }))
+                    /** 模型生成的代码只进沙箱；内部异常一律转成工具结果，不打断工具循环 */
+                    const codeResults = await Promise.all(codeCalls.map(toolCall =>
+                        executeCodeTool({
+                            toolCall,
+                            context: {conversationCode, userCode: curUserInfo?.userCode, channel},
+                        })))
+
+                    // 执行工具调用（区分 MCP 工具和 Skill 工具）
+                    const otherResults = otherCalls.length
+                        ? (skillContext
+                            ? await skillChat.executeSkillToolCalls(otherCalls, skillContext)
+                            : await mcpToolManager.executeToolCalls(channel, otherCalls))
+                        : []
+                    const toolResults = [...memoryResults, ...overflowResults, ...codeResults, ...otherResults]
+
+                    /*工具结果只带 tool_call_id，前端无法据此显示调用了哪个工具，这里补上名称*/
+                    const nameById = buildToolNameIndex(toolCalls)
+
+                    // 将工具调用结果添加到消息历史中
+                    for (const toolResult of toolResults) {
+                        const toolName = nameById[toolResult.tool_call_id] || null
+                        /**
+                         * 溢出取回的结果不再裁：它本身就是模型主动来要的片段，尺寸已由
+                         * readOverflow 的 limit（上限 OVERFLOW_MAX_LIMIT）框住；再套一层通用预算
+                         * 会把 JSON 本身裁断，翻页永远读不全（dev 实测：30 tokens 预算下
+                         * `工具结果已裁剪 read_tool_result: 176 → 27 tokens`，模型连翻 5 轮拿不到内容）。
+                         */
+                        if (isOverflowTool(toolName)) {
+                            messages.push(toolResult)
+                            toolCallTrace.push({id: toolResult.tool_call_id, name: toolName, result: clipTraceResult(toolResult.content)})
+                            continue
+                        }
+                        /**
+                         * 工具/Skill 结果入上下文前必须按预算裁剪：一次网页抓取或 PDF 解析动辄数十万字符，
+                         * 原样塞入会直接撑爆窗口。全文留在服务端，还给模型的是带裁剪说明与标识的片段。
+                         */
+                        const cut = await truncateToolMessage(toolResult, {
+                            maxTokens: config.limits?.toolResultTokens,
+                            headChars: config.limits?.toolResultHeadChars,
+                            tailChars: config.limits?.toolResultTailChars,
+                            tokenizer: tokenizerOptions.tokenizer,
+                            ref: toolResult.tool_call_id,
+                            hint: '全文已由服务端留存，需要时可要求助手按该标识进一步处理',
+                        })
+                        if (cut.truncated) {
+                            toolOverflows.push({
+                                ref: toolResult.tool_call_id,
+                                tool: toolName,
+                                originalTokens: cut.originalTokens,
+                                keptTokens: cut.keptTokens,
+                                content: typeof toolResult.content === 'string' ? toolResult.content : JSON.stringify(toolResult.content ?? ''),
+                            })
+                            logger.info(`工具结果已裁剪 ${toolName || '-'}: ${cut.originalTokens} → ${cut.keptTokens} tokens`)
+                        }
+                        messages.push(cut.message)
+                        toolCallTrace.push({id: toolResult.tool_call_id, name: toolName, result: clipTraceResult(toolResult.content)})
+
+                        /*协议 1 的旧客户端会把 data.content 无条件拼进答案，因此仅在协议 2 或显式开启时下发*/
+                        if (emitToolResults && options.streamCallback) {
+                            options.streamCallback(JSON.stringify({
+                                role: 'tool',
+                                content: toolResult.content,
+                                tool_call_id: toolResult.tool_call_id,
+                                tool: toolName,
+                                messageCode
+                            }), 'tool_result')
+                        }
+                    }
+
+                    // 重置内容变量为下一次迭代做准备
+                    answerContent && answerList.push(answerContent)
+                    answerContent = ''
+                    emitReset()
+                    /** 工具结果已并入消息，这里是可安全续跑的边界 */
+                    scheduleCp('postTools', {
+                        messages: messages.map(m => ({...m})),
+                        toolState: {pendingCalls: [], completedCalls: toolCallTrace.map(t => t.id)},
+                    })
+                    continue
+                }
+            }
+
+            // 如果没有工具调用或者没有更多工具需要调用，退出循环
+            loopBroke = true
+            break
+        }
+
         if (options.signal?.aborted) {
             await persistTurn('abort')
             return 'aborted'
         }
 
-        iterationCount++
-        /*工具循环会持续往 messages 里塞结果，每轮请求前都要重新核对预算*/
-        const loopTokens = compactToBudget(messages, contextBudget, {tokenizerOptions})
-        if (contextUsage) {
-            contextUsage = {...contextUsage, total: loopTokens, loopIteration: iterationCount}
+        /**
+         * 退出方式只有在这里才可知（必须在 aborted 提前 return 之后判，否则一次正常打断会被报成异常退出）：
+         * `exhausted` 表示循环是被 maxIterations 掐断的，而每一轮 `continue` 都执行过 reset
+         * （`answerContent` 已清空），于是落库 answer 为空、progress 仍是 `finish`。
+         */
+        loopExit = loopExitReason({broke: loopBroke, iterationCount, maxIterations})
+        if (loopExit !== 'break') {
+            logger.warn(`主循环非正常退出: reason=${loopExit}, iterationCount=${iterationCount}/${maxIterations}, 末段answerLen=${answerContent.length}, answerList段数=${answerList.length}`)
         }
-        logger.info(`=== 迭代 ${iterationCount} 开始, createBody.tools: ${JSON.stringify(createBody.tools?.map(t => t.function.name))}`)
-        /** 请求前的字节级现场：续跑从这里恢复 */
-        scheduleCp('preCreate', {
-            messages: messages.map(m => ({...m})),
-            toolState: {pendingCalls: [], completedCalls: toolCallTrace.map(t => t.id)},
-        })
-        //console.log(`createBody ${JSON.stringify(createBody)}`)
-        const chatStream = await openai.chat.completions.create(createBody, {signal: options.signal})
 
         /**
-         * 整轮流式响应的消费与聚合在 `llmLoop.drainAssistantStream` 里：
-         * 这样循环级测试可以注入假 stream（不依赖 OpenAI 客户端），且 SSE 下发时机与抽取前逐字一致。
+         * **到顶不清空**：打满时补一次不带工具的收尾调用，让模型基于已取回的工具结果给出结论，
+         * 而不是把已经花掉的钱和已经查到的信息丢成一条空白回答。
          */
-        const drained = await drainAssistantStream(chatStream, {
-            onDelta: (delta) => {
-                options.streamCallback(JSON.stringify({role: 'assistant', ...delta, messageCode}))
-            },
-        })
-        answerContent += drained.content
-        answerReasoning += drained.reasoning
-        let toolCalls = drained.toolCalls      // 用于收集工具调用
-        let receivedToolCall = drained.receivedToolCall
-
-        /** 响应后的现场：正文 + 本轮要求调用的工具，中断在此处发生时能原样重放 */
-        scheduleCp('postCreate', {
-            messages: messages.map(m => ({...m})),
-            answer: answerContent,
-            toolState: {
-                pendingCalls: (receivedToolCall ? toolCalls : []).map(tc => ({id: tc.id, name: tc.function?.name})),
-                completedCalls: toolCallTrace.map(t => t.id),
-            },
-        })
-
-        /**
-         * 本轮走向：skill-check / tool-round / final。
-         * 抽取前是两条互斥的 if，这里换成一次判定，分支条件与顺序不变，抽出来是为了能离线穷举。
-         */
-        const decision = iterationDecision({
-            receivedToolCall,
-            rawToolCallCount: toolCalls.length,
+        const fin = finalizationDecision({
+            loopExit,
             answerContent,
-            skillContext,
+            finalizeDisabled: config.limits?.maxIterationsFinalize === false,
         })
+        if (fin.action === 'force-final') {
+            forcedFinal = await runFinalizeCall()
+        }
 
-        // 检查大模型是否选择了某个技能（动态加载机制）
-        if (decision === 'skill-check') {
-            const selectedSkill = await skillChat.checkSkillSelection(answerContent, skillContext)
-            if (selectedSkill) {
-                // 追加技能详细说明到消息
-                messages.push({
-                    role: 'system',
-                    content: selectedSkill.prompt
+        /**
+         * **空答案不得记 `finish`**：收尾调用也没拿到正文时，把被 reset 抹掉的分段保住（能救多少救多少）
+         * 并附上可读原因，progress 记 `error`——不为此扩 `MessageProgressEnum`（会波及 schema 校验与前端分派）。
+         */
+        const fb = exhaustedFallback({loopExit, answerContent, answerList})
+        if (fb.notice) {
+            answerContent = fb.answer
+            if (options.streamCallback) {
+                options.streamCallback(JSON.stringify({role: 'assistant', content: fb.notice, messageCode}))
+            }
+            logger.warn(`空答案兜底: reason=${fin.reason}, 保住部分正文=${fb.usedPartial}, progress=${fb.progress}, answerLen=${answerContent.length}`)
+        }
+
+        let answerTokens = calcTextTokenCount(answerContent + answerReasoning, tokenizerOptions.tokenizer)
+        await persistTurn(fb.progress)
+
+        /** 缓存只在真正完成时写：兜底文案进缓存等于把一次失败固化 90 天 */
+        if (cacheEligible && fb.progress === 'finish') {
+            /*缓存大模型回答*/
+            /**
+             * 缓存是附属能力：它失败不该让一整轮已经流完、已经落库的回答对外变成 error
+             * （与 totalPrice 核算、记忆采集同口径）。
+             */
+            try {
+                await saveAnswerCache(query, channel, options.channelCacheKey, llmModel, {
+                    sourceConversationCode: conversationCode,
+                    sourceMessageCode: messageCode,
+                    answer: answerContent,
+                    answerReasoning,
+                    operator: {
+                        userCode: curUserInfo.userCode,
+                        realName: curUserInfo.realName
+                    },
+                    answerTokens,
                 })
-
-                // 如果有工具，也添加到请求中
-                if (selectedSkill.tools.length > 0) {
-                    createBody.tools = [...(createBody.tools || []), ...selectedSkill.tools]
-                    logger.info(`已添加工具到请求: ${selectedSkill.tools.map(t => t.function.name).join(', ')}`)
-                }
-
-                logger.info(`动态加载技能详情: ${selectedSkill.name}`)
-
-                // 重置内容并重新请求
-                answerContent && answerList.push(answerContent)
-                answerContent = ''
-                emitReset()
-                continue
+            } catch (e) {
+                logger.warn(`写答案缓存失败（不影响本轮回答）: ${String(e?.message || e).slice(0, 200)}`)
             }
         }
 
-        // 如果收到了工具调用，处理它们
-        if (decision === 'tool-round') {
-            // 过滤掉空的工具调用
-            toolCalls = pruneToolCalls(toolCalls)
-
-            if (toolCalls.length > 0) {
-                logger.info(`收到 ${toolCalls.length} 个工具调用: ${toolCalls.map(tc => tc.function.name).join(', ')}`)
-                // 添加助手的消息到对话历史（包含工具调用请求）
-                messages.push(buildAssistantToolCallMessage(toolCalls))
-
-                /** 记忆、溢出取回、沙箱代码执行都要单独分派：否则会被当成 MCP 工具丢给 mcpToolManager 而找不到实现 */
-                const {memoryCalls, overflowCalls, codeCalls, otherCalls} =
-                    classifyToolCalls(toolCalls, {isMemoryTool, isOverflowTool, isCodeTool})
-                const memoryToolContext = {
-                    userCode: curUserInfo?.userCode, channel, workspaceId: memoryWorkspace,
-                    conversationCode, messageCode,
-                    curUserInfo, llmModel, llmParams: options.llmParams,
-                }
-                const memoryResults = await Promise.all(memoryCalls.map(async toolCall =>
-                    executeMemoryTool({toolCall, context: memoryToolContext})))
-                /**
-                 * 取回被裁掉的工具结果：正文在本轮 toolOverflows 里，只在本轮有效（跨轮需重跑工具）。
-                 * 自己判失败不抛错，避免一个翻页请求打断整条工具循环。
-                 */
-                const overflowResults = await Promise.all(overflowCalls.map(async toolCall => {
-                    let args = {}
-                    try {
-                        args = JSON.parse(toolCall?.function?.arguments || '{}')
-                    } catch { /* 按空参数处理，下面给出可读错误 */ }
-                    const ret = readOverflow({
-                        overflows: toolOverflows,
-                        ref: args.ref || toolCall?.id,
-                        offset: args.offset,
-                        limit: args.limit,
-                    })
-                    return {
-                        tool_call_id: toolCall?.id,
-                        role: 'tool',
-                        content: JSON.stringify(ret.success
-                            ? {...ret.data, tool_note: `仅本轮可取回；还剩 ${ret.data.remaining} 字符未读`}
-                            : ret),
-                    }
-                }))
-                /** 模型生成的代码只进沙箱；内部异常一律转成工具结果，不打断工具循环 */
-                const codeResults = await Promise.all(codeCalls.map(toolCall =>
-                    executeCodeTool({
-                        toolCall,
-                        context: {conversationCode, userCode: curUserInfo?.userCode, channel},
-                    })))
-
-                // 执行工具调用（区分 MCP 工具和 Skill 工具）
-                const otherResults = otherCalls.length
-                    ? (skillContext
-                        ? await skillChat.executeSkillToolCalls(otherCalls, skillContext)
-                        : await mcpToolManager.executeToolCalls(channel, otherCalls))
-                    : []
-                const toolResults = [...memoryResults, ...overflowResults, ...codeResults, ...otherResults]
-
-                /*工具结果只带 tool_call_id，前端无法据此显示调用了哪个工具，这里补上名称*/
-                const nameById = buildToolNameIndex(toolCalls)
-
-                // 将工具调用结果添加到消息历史中
-                for (const toolResult of toolResults) {
-                    const toolName = nameById[toolResult.tool_call_id] || null
-                    /**
-                     * 溢出取回的结果不再裁：它本身就是模型主动来要的片段，尺寸已由
-                     * readOverflow 的 limit（上限 OVERFLOW_MAX_LIMIT）框住；再套一层通用预算
-                     * 会把 JSON 本身裁断，翻页永远读不全（dev 实测：30 tokens 预算下
-                     * `工具结果已裁剪 read_tool_result: 176 → 27 tokens`，模型连翻 5 轮拿不到内容）。
-                     */
-                    if (isOverflowTool(toolName)) {
-                        messages.push(toolResult)
-                        toolCallTrace.push({id: toolResult.tool_call_id, name: toolName, result: clipTraceResult(toolResult.content)})
-                        continue
-                    }
-                    /**
-                     * 工具/Skill 结果入上下文前必须按预算裁剪：一次网页抓取或 PDF 解析动辄数十万字符，
-                     * 原样塞入会直接撑爆窗口。全文留在服务端，还给模型的是带裁剪说明与标识的片段。
-                     */
-                    const cut = await truncateToolMessage(toolResult, {
-                        maxTokens: config.limits?.toolResultTokens,
-                        headChars: config.limits?.toolResultHeadChars,
-                        tailChars: config.limits?.toolResultTailChars,
-                        tokenizer: tokenizerOptions.tokenizer,
-                        ref: toolResult.tool_call_id,
-                        hint: '全文已由服务端留存，需要时可要求助手按该标识进一步处理',
-                    })
-                    if (cut.truncated) {
-                        toolOverflows.push({
-                            ref: toolResult.tool_call_id,
-                            tool: toolName,
-                            originalTokens: cut.originalTokens,
-                            keptTokens: cut.keptTokens,
-                            content: typeof toolResult.content === 'string' ? toolResult.content : JSON.stringify(toolResult.content ?? ''),
-                        })
-                        logger.info(`工具结果已裁剪 ${toolName || '-'}: ${cut.originalTokens} → ${cut.keptTokens} tokens`)
-                    }
-                    messages.push(cut.message)
-                    toolCallTrace.push({id: toolResult.tool_call_id, name: toolName, result: clipTraceResult(toolResult.content)})
-
-                    /*协议 1 的旧客户端会把 data.content 无条件拼进答案，因此仅在协议 2 或显式开启时下发*/
-                    if (emitToolResults && options.streamCallback) {
-                        options.streamCallback(JSON.stringify({
-                            role: 'tool',
-                            content: toolResult.content,
-                            tool_call_id: toolResult.tool_call_id,
-                            tool: toolName,
-                            messageCode
-                        }), 'tool_result')
-                    }
-                }
-
-                // 重置内容变量为下一次迭代做准备
-                answerContent && answerList.push(answerContent)
-                answerContent = ''
-                emitReset()
-                /** 工具结果已并入消息，这里是可安全续跑的边界 */
-                scheduleCp('postTools', {
-                    messages: messages.map(m => ({...m})),
-                    toolState: {pendingCalls: [], completedCalls: toolCallTrace.map(t => t.id)},
-                })
-                continue
+        return 'done'
+    } catch (e) {
+        /**
+         * 抽取前主循环那一段没有任何 try/catch：上游一抛（网络错误、relay 5xx、SDK 行为变更，
+         * 或客户端打断以异常形态冒出来）就整段跳过 persistTurn，那一轮除了半截 SSE 什么都不留。
+         * 现在**先落库再决定对外形态**：中断仍走 abort 语义（客户端断开不是故障，
+         * 记成 error 会让监控里的错误率被用户行为污染）；真异常把原始错误继续抛给路由，由它下发 event:error。
+         */
+        const turnErr = describeError(e)
+        logger.error(`主循环异常: kind=${turnErr.kind}, status=${turnErr.status ?? '-'}, message=${turnErr.message.slice(0, 300)}`)
+        const errProgress = turnErr.kind === 'abort' ? 'abort' : 'error'
+        if (!persisted) {
+            try {
+                await persistTurn(errProgress, `${turnErr.kind}:${turnErr.message}`)
+            } catch (e2) {
+                /** 落库也失败时绝不掩盖原始异常：两份错误各留一次日志 */
+                logger.error(`异常路径落库失败: ${String(e2?.message || e2).slice(0, 200)}`)
             }
         }
-
-        // 如果没有工具调用或者没有更多工具需要调用，退出循环
-        loopBroke = true
-        break
-    }
-
-    if (options.signal?.aborted) {
-        await persistTurn('abort')
-        return 'aborted'
-    }
-
-    /**
-     * 退出方式只有在这里才可知（必须在 aborted 提前 return 之后判，否则一次正常打断会被报成异常退出）：
-     * `exhausted` 表示循环是被 maxIterations 掐断的，而每一轮 `continue` 都执行过 reset
-     * （`answerContent` 已清空），于是落库 answer 为空、progress 仍是 `finish`。
-     */
-    loopExit = loopExitReason({broke: loopBroke, iterationCount, maxIterations})
-    if (loopExit !== 'break') {
-        logger.warn(`主循环非正常退出: reason=${loopExit}, iterationCount=${iterationCount}/${maxIterations}, 末段answerLen=${answerContent.length}, answerList段数=${answerList.length}`)
-    }
-
-    /**
-     * **到顶不清空**：打满时补一次不带工具的收尾调用，让模型基于已取回的工具结果给出结论，
-     * 而不是把已经花掉的钱和已经查到的信息丢成一条空白回答。
-     */
-    const fin = finalizationDecision({
-        loopExit,
-        answerContent,
-        finalizeDisabled: config.limits?.maxIterationsFinalize === false,
-    })
-    if (fin.action === 'force-final') {
-        forcedFinal = await runFinalizeCall()
-    }
-
-    /**
-     * **空答案不得记 `finish`**：收尾调用也没拿到正文时，把被 reset 抹掉的分段保住（能救多少救多少）
-     * 并附上可读原因，progress 记 `error`——不为此扩 `MessageProgressEnum`（会波及 schema 校验与前端分派）。
-     */
-    const fb = exhaustedFallback({loopExit, answerContent, answerList})
-    if (fb.notice) {
-        answerContent = fb.answer
-        if (options.streamCallback) {
-            options.streamCallback(JSON.stringify({role: 'assistant', content: fb.notice, messageCode}))
+        if (errProgress === 'abort') {
+            /** 与既有中断路径同形：路由据此发 event:abort */
+            return 'aborted'
         }
-        logger.warn(`空答案兜底: reason=${fin.reason}, 保住部分正文=${fb.usedPartial}, progress=${fb.progress}, answerLen=${answerContent.length}`)
+        throw e
     }
-
-    let answerTokens = calcTextTokenCount(answerContent + answerReasoning, tokenizerOptions.tokenizer)
-    await persistTurn(fb.progress)
-
-    /** 缓存只在真正完成时写：兜底文案进缓存等于把一次失败固化 90 天 */
-    if (cacheEligible && fb.progress === 'finish') {
-        /*缓存大模型回答*/
-        await saveAnswerCache(query, channel, options.channelCacheKey, llmModel, {
-            sourceConversationCode: conversationCode,
-            sourceMessageCode: messageCode,
-            answer: answerContent,
-            answerReasoning,
-            operator: {
-                userCode: curUserInfo.userCode,
-                realName: curUserInfo.realName
-            },
-            answerTokens,
-        })
-    }
-
-    return 'done'
 }
 
 
-/*保存会话消息*/
+/**
+ * @description 保存会话消息（本轮问答、执行过程与成本）
+ * @param {String} query 用户问题
+ * @param {String} messageCode 本轮消息标识
+ * @param {Object[]} messages 发给模型的完整提示词
+ * @param {String} conversationCode 会话标识
+ * @param {String} channel 频道
+ * @param {String} channelGroup 频道组
+ * @param {String} llmModel 模型档位
+ * @param {String} answerContent 回答正文
+ * @param {String} answerReasoning 推理正文
+ * @param {Object} curUserInfo 当前用户
+ * @param {Object} options 执行过程与状态：progress、error、loopExit、forcedFinal、toolCalls 等
+ * @returns {Promise<Object>} 落库结果
+ */
 async function saveMessage(query, messageCode, messages, conversationCode, channel, channelGroup, llmModel, answerContent, answerReasoning, curUserInfo, options) {
     /**
      * PR-15：本轮沙箱成本。`totalPrice` 此前从未被写入过，现在第一次有数据来源。
@@ -789,6 +859,8 @@ async function saveMessage(query, messageCode, messages, conversationCode, chann
         messages,
         answer: answerContent,
         progress: options.progress || 'finish',
+        /** 异常归因（`kind:message`）：此前主循环抛错既不落库也没有这个字段，排障只能靠日志 */
+        error: options.error || undefined,
         operator: {
             userCode: curUserInfo.userCode,
             realName: curUserInfo.realName

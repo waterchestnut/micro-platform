@@ -192,6 +192,43 @@ export function loopExitReason({broke = false, iterationCount = 0, maxIterations
     return 'unknown'
 }
 
+/* ---------- 异常归因（供 §2E-2 的 try/catch 使用） ---------- */
+
+/**
+ * @description 把上游异常折成可落库、可下发的文本与类别
+ * @param {*} e 捕获到的异常（OpenAI SDK 的 APIError/AbortError、TypeError、字符串等都接受）
+ * @returns {{kind: 'abort'|'api'|'unknown', message: String, status: Number|null}}
+ * @description
+ * `kind` 决定落库的 progress 与客户端收到哪个事件：**中断不是故障**，
+ * 客户端断开/主动 stop 抛出的 AbortError 必须走 abort 语义（`event: abort`），
+ * 否则一次正常打断会被记成 error，监控里的错误率会被用户行为污染。
+ */
+export function describeError(e) {
+    if (!e) {
+        return {kind: 'unknown', message: '未知错误', status: null}
+    }
+    const name = String(e.name || '')
+    const raw = String(e.message || e)
+    const status = Number(e.status) > 0 ? Number(e.status) : (Number(e.statusCode) > 0 ? Number(e.statusCode) : null)
+
+    /**
+     * 顺序很重要：TimeoutError 先判。
+     * `AbortSignal.timeout()` 与部分 fetch 实现的超时消息里也带 "aborted"字样，
+     * 若先按 abort 归类，"relay 挂了"就会被记成"用户主动打断"，错误率与打断率同时失真。
+     */
+    if (name === 'TimeoutError' || /timed?\s*out|timeout/i.test(raw)) {
+        return {kind: 'api', message: raw.slice(0, 500), status}
+    }
+    if (name === 'AbortError' || /aborted|abort|user\s*cancelled|The\s*user\s*turned\s*the\s*connection/i.test(raw)) {
+        return {kind: 'abort', message: raw.slice(0, 500), status}
+    }
+    /** OpenAI SDK 的 APIError/APIConnectionError/RateLimitError 等都带 type 或 status */
+    if (status !== null || e instanceof Error || name.endsWith('Error')) {
+        return {kind: 'api', message: raw.slice(0, 500), status}
+    }
+    return {kind: 'unknown', message: raw.slice(0, 500), status}
+}
+
 /* ---------- 迭代上限：配置化（§2E-3 修法第 3 条） ---------- */
 
 /** 兜底上限：与抽取前的硬编码值一致，保证不配置时行为不变 */
@@ -398,6 +435,7 @@ export default {
     drainAssistantStream,
     iterationDecision,
     loopExitReason,
+    describeError,
     resolveMaxIterations,
     finalizationDecision,
     buildFinalizeBody,

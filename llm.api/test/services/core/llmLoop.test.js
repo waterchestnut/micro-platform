@@ -16,6 +16,7 @@ import {
     classifyToolCalls,
     buildToolNameIndex,
     clipTraceResult,
+    describeError,
     detachAction,
     steerAction,
     RUN_PHASES,
@@ -207,4 +208,40 @@ test('steerAction：hard 在生成阶段立即打断，在工具阶段退化为�
     const tool = steerAction('hard', 'tool_executing')
     assert.equal(tool.abortCurrentStream, false, '工具执行中不得被 hard 打断（D4 副作用优先）')
     assert.equal(tool.injectAt, 'postTools')
+})
+
+/* ========================= describeError ========================= */
+
+test('describeError：中断不是故障，但超时是故障', () => {
+    const abort = Object.assign(new Error('The operation was aborted'), {name: 'AbortError'})
+    assert.deepEqual(describeError(abort), {kind: 'abort', message: 'The operation was aborted', status: null})
+    /** undici/fetch 与 SDK 的中断文本形态不一，但语义相同：连接被取消 */
+    for (const msg of ['This connection was aborted', 'req aborted by client', 'The user turned the connection off']) {
+        assert.equal(describeError(new Error(msg)).kind, 'abort', msg)
+    }
+    /** 超时必须归为故障：把它当 abort 会让"relay 挂了"看起来像"用户主动打断" */
+    assert.equal(describeError(new Error('body timeout')).kind, 'api')
+    assert.equal(describeError(Object.assign(new Error('timeout'), {name: 'TimeoutError'})).kind, 'api')
+})
+
+test('describeError：上游错误归到 api 并带 status', () => {
+    const api = Object.assign(new Error('Request to relay failed'), {name: 'APIError', status: 500})
+    assert.deepEqual(describeError(api), {kind: 'api', message: 'Request to relay failed', status: 500})
+    assert.equal(describeError(Object.assign(new Error('no route'), {statusCode: 404})).status, 404)
+    assert.equal(describeError(new TypeError('Cannot read properties of undefined')).kind, 'api')
+})
+
+test('describeError：非 Error 与空值不炸', () => {
+    assert.equal(describeError('boom').kind, 'unknown')
+    assert.equal(describeError('boom').message, 'boom')
+    assert.equal(describeError(null).message, '未知错误')
+    assert.equal(describeError(undefined).kind, 'unknown')
+    assert.equal(describeError({}).kind, 'unknown', '既不是 Error 也没有 status/name ⇒ 无法归因，保守记 unknown')
+})
+
+test('describeError：过长消息截到 500 字符，避免整段响应体进库', () => {
+    const long = Object.assign(new Error('x'.repeat(2000)), {name: 'APIError', status: 400})
+    const d = describeError(long)
+    assert.equal(d.message.length, 500)
+    assert.equal(d.status, 400)
 })
