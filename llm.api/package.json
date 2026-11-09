@@ -9,7 +9,8 @@
     "test": "test"
   },
   "scripts": {
-    "test": "node --test test/**/*.test.js",
+    "test": "node --test --test-reporter=spec --test-timeout=30000 --test-force-exit \"test/**/*.test.js\"",
+    "test:exit-check": "node --test --test-reporter=spec --test-timeout=30000 \"test/**/*.test.js\"",
     "start": "chcp 65001 && fastify start -l info app.js",
     "dev": "chcp 65001 && fastify start -w -l info app.js",
     "grpc": "chcp 65001 && node grpc/server.js"
