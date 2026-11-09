@@ -1,4 +1,4 @@
-import {serializeSSEEvent} from '../../../tools/sse.js'
+import {createSseChannel} from '../../../tools/sseChannel.js'
 import redisClient from '../../../daos/cache/redisClient.js'
 import {
     assertMember,
@@ -149,15 +149,27 @@ export default async function (fastify, opts) {
             headers['Access-Control-Allow-Origin'] = request.headers.origin
         }
         stream.writeHead(200, headers)
-        stream.write(serializeSSEEvent({
-            event: 'connected',
-            data: JSON.stringify({conversationCode})
-        }))
+        /**
+         * 这条连接绝大多数时间是**静默的**（在等对方发消息），所以心跳在这里比聊天流更要紧：
+         * 没有心跳，空闲超时一到就被掐，用户收不到新消息还看不出原因。
+         * 抽成通道还顺手修了一个隐患：原来的写法没有 `id:`，客户端断线后无法判断漏了哪几条消息。
+         */
+        const channel = createSseChannel(stream, {
+            pingIntervalMs: llm.config.stream?.pingIntervalMs,
+            onError: (e) => logger.warn(`u2u SSE 写入失败（多半是客户端断开）: ${String(e?.message || e).slice(0, 160)}`),
+        })
+        channel.emit(JSON.stringify({conversationCode}), 'connected')
 
         const sub = redisClient.client.duplicate()
-        let closed = false
-        const onMessage = (channel, message) => {
-            if (closed) {
+        /**
+         * @description 收到 redis 推送后转成 SSE 事件
+         * @param {String} channelName redis 频道名（注意不要遮蔽上面的 SSE 通道）
+         * @param {String} message 推送内容（JSON 字符串）
+         * @returns {void}
+         */
+        const onMessage = (channelName, message) => {
+            if (!channel.isOpen()) {
+                /** 连接已关（客户端断开）⇒ 丢弃推送，别把写入抛进 redis 回调 */
                 return
             }
             try {
@@ -165,10 +177,7 @@ export default async function (fastify, opts) {
                 if (payload.conversationCode && payload.conversationCode !== conversationCode) {
                     return
                 }
-                stream.write(serializeSSEEvent({
-                    event: payload.event,
-                    data: JSON.stringify(payload.data)
-                }))
+                channel.emit(JSON.stringify(payload.data), payload.event)
             } catch (err) {
                 logger.error(`u2u stream 解析推送数据出错: ${err.message}`)
             }
@@ -182,10 +191,12 @@ export default async function (fastify, opts) {
         }
 
         request.raw.socket.on('close', () => {
-            closed = true
+            /** 必须关通道：心跳定时器是每连接一个，不关就是每断一条线漏一个定时器 */
+            const seq = channel.close()
             sub.removeListener('message', onMessage)
             sub.unsubscribe(`u2u:msg:${userCode}`).catch(() => {})
             sub.quit().catch(() => {})
+            logger.info(`u2u SSE 断开: conversationCode=${conversationCode}, seq=${seq}`)
         })
 
         return reply

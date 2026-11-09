@@ -1,5 +1,5 @@
 import {execChat} from '../../../services/core/llmChat.js'
-import {serializeSSEEvent} from '../../../tools/sse.js'
+import {createSseChannel} from '../../../tools/sseChannel.js'
 import {validateChannels} from '../../../conf/llmChannel.js'
 import {chatStreamBodySchema} from '../../../schemas/chatStreamSchema.js'
 import {auditBody} from '../../../tools/schemaAudit.js'
@@ -53,28 +53,29 @@ export default async function (fastify, opts) {
             headers['Access-Control-Allow-Origin'] = request.headers.origin
         }
         stream.writeHead(200, headers)
+        /**
+         * SSE 通道：每事件带单调 `id:seq`，静默期发 `:ping` 注释帧。
+         * 心跳不是优化项——入口代理的空闲超时（生产 Traefik 180s，且无法用 k8s Ingress 注解调整；
+         * dev nginx 默认 60s）一定会在长工具执行/长思考的静默阶段把连接掐掉。
+         */
+        const channel = createSseChannel(stream, {
+            pingIntervalMs: llm.config.stream?.pingIntervalMs,
+            onError: (e) => logger.warn(`SSE 写入失败（多半是客户端断开）: ${String(e?.message || e).slice(0, 160)}`),
+        })
         let aborted = false
         try {
             const ret = await execChat(request.userInfo, request.reqParams.query, request.reqParams.conversationCode, {
                 ...request.reqParams.options, signal, streamCallback: (content, eventType) => {
-                    stream.write(serializeSSEEvent({
-                        event: eventType || 'delta',
-                        data: content
-                    }))
+                    channel.emit(content, eventType)
                 }
             })
             aborted = ret === 'aborted'
-            stream.write(serializeSSEEvent({
-                event: aborted ? 'abort' : 'done',
-                data: aborted ? 'aborted' : 'done'
-            }))
+            channel.emit(aborted ? 'aborted' : 'done', aborted ? 'abort' : 'done')
         } catch (err) {
             console.error(err);
-            stream.write(serializeSSEEvent({
-                event: 'error',
-                data: err.message || '处理出错，请稍等再试'
-            }))
+            channel.emit(err.message || '处理出错，请稍等再试', 'error')
         }
+        logger.info(`SSE 结束: seq=${channel.close()}, aborted=${aborted}`)
         stream.end()
         return reply
     })

@@ -208,6 +208,15 @@ export default {
         segmentsTotalChars: parseInt(process.env['limits_segmentsTotalChars'] || 12000),
     },
     /** 两级缓存（PR-10）：memory 套件当前只用 extractDedupeSeconds，其余为整段一致性预置 */
+    /**
+     * SSE 输出通道
+     * pingIntervalMs：静默多久发一帧 `:ping` 注释。取 8s 是因为它要同时远小于常见代理/网关的空闲超时
+     * （生产 Traefik `idleTimeout` 180s 且无法通过 k8s Ingress 注解调整；dev nginx 默认 60s）。
+     * 设 0 可整体关闭心跳（本地调试用）。
+     */
+    stream: {
+        pingIntervalMs: parseInt(process.env['stream_pingIntervalMs'] || '8000'),
+    },
     cache: {
         skillEnabled: process.env['cache_skill'] !== 'false',
         skillTtlSeconds: Math.min(parseInt(process.env['cache_skillTtlSeconds'] || parseInt(process.env['cacheExpiresTime'] || 60 * 24 * 7) * 60) || 3600, 4 * 3600),

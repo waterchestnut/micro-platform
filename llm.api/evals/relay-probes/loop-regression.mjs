@@ -49,11 +49,31 @@ if (!r.ok) {
 
 const dec = new TextDecoder()
 let buf = ''
+/**
+ * §19 的 SSE 不变量在本探针里的可观测形式：
+ * - 每条**业务事件**都带 `id:<n>`，且 n 严格 +1、无跳号；
+ * - `:ping` 是纯注释帧，**不带 id、不推进游标、不能被当成事件计数**；
+ * - 帧必须以空行结束（split 出得来就说明满足了）。
+ */
+let lastSeq = 0, seqOk = true, pings = 0, eventsWithoutId = 0
 for await (const cv of r.body) {
     buf += dec.decode(cv, {stream: true})
     let i
     while ((i = buf.indexOf('\n\n')) >= 0) {
         const f = buf.slice(0, i); buf = buf.slice(i + 2)
+        if (/^:[\s\S]*$/.test(f.trim()) && !/\n/.test(f.trim())) {
+            /** 心跳注释帧：只数次数，不进事件序列 */
+            pings++
+            continue
+        }
+        const idLine = /^id:(\d+)$/m.exec(f)
+        if (!idLine) {
+            eventsWithoutId++
+        } else {
+            const n = Number(idLine[1])
+            if (n !== lastSeq + 1) seqOk = false
+            lastSeq = n
+        }
         const ev = /event:(\S+)/.exec(f)?.[1] || 'delta'
         const data = (/data:([\s\S]+)/.exec(f)?.[1] || '').replace(/\n/g, '')
         if (metaFirst === null) metaFirst = ev
@@ -126,6 +146,11 @@ const invariants = {
     '承载最终正文的段与落库 answer 一致': Math.abs((segFinal?.metrics?.chars ?? -1) - (m?.answer || '').length) <= 40,
     'answer/finalize 段不重复存正文（体积纪律）':
         segs.filter(s => ['answer', 'finalize'].includes(s.kind)).every(s => s.text === '' && s.ref === 'answer'),
+    /** PR-A 剩余项：传输层地基（每事件 id + 心跳）。心跳发生与否取决于静默时长，不能当断言，只能当观测 */
+    '每事件都带 id（无 id 帧数为 0）': eventsWithoutId === 0,
+    'id 严格 +1、无跳号': seqOk,
+    /** 这一条才是"心跳不是事件"的真正证据：注释帧若被当成事件，事件数就会比游标多 */
+    '事件数 == 游标（心跳注释不占游标）': lastSeq === order.length,
 }
 const failed = Object.entries(invariants).filter(([, v]) => !v).map(([k]) => k)
 
@@ -140,6 +165,11 @@ log('结构不变量', {
     实收字符: chars,
     被reset抹掉字符: charsLost,
     末段字符: acc,
+    /** 传输层观测：游标、事件数、心跳帧数、缺 id 帧数 */
+    游标: lastSeq,
+    事件数: order.length,
+    心跳帧: pings,
+    缺id帧: eventsWithoutId,
     落库: m ? {
         progress: m.progress,
         answerLen: (m.answer || '').length,
