@@ -5,6 +5,8 @@
  */
 
 import messageDac from '../../daos/core/dac/messageDac.js'
+import conversationDac from '../../daos/core/dac/conversationDac.js'
+import {resolveMessageScope} from './messageScope.js'
 import retSchema from '../../daos/retSchema.js'
 
 const tools = llm.tools
@@ -108,14 +110,31 @@ function toProcessSummary(extInfo) {
 /**
  * @description 获取供调用方展示的消息分页，不含发给模型的 messages 提示词
  * @author xianyang
- * @param {Object} [filter] 筛选条件
+ * @param {Object} [filter] 筛选条件（来自请求体，不可信，必须经可见性收敛）
  * @param {Number} [pageIndex=1] 页码
  * @param {Number} [pageSize=10] 分页大小
  * @param {Object} [options] 排序等参数
+ * @param {Object} [curUserInfo] **当前登录用户**；缺失即拒绝（此前 filter 直接来自请求体，任何人可读全站问答）
  * @returns {Promise<{total: Number, rows: [Object]}>} 视图化的分页结果
  */
-export async function getMessagePage(filter = {}, pageIndex = 1, pageSize = 10, options = {}) {
-    const ret = await getMessages(filter, pageIndex, pageSize, {...options, projection: {messages: 0}})
+export async function getMessagePage(filter = {}, pageIndex = 1, pageSize = 10, options = {}, curUserInfo = {}) {
+    const userCode = curUserInfo?.userCode
+    /** 可见性按"会话成员制"判定，与 /core/conversation/list 同口径（conversationDac 的 $or: userCodes / operator.userCode） */
+    const allowedCodes = userCode ? await conversationDac.getConversationCodes({userCode}) : []
+    const scope = resolveMessageScope(filter, userCode, allowedCodes)
+    if (!scope.ok) {
+        /**
+         * 状态码必须是 4xx 而不是 500：越权尝试要能被网关与监控按"拒绝"归类。
+         * `format-reply.js` 的 setErrorHandler 取 `error.statusCode || 500`，裸 throw 会把越权伪装成服务异常。
+         */
+        const err = new Error(scope.reason === 'not-member' ? '无权访问该会话' : '缺少有效的用户身份（userCode）')
+        err.statusCode = scope.reason === 'not-member' ? 403 : 401
+        throw err
+    }
+    if (tools.isArray(scope.filter.conversationCode) && !scope.filter.conversationCode.length) {
+        return {total: 0, rows: []}
+    }
+    const ret = await getMessages(scope.filter, pageIndex, pageSize, {...options, projection: {messages: 0}})
     return {
         total: ret?.total || 0,
         rows: (ret?.rows || []).map(toMessageView),

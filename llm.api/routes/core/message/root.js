@@ -37,7 +37,7 @@ export default async function (fastify, opts) {
             response: {}
         }
     }, async function (request, reply) {
-        return await getMessagePage(request.reqParams.filter, request.reqParams.pageIndex, request.reqParams.pageSize, request.reqParams.options)
+        return await getMessagePage(request.reqParams.filter, request.reqParams.pageIndex, request.reqParams.pageSize, request.reqParams.options, request.userInfo)
     })
 
     fastify.post('/feedback', {

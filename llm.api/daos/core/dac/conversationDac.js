@@ -74,6 +74,19 @@ export class ConversationDac extends BaseDac {
         }
         return params
     }
+
+    /**
+     * @description 取会话标识列表（只投影 conversationCode，供可见性收敛用）
+     * @param {Object} options 与 getByPage 同源的筛选条件；传 `userCode` 即按成员制（$or: userCodes / operator.userCode）
+     * @param {Number} [options.limit] 上限，缺省 5000
+     * @returns {Promise<String[]>} 会话标识数组
+     */
+    async getConversationCodes(options = {}) {
+        const params = this.assembleParams(options)
+        const limit = Number(options.limit) > 0 ? Number(options.limit) : 5000
+        const rows = await this._Model.find(params).select({conversationCode: 1}).lean().limit(limit).exec()
+        return (rows || []).map(r => r.conversationCode).filter(Boolean)
+    }
 }
 
 export default new ConversationDac(Conversation)
