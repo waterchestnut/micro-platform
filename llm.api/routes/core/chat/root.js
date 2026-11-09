@@ -3,8 +3,10 @@ import {createSseChannel} from '../../../tools/sseChannel.js'
 import {validateChannels} from '../../../conf/llmChannel.js'
 import {chatStreamBodySchema} from '../../../schemas/chatStreamSchema.js'
 import {auditBody} from '../../../tools/schemaAudit.js'
+import {admitRun, releaseRun, snapshot} from '../../../services/core/session/runRegistry.js'
 
 const logger = llm.logger
+const tools = llm.tools
 
 export default async function (fastify, opts) {
 
@@ -33,6 +35,38 @@ export default async function (fastify, opts) {
             throw err
         }
 
+        /**
+         * 并发闸（PR-0.4）。**默认关**：`limit` 为 0 时连登记都不做，行为与改造前逐字一致。
+         *
+         * 位置必须在这里——`writeHead(200)` 之后就只能靠 SSE 帧表达拒绝，
+         * 而"这一轮根本没开始"和"开始了但被掐掉"是两件事，混在一个流里前端就分不开。
+         * 拒绝也不进队列：没有队列的时候就老老实实拒（D36），"偷偷排队"只会让用户看到卡住。
+         */
+        const gateCfg = llm.config.limits?.concurrentRuns || {}
+        const messageCodeForGate = request.reqParams?.options?.messageCode || tools.getUUID()
+        if (Number(gateCfg.limit) > 0) {
+            const gated = admitRun({
+                messageCode: messageCodeForGate,
+                conversationCode: request.reqParams?.conversationCode,
+                userCode: request.userInfo.userCode,
+                cfg: gateCfg,
+            })
+            if (!gated.admit) {
+                const r = gated.response
+                Object.entries(r.headers || {}).forEach(([k, v]) => reply.header(k, v))
+                logger.warn(`并发闸拒绝: reason=${gated.decision.reason}, active=${gated.decision.active}, limit=${gated.decision.limit}, userCode=${request.userInfo.userCode}, conversationCode=${request.reqParams?.conversationCode}`)
+                /**
+                 * 把判定依据一起回给客户端：`msg` 是给人看的，`reason/active/limit` 是给代码看的。
+                 * 只给文案的话，前端要区分"我被个人额度挡了"与"全站满了"就只能猜字符串——
+                 * 而猜字符串正是 §2E-6 里四端各自把 `progress` 折成 `done` 的那类错误的源头。
+                 */
+                return reply.code(r.httpStatus).send({
+                    code: r.bodyCode, msg: r.message,
+                    data: {reason: gated.decision.reason, active: gated.decision.active, limit: gated.decision.limit},
+                })
+            }
+        }
+
         const controller = new AbortController()
         const {signal} = controller
         request.raw.socket.on('close', () => {
@@ -55,8 +89,8 @@ export default async function (fastify, opts) {
         stream.writeHead(200, headers)
         /**
          * SSE 通道：每事件带单调 `id:seq`，静默期发 `:ping` 注释帧。
-         * 心跳不是优化项——入口代理的空闲超时（生产 Traefik 180s，且无法用 k8s Ingress 注解调整；
-         * dev nginx 默认 60s）一定会在长工具执行/长思考的静默阶段把连接掐掉。
+         * 心跳不是优化项——生产入口 Traefik 的 `idleTimeout` 180s 且无法用注解调整（§2B.2），
+         * 工具执行/长思考阶段一旦静默超时，连接必被掐断。
          */
         const channel = createSseChannel(stream, {
             pingIntervalMs: llm.config.stream?.pingIntervalMs,
@@ -65,7 +99,12 @@ export default async function (fastify, opts) {
         let aborted = false
         try {
             const ret = await execChat(request.userInfo, request.reqParams.query, request.reqParams.conversationCode, {
-                ...request.reqParams.options, signal, streamCallback: (content, eventType) => {
+                /**
+                 * 把闸用的 messageCode 原样交给 run：
+                 * 登记与注销必须是同一个键，否则要么额度永久泄漏，要么多减一次把别人的位置踩掉。
+                 */
+                ...request.reqParams.options, messageCode: messageCodeForGate,
+                signal, streamCallback: (content, eventType) => {
                     channel.emit(content, eventType)
                 },
                 /** PR-0.3：把 fastify 的 reqId 与入站 traceId 交给 run，日志才接得上 */
@@ -77,10 +116,49 @@ export default async function (fastify, opts) {
         } catch (err) {
             console.error(err);
             channel.emit(err.message || '处理出错，请稍等再试', 'error')
+        } finally {
+            /**
+             * **注销放在 finally 是这条链上唯一的保险**：正常收尾、上游抛错、客户端断开、
+             * `streamCallback` 写失败都会走到这里。少一次注销，闸就永久少一格，
+             * 症状是"用久了整站变慢"，看起来完全不像自己写的 bug。
+             */
+            if (Number(gateCfg.limit) > 0) {
+                releaseRun(messageCodeForGate)
+            }
         }
         /** 两侧的键都写上：reqId 接 HTTP 层日志，traceId（=messageCode）接 run 层日志与账本 */
         logger.info(`SSE 结束: reqId=${request.id}, seq=${channel.close()}, aborted=${aborted}`)
         stream.end()
         return reply
+    })
+
+    /**
+     * 并发闸的读数（PR-0.4）。
+     * 只给聚合数：**不返回 `byUser`**——"谁现在有几个 run 在跑"是把别人的在线状态卖给了任意调用方，
+     * 与 §2E-4/§2F.37 是同一类问题（能枚举活跃账号的接口，和能读别人会话的接口是同一种缺陷）。
+     */
+    fastify.post('/runStats', {
+        schema: {
+            description: '本进程在途 run 与并发闸计数（只含聚合数，不含用户维度）',
+            summary: '并发闸读数',
+            tags: ['llm'],
+            response: {},
+        },
+    }, async function (request, reply) {
+        const s = snapshot()
+        const cfg = llm.config.limits?.concurrentRuns || {}
+        return {
+            active: s.active,
+            admitted: s.admitted,
+            rejected: s.rejected,
+            released: s.released,
+            overRelease: s.overRelease,
+            /** 任何时刻都应为 0；非 0 说明登记/注销不配对 ⇒ 闸会越用越紧，那是 bug 不是负载 */
+            accountingGap: s.accountingGap,
+            oldestMs: s.oldestMs,
+            limit: Number(cfg.limit) || 0,
+            perUserLimit: Number(cfg.perUserLimit) || 0,
+            gateEnabled: (Number(cfg.limit) || 0) > 0,
+        }
     })
 }

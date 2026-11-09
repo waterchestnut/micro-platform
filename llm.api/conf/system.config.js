@@ -212,6 +212,19 @@ export default {
         /** 上限打满时是否补一次"无工具收尾调用"；设 false 则直接退化成"部分内容 + 可读原因" */
         maxIterationsFinalize: process.env['limits_maxIterationsFinalize'] !== 'false',
         /**
+         * 并发闸（PR-0.4）。**默认全关**（`limit=0`）：不配就与改造前一致，不登记也不拒。
+         *
+         * 三条口径写在 `services/core/session/runGate.js` 文件头，最容易读错的一条：
+         * **这是单进程闸**——PM2 每 worker 各数自己的，集群实际天花板 ≈ `limit × worker 数`；
+         * 要全局闸得靠 redis 计数或 PR-C 的 Streams，别把这里的数字当全局上限用。
+         */
+        concurrentRuns: {
+            limit: parseInt(process.env['limits_concurrentRuns'] || '0'),
+            perUserLimit: parseInt(process.env['limits_concurrentRunsPerUser'] || '0'),
+            /** 拒的时候建议客户端多久后再试（会折算成 `Retry-After` 秒） */
+            retryAfterMs: parseInt(process.env['limits_concurrentRunsRetryAfterMs'] || '1500'),
+        },
+        /**
          * 过程分段（PR-B）的体积预算：单段 2000 字 × 8 段 + 总量 12000 字。
          * 依据是"被 reset 抹掉的中间正文最多 6 段、字数在百级"，
          * 增量因此与一条工具 trace 同量级；`answer`/`finalize` 段不存正文，不重复占体积。
