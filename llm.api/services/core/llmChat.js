@@ -29,6 +29,22 @@ import {peekSharedSandboxId} from '../sandbox/runner.js'
 import {scheduleCheckpoint, flushCheckpoints} from './session/checkpoint.js'
 import {truncateToolMessage} from '../../tools/truncate.js'
 import {resolveMemory, safeWorkspaceId} from './memory/policy.js'
+/**
+ * 主循环的纯决策逻辑（协议协商、流式消费、tool_calls 聚合与分派、trace 截断、迭代退出方式）。
+ * 抽到 `llmLoop.js` 是为了让它能被离线单测覆盖——`execChat` 此前零单测，而主循环要连续被改多轮。
+ * 行为与抽取前逐字一致，包括"没有 index 的增量被丢弃"这类现状。
+ */
+import {
+    resolveProtocol,
+    pruneToolCalls,
+    buildAssistantToolCallMessage,
+    classifyToolCalls,
+    buildToolNameIndex,
+    clipTraceResult,
+    drainAssistantStream,
+    iterationDecision,
+    loopExitReason,
+} from './llmLoop.js'
 
 const tools = llm.tools
 const logger = llm.logger
@@ -36,13 +52,6 @@ const config = llm.config
 /** 全局默认档位由 conf/llmModel.js 读取（LLM_DEFAULT_CONFIG_KEY / LLM_DEFAULT_VL_CONFIG_KEY） */
 const defaultChannel = process.env['LLM_DEFAULT_CHANNEL'] || 'micro_common'
 const defaultChannelGroup = 'none'
-
-/** 工具结果进 trace 的截断快照：让历史回放的 ProcessPanel 有内容可看。
- *  完整留存另走 toolOverflows（预算裁剪时才存），这里只取前 4000 字符。 */
-function clipTraceResult(content, limit = 4000) {
-    const s = typeof content === 'string' ? content : JSON.stringify(content ?? '')
-    return s.length > limit ? s.slice(0, limit) + '...[truncated]' : s
-}
 
 /**
  * @description 执行用户通用聊天
@@ -113,8 +122,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     let messages = []
 
     /*协议 2 的客户端按事件名分派，因此默认下发工具结果，且 reset 不再携带兼容哨兵*/
-    const clientProtocol = Number(options.protocol) >= 2 ? 2 : 1
-    const emitToolResults = clientProtocol === 2 || !!options.streamToolResults
+    const {protocol: clientProtocol, emitToolResults} = resolveProtocol(options)
     let ragSources = []
     const toolCallTrace = []
 
@@ -347,6 +355,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     // 最多迭代6次，用于处理工具调用
     let iterationCount = 0
     const maxIterations = 6
+    /** break 与"被上限掐断"是两种退出，抽取前无法区分（空答案缺陷因此不可观测）*/
+    let loopBroke = false
 
     /*中断也要留痕：已执行的工具副作用与部分回答需可追溯*/
     const persistTurn = async (progress) => {
@@ -456,55 +466,21 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             toolState: {pendingCalls: [], completedCalls: toolCallTrace.map(t => t.id)},
         })
         //console.log(`createBody ${JSON.stringify(createBody)}`)
-        let chatStream = await openai.chat.completions.create(createBody, {signal: options.signal})
+        const chatStream = await openai.chat.completions.create(createBody, {signal: options.signal})
 
-        let toolCalls = []      // 用于收集工具调用
-        let currentToolCall = null
-        let receivedToolCall = false
-
-        // 处理流式响应
-        for await (const chunk of chatStream) {
-            const choice = chunk.choices[0]
-            if (!choice) continue
-
-            const delta = choice.delta || {}
-
-            // 处理普通内容和推理内容
-            if (delta.content || delta.reasoning_content) {
-                answerContent += delta.content || ''
-                answerReasoning += delta.reasoning_content || ''
+        /**
+         * 整轮流式响应的消费与聚合在 `llmLoop.drainAssistantStream` 里：
+         * 这样循环级测试可以注入假 stream（不依赖 OpenAI 客户端），且 SSE 下发时机与抽取前逐字一致。
+         */
+        const drained = await drainAssistantStream(chatStream, {
+            onDelta: (delta) => {
                 options.streamCallback(JSON.stringify({role: 'assistant', ...delta, messageCode}))
-            }
-
-            // 检查是否有工具调用
-            if (delta.tool_calls) {
-                receivedToolCall = true
-                for (const toolCallDelta of delta.tool_calls) {
-                    if (toolCallDelta.index !== undefined) {
-                        // 扩展或初始化工具调用数组
-                        while (toolCalls.length <= toolCallDelta.index) {
-                            toolCalls.push({
-                                id: '',
-                                function: {name: '', arguments: ''},
-                                type: 'function'
-                            })
-                        }
-
-                        currentToolCall = toolCalls[toolCallDelta.index]
-
-                        if (toolCallDelta.id) {
-                            currentToolCall.id = toolCallDelta.id
-                        }
-                        if (toolCallDelta.function?.name) {
-                            currentToolCall.function.name = currentToolCall.function.name + toolCallDelta.function.name
-                        }
-                        if (toolCallDelta.function?.arguments) {
-                            currentToolCall.function.arguments = currentToolCall.function.arguments + toolCallDelta.function.arguments
-                        }
-                    }
-                }
-            }
-        }
+            },
+        })
+        answerContent += drained.content
+        answerReasoning += drained.reasoning
+        let toolCalls = drained.toolCalls      // 用于收集工具调用
+        let receivedToolCall = drained.receivedToolCall
 
         /** 响应后的现场：正文 + 本轮要求调用的工具，中断在此处发生时能原样重放 */
         scheduleCp('postCreate', {
@@ -516,8 +492,19 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             },
         })
 
+        /**
+         * 本轮走向：skill-check / tool-round / final。
+         * 抽取前是两条互斥的 if，这里换成一次判定，分支条件与顺序不变，抽出来是为了能离线穷举。
+         */
+        const decision = iterationDecision({
+            receivedToolCall,
+            rawToolCallCount: toolCalls.length,
+            answerContent,
+            skillContext,
+        })
+
         // 检查大模型是否选择了某个技能（动态加载机制）
-        if (!receivedToolCall && answerContent && skillContext) {
+        if (decision === 'skill-check') {
             const selectedSkill = await skillChat.checkSkillSelection(answerContent, skillContext)
             if (selectedSkill) {
                 // 追加技能详细说明到消息
@@ -543,26 +530,18 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         }
 
         // 如果收到了工具调用，处理它们
-        if (receivedToolCall && toolCalls.length > 0) {
+        if (decision === 'tool-round') {
             // 过滤掉空的工具调用
-            toolCalls = toolCalls.filter(tc => tc.id && tc.function.name)
+            toolCalls = pruneToolCalls(toolCalls)
 
             if (toolCalls.length > 0) {
                 logger.info(`收到 ${toolCalls.length} 个工具调用: ${toolCalls.map(tc => tc.function.name).join(', ')}`)
                 // 添加助手的消息到对话历史（包含工具调用请求）
-                const assistantMessage = {
-                    role: 'assistant',
-                    content: null, // 工具调用时内容可能为空
-                    tool_calls: toolCalls
-                }
-                messages.push(assistantMessage)
+                messages.push(buildAssistantToolCallMessage(toolCalls))
 
                 /** 记忆、溢出取回、沙箱代码执行都要单独分派：否则会被当成 MCP 工具丢给 mcpToolManager 而找不到实现 */
-                const memoryCalls = toolCalls.filter(tc => isMemoryTool(tc.function?.name))
-                const overflowCalls = toolCalls.filter(tc => isOverflowTool(tc.function?.name))
-                const codeCalls = toolCalls.filter(tc => isCodeTool(tc.function?.name))
-                const otherCalls = toolCalls.filter(tc =>
-                    !isMemoryTool(tc.function?.name) && !isOverflowTool(tc.function?.name) && !isCodeTool(tc.function?.name))
+                const {memoryCalls, overflowCalls, codeCalls, otherCalls} =
+                    classifyToolCalls(toolCalls, {isMemoryTool, isOverflowTool, isCodeTool})
                 const memoryToolContext = {
                     userCode: curUserInfo?.userCode, channel, workspaceId: memoryWorkspace,
                     conversationCode, messageCode,
@@ -609,10 +588,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                 const toolResults = [...memoryResults, ...overflowResults, ...codeResults, ...otherResults]
 
                 /*工具结果只带 tool_call_id，前端无法据此显示调用了哪个工具，这里补上名称*/
-                const nameById = {}
-                toolCalls.forEach(tc => {
-                    nameById[tc.id] = tc.function.name
-                })
+                const nameById = buildToolNameIndex(toolCalls)
 
                 // 将工具调用结果添加到消息历史中
                 for (const toolResult of toolResults) {
@@ -679,12 +655,24 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         }
 
         // 如果没有工具调用或者没有更多工具需要调用，退出循环
+        loopBroke = true
         break
     }
 
     if (options.signal?.aborted) {
         await persistTurn('abort')
         return 'aborted'
+    }
+
+    /**
+     * 退出方式只有在这里才可知（必须在 aborted 提前 return 之后判，否则一次正常打断会被报成异常退出）：
+     * `exhausted` 表示循环是被 maxIterations 掐断的，而每一轮 `continue` 都执行过 reset
+     * （`answerContent` 已清空），于是落库 answer 为空、progress 仍是 `finish`。
+     * **这里只让它可观测（warn），修复属于后续主循环加固那一轮。**
+     */
+    const loopExit = loopExitReason({broke: loopBroke, iterationCount, maxIterations})
+    if (loopExit !== 'break') {
+        logger.warn(`主循环非正常退出: reason=${loopExit}, iterationCount=${iterationCount}/${maxIterations}, 末段answerLen=${answerContent.length}, answerList段数=${answerList.length}`)
     }
 
     let answerTokens = calcTextTokenCount(answerContent + answerReasoning, tokenizerOptions.tokenizer)

@@ -83,6 +83,115 @@ export function buildAssistantToolCallMessage(toolCalls) {
     return {role: 'assistant', content: null, tool_calls: toolCalls}
 }
 
+/* ---------- 单轮流式响应消费（对应 llmChat.js:457-480） ---------- */
+
+/**
+ * @description 消费一整轮流式响应，聚合正文、推理与工具调用增量
+ * @param {AsyncIterable<Object>|Object[]} chunks openai 返回的流（或假 stream）
+ * @param {Object} [handlers]
+ * @param {Function} [handlers.onDelta] 每个含正文/推理的增量回调 `(delta, snapshot)`；
+ *        调用时机与抽取前逐字一致（累加之后、同一 chunk 内），因此 SSE 顺序不变
+ * @returns {Promise<{content: String, reasoning: String, toolCalls: Object[], receivedToolCall: Boolean, finishReason: String|null, chunkCount: Number, deltaCount: Number}>}
+ *
+ * 现状（本函数原样保留，不在这一刀改）：
+ * - `chunk.choices[0]` 不做空值防护 ⇒ chunk 缺 `choices` 字段会抛错，而 `execChat` 当时**没有 try/catch**，
+ *   异常直接冒到上层（PR-A 要修的第 1 项）；`choices: []`（末帧 usage）是安全的，直接跳过。
+ * - 判定"本轮是否要求调用工具"用的是 `delta.tool_calls` **字段是否存在**，不是数组是否非空
+ *   ⇒ `tool_calls: []` 也会置 receivedToolCall=true。
+ */
+export async function drainAssistantStream(chunks, {onDelta} = {}) {
+    let content = ''
+    let reasoning = ''
+    let toolCalls = []
+    let receivedToolCall = false
+    let finishReason = null
+    let chunkCount = 0
+    let deltaCount = 0
+
+    for await (const chunk of chunks) {
+        chunkCount++
+        const choice = chunk.choices[0]
+        if (!choice) {
+            continue
+        }
+        if (choice.finish_reason) {
+            finishReason = choice.finish_reason
+        }
+        const delta = choice.delta || {}
+
+        if (delta.content || delta.reasoning_content) {
+            content += delta.content || ''
+            reasoning += delta.reasoning_content || ''
+            deltaCount++
+            /** 传原始 delta（不是拆分后的字段）：抽取前的 payload 是 `{...delta}` 展开，可能带 tool_calls 等额外键 */
+            /**
+             * snapshot 只给**基元值**，不给 toolCalls 的引用：
+             * 数组是原地增长的，把引用交给回调会让回调看到的"当时的值"其实是"最后的值"，是个静默的坑。
+             * 需要工具调用细节的调用方请用返回值的 toolCalls。
+             */
+            if (onDelta) {
+                await onDelta(delta, {content, reasoning, toolCallCount: toolCalls.length})
+            }
+        }
+
+        if (delta.tool_calls) {
+            const acc = accumulateToolCalls(toolCalls, delta.tool_calls)
+            toolCalls = acc.toolCalls
+            receivedToolCall = acc.touched || receivedToolCall
+        }
+    }
+
+    return {content, reasoning, toolCalls, receivedToolCall, finishReason, chunkCount, deltaCount}
+}
+
+/* ---------- 迭代走向决策（对应 llmChat.js:493-645） ---------- */
+
+/**
+ * @description 一轮响应消费完之后的分支决策；抽取前是两个互斥的 if
+ * @param {Object} state 本轮现场
+ * @param {Boolean} state.receivedToolCall 是否出现过 tool_calls 字段
+ * @param {Number} state.rawToolCallCount prune 前的条目数
+ * @param {String} state.answerContent 本轮已累加的正文
+ * @param {Object} state.skillContext 动态技能上下文（无则为假）
+ * @returns {'skill-check'|'tool-round'|'final'} skill-check 未必 continue（未选中技能时同样落到 final）；
+ *          tool-round 在 prune 后可能为空壳，也会落到 final——与抽取前一致
+ */
+export function iterationDecision({receivedToolCall = false, rawToolCallCount = 0, answerContent = '', skillContext = null} = {}) {
+    if (!receivedToolCall && answerContent && skillContext) {
+        return 'skill-check'
+    }
+    if (receivedToolCall && rawToolCallCount > 0) {
+        return 'tool-round'
+    }
+    return 'final'
+}
+
+/**
+ * @description while 循环退出方式——这是 §2E-3 空答案 bug 的**唯一可观测信号**
+ * @param {Object} state
+ * @param {Boolean} state.broke 是否由 break 正常退出
+ * @param {Number} state.iterationCount 实际迭代次数
+ * @param {Number} state.maxIterations 上限（现为硬编码 6）
+ * @returns {'break'|'exhausted'|'no-iterations'|'unknown'}
+ *
+ * `exhausted` 意味着循环是**被上限掐断**的：上一轮以工具结果 `continue` 收尾，
+ * 而每次 continue 都会把 `answerContent` 清空（reset 语义），所以落库的 answer 是空串、
+ * progress 却仍是 `finish`。抽取前代码无法区分这两种退出，因此该 bug 只会以"模型没回答"的形式暴露。
+ */
+export function loopExitReason({broke = false, iterationCount = 0, maxIterations = 6} = {}) {
+    if (broke) {
+        return 'break'
+    }
+    if (iterationCount === 0) {
+        return 'no-iterations'
+    }
+    if (iterationCount >= maxIterations) {
+        return 'exhausted'
+    }
+    /** 理论上不可达：while 的另一个出口是 `options.signal.aborted` 的提前 return，不会走到这里 */
+    return 'unknown'
+}
+
 /* ---------- 工具分派分类（对应 llmChat.js:551-555） ---------- */
 
 /**
@@ -183,6 +292,9 @@ export default {
     classifyToolCalls,
     buildToolNameIndex,
     clipTraceResult,
+    drainAssistantStream,
+    iterationDecision,
+    loopExitReason,
     detachAction,
     steerAction,
     RUN_PHASES,
