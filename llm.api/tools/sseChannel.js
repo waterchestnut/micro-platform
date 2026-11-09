@@ -80,14 +80,26 @@ export function createSseChannel(sink, opts = {}) {
      * @param {String} data 事件载荷（通常是 JSON 字符串）
      * @param {String} [event] 事件名；缺省按 `delta`
      * @returns {Number|null} 分配到的 seq；通道已关闭或写入失败时返回 null
+     * @description
+     * **号只在写成功时才落下**（v1.31 修）。
+     * 原来的写法是 `seq += 1` 然后写，写失败就返回 null——号已经烧掉了，但那一帧客户端根本没收到。
+     * 今天没有事件日志所以看不出来，可 PR-C 上了 Streams 日志之后，这就是 §19 第 2 条
+     * 「不跳过任何保留事件」的正面违反：客户端把游标记到 `id:5`，下次带 `Last-Event-ID: 5` 来续，
+     * 而 `id:6` 从来没落到任何地方 ⇒ **续接时那个空洞不可辨，只能当成"客户端漏收"来处理**。
+     * `id` 的语义因此必须是"**已成功送达的序号**"，不是"我们打算发到第几号"。
      */
     const emit = (data, event) => {
         if (!open) {
             return null
         }
-        seq += 1
-        const ok = writeFrame(serializeSSEEvent({id: String(seq), event: event || 'delta', data}))
-        return ok ? seq : null
+        const next = seq + 1
+        const ok = writeFrame(serializeSSEEvent({id: String(next), event: event || 'delta', data}))
+        if (!ok) {
+            /** 失败不占号：宁可让下一帧复用同一个号，也不在游标序列里制造空洞 */
+            return null
+        }
+        seq = next
+        return seq
     }
 
     /**

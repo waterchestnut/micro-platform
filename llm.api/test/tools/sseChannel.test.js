@@ -183,3 +183,63 @@ test('多行 data 仍然按 SSE 规范拆成多行 data:（不破坏既有分帧
     assert.match(sink.written, /data:line1\ndata:line2\n/)
     assert.match(sink.written, /\n\n$/, '帧必须以空行结束：客户端只在收到完整帧后才推进游标')
 })
+
+/* ---------- §19 第 11 条：SSE 四条不变量的覆盖审计 ----------
+ * 写这张表是因为 §26.2 把「SSE 四条不变量有测试」当成 PR-C 的**已满足前置**，
+ * 而逐条核对下来只有一条半真的有用例——标题满足不等于内容满足。
+ *
+ * | 不变量 | 覆盖在哪 | 状态 |
+ * |---|---|---|
+ * | 1. `id` 严格单调、每事件 +1 | 上面第 1 条用例 | ✅ |
+ * | 2. 不跳过任何保留事件 | **只有服务端这半边**（写失败不占号，见下面两条）；
+ *   "日志里的事件一个都不漏"那一半边要等 PR-C 的 Streams 事件日志，**现在还测不了** | ⚠️ 半个 |
+ * | 3. 不完整帧不推进游标 | 服务端保证每帧以空行结束（上一条）；客户端侧规则属四端各自实现，本仓只能钉服务端 | ✅（服务端侧） |
+ * | 4. 心跳注释不进业务事件列表、不推游标 | 上面第 3 条用例 | ✅ |
+ *
+ * 第 2 条这半边是 v1.31 补的：`emit` 原来先 `seq += 1` 再写，**写失败时号已烧掉**，
+ * 于是游标序列里会出现一个"从没送达也从没记录"的空洞。今天没日志看不出来，
+ * 上了事件日志后它会让 `/resume` 的"漏了哪几号"无法判定。
+ */
+
+test('不变量 2（服务端半边）：写入失败不占号——不在游标序列里制造空洞', () => {
+    const frames = []
+    let failNext = false
+    const sink = {
+        write(chunk) {
+            if (failNext) {
+                throw new Error('EPIPE: 客户端已断开')
+            }
+            frames.push(chunk)
+        },
+    }
+    const ch = createSseChannel(sink, {pingIntervalMs: 0, now: () => 0})
+    assert.equal(ch.emit('a', 'delta'), 1, '第一帧正常拿到 1 号')
+    failNext = true
+    assert.equal(ch.emit('b', 'delta'), null, '写失败必须返回 null')
+    assert.equal(ch.getSeq(), 1, '**关键**：失败的那一帧不能把号推进到 2')
+    /**
+     * 写失败后通道按既有语义置为不可写（`open=false`），
+     * 所以这里断言的是"之后不会再有帧带 2 号写出去"——
+     * 号没被烧，比"还能继续发"更重要：宁可整条流停住，也不留一个不可辨的空洞。
+     */
+    assert.equal(ch.isOpen(), false)
+    assert.ok(!frames.some(f => /id:2/.test(f)), '绝不能出现"2 号已发出但没人收到"的帧')
+})
+
+test('不变量 2：失败前已成功送达的号仍然连续（不是一失败就把已有号作废）', () => {
+    const frames = []
+    let fail = false
+    const sink = {write(c) {
+        if (fail) {
+            throw new Error('boom')
+        }
+        frames.push(c)
+    }}
+    const ch = createSseChannel(sink, {pingIntervalMs: 0, now: () => 0})
+    assert.equal(ch.emit('一', 'delta'), 1)
+    assert.equal(ch.emit('二', 'delta'), 2)
+    fail = true
+    assert.equal(ch.emit('三', 'delta'), null)
+    assert.equal(ch.getSeq(), 2, '游标停在最后一个真正送达的号上')
+    assert.equal(ch.close(), 2, 'close 回报的末号也必须是真的')
+})
