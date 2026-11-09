@@ -85,7 +85,11 @@ export function toMessageView(doc) {
     }
 }
 
-/*把执行过程压缩成可展示的统计，不外泄工具原文与提示词*/
+/**
+ * @description 把执行过程压缩成可展示的统计，不外泄工具原文与提示词
+ * @param {Object} extInfo message 文档的执行过程字段
+ * @returns {Object} 前端 ProcessPanel 用的摘要
+ */
 function toProcessSummary(extInfo) {
     const skills = extInfo.skills || {}
     return {
@@ -104,6 +108,9 @@ function toProcessSummary(extInfo) {
         sources: extInfo.sources || [],
         toolCalls: extInfo.toolCalls || [],
         recallStats: extInfo.recallStats || null,
+        /** 循环怎么退出的（break/exhausted/…）与是否补过无工具收尾调用；历史回放与探针都靠它解释空答案 */
+        loopExit: extInfo.loopExit || null,
+        forcedFinal: !!extInfo.forcedFinal,
     }
 }
 

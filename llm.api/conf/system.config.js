@@ -190,6 +190,14 @@ export default {
         answerCacheMaxPerChannel: parseInt(process.env['limits_answerCacheMaxPerChannel'] || 5000),
         /** answerCache 的存活天数，写入时折算成 expireAt */
         answerCacheTtlDays: parseInt(process.env['limits_answerCacheTtlDays'] || 90),
+        /**
+         * 工具迭代上限（原来硬编码在 llmChat.js 里）。
+         * 打满会截断回答：最后一轮以工具结果 continue、又被 reset 清空正文 ⇒ 空答案落库。
+         * 默认 6 与原值一致，行为不变；上限由 llmLoop.MAX_ITERATIONS_CEILING 兜到 20。
+         */
+        maxIterations: parseInt(process.env['limits_maxIterations'] || '6'),
+        /** 上限打满时是否补一次"无工具收尾调用"；设 false 则直接退化成"部分内容 + 可读原因" */
+        maxIterationsFinalize: process.env['limits_maxIterationsFinalize'] !== 'false',
     },
     /** 两级缓存（PR-10）：memory 套件当前只用 extractDedupeSeconds，其余为整段一致性预置 */
     cache: {

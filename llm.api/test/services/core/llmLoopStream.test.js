@@ -18,6 +18,14 @@ import {
     loopExitReason,
     pruneToolCalls,
     buildAssistantToolCallMessage,
+    resolveMaxIterations,
+    finalizationDecision,
+    buildFinalizeBody,
+    exhaustedFallback,
+    DEFAULT_MAX_ITERATIONS,
+    MAX_ITERATIONS_CEILING,
+    EXHAUSTED_NOTICE_TEXT,
+    FINALIZE_HINT_TEXT,
 } from '../../../services/core/llmLoop.js'
 
 /* ---------- 构造假 chunk 的小工具（形态取自 OpenAI 兼容层的真实响应） ---------- */
@@ -192,13 +200,15 @@ test('loopExitReason：broke 优先，异常路径不会把正常收尾误报成
  * @description 复刻 llmChat.js 主循环的控制流（不含 IO：不建 OpenAI 客户端、不落库、不跑真工具）
  * @param {Object} cfg
  * @param {Array<Array<Object>>} cfg.rounds 每轮一个假 stream
- * @param {Number} [cfg.maxIterations] 迭代上限（线上硬编码 6）
+ * @param {Number} [cfg.maxIterations] 迭代上限（配置缺省 6）
  * @param {Object} [cfg.skillContext] 技能上下文
  * @param {Function} [cfg.skillSelect] 仿 skillChat.checkSkillSelection
  * @param {Function} [cfg.runTools] 仿工具执行，返回 [{tool_call_id, tool, content}]
- * @returns {Promise<Object>} 与线上一致的可观测量：落库 answer / answerList / 事件序列 / 退出方式
+ * @param {'ok'|'empty'|'throw'|'disabled'} [cfg.finalize] 仿"无工具收尾调用"的四种结果，默认 'ok'
+ * @param {String} [cfg.finalizeText] 收尾调用产出的正文，默认一段可断言的文本
+ * @returns {Promise<Object>} 与线上一致的可观测量：落库 answer/progress、事件序列、退出方式
  */
-async function simLoop({rounds, maxIterations = 6, skillContext = null, skillSelect = null, runTools = null}) {
+async function simLoop({rounds, maxIterations = 6, skillContext = null, skillSelect = null, runTools = null, finalize = 'ok', finalizeText = '（基于已取回结果的收尾结论）'}) {
     const events = []
     const messages = []
     const toolCallTrace = []
@@ -270,6 +280,33 @@ async function simLoop({rounds, maxIterations = 6, skillContext = null, skillSel
         break
     }
 
+    /** ↓↓↓ 以下三段与 llmChat.js 循环之后的处理逐字同构（§2E-3 修复）↓↓↓ */
+    const exit = loopExitReason({broke: loopBroke, iterationCount, maxIterations})
+
+    const fin = finalizationDecision({
+        loopExit: exit,
+        answerContent,
+        finalizeDisabled: finalize === 'disabled',
+    })
+    let forcedFinal = false
+    if (fin.action === 'force-final') {
+        forcedFinal = true
+        iterationCount++
+        if (finalize === 'ok') {
+            /** 收尾调用成功：正文照常流式下发 */
+            events.push({type: 'delta', content: finalizeText, reasoning: ''})
+            answerContent += finalizeText
+        }
+        /** 'empty' = 模型返回空正文；'throw' = 调用抛错被 execChat 吞掉：两者都不改 answerContent */
+    }
+
+    const fb = exhaustedFallback({loopExit: exit, answerContent, answerList})
+    if (fb.notice) {
+        /** 兜底文案也作为一段正文下发：否则客户端在 N 次 reset 之后什么都看不到 */
+        events.push({type: 'delta', content: fb.notice, reasoning: '', notice: true})
+        answerContent = fb.answer
+    }
+
     return {
         answer: answerContent,
         answerList,
@@ -281,9 +318,12 @@ async function simLoop({rounds, maxIterations = 6, skillContext = null, skillSel
         toolRounds,
         skillReloads,
         resets: events.filter(e => e.type === 'reset').length,
-        exit: loopExitReason({broke: loopBroke, iterationCount, maxIterations}),
-        /** 线上 persistTurn('finish') 不看退出方式，这里照抄这个（有缺陷的）行为，让缺陷自己现形 */
-        persisted: {answer: answerContent, progress: 'finish', iterationCount},
+        exit,
+        finDecision: fin,
+        forcedFinal,
+        fallback: fb,
+        /** 落库形态：progress 由 exhaustedFallback 决定，不再无条件 'finish' */
+        persisted: {answer: fb.answer, progress: fb.progress, loopExit: exit, forcedFinal},
     }
 }
 
@@ -296,6 +336,62 @@ const toolRound = (name, withText) => ([
 ])
 const textRound = (t) => ([textChunk(t), finishChunk('stop')])
 const toolRounds = (n, withText) => Array.from({length: n}, (unused, i) => toolRound(`t${i}`, withText ? `第${i + 1}段` : undefined))
+
+/* ---------- 迭代上限与收尾补救的纯函数 ---------- */
+
+test('resolveMaxIterations：请求 > 频道 > 全局 > 兜底，并钳到 1..20', () => {
+    assert.equal(resolveMaxIterations({}), DEFAULT_MAX_ITERATIONS, '什么都不配就是 6，与抽取前一致')
+    assert.equal(resolveMaxIterations({configValue: 10}), 10)
+    assert.equal(resolveMaxIterations({configValue: 10, channelValue: 8}), 8, '频道盖过全局')
+    assert.equal(resolveMaxIterations({configValue: 10, channelValue: 8, requestValue: 4}), 4, '请求盖过频道')
+    assert.equal(resolveMaxIterations({requestValue: 999}), MAX_ITERATIONS_CEILING, '天花板不可突破')
+    assert.equal(resolveMaxIterations({requestValue: 0, configValue: 12}), 12, '0 视为未配置（否则会一次工具都不许调）')
+    assert.equal(resolveMaxIterations({requestValue: -3, configValue: 12}), 12)
+    assert.equal(resolveMaxIterations({requestValue: '7'}), 7, '字符串数字要认（表单/环境变量常是字符串）')
+    assert.equal(resolveMaxIterations({requestValue: 7.9}), 7, '向下取整')
+    assert.equal(resolveMaxIterations({requestValue: 'abc', channelValue: null}), DEFAULT_MAX_ITERATIONS)
+    assert.equal(resolveMaxIterations({fallback: 3}), 3)
+})
+
+test('finalizationDecision：只有 exhausted 且末段为空才补救', () => {
+    assert.deepEqual(finalizationDecision({loopExit: 'break', answerContent: '答'}), {action: 'none', reason: 'normal-exit'})
+    assert.deepEqual(finalizationDecision({loopExit: 'no-iterations', answerContent: ''}), {action: 'none', reason: 'normal-exit'})
+    assert.deepEqual(finalizationDecision({loopExit: 'exhausted', answerContent: ''}), {action: 'force-final', reason: 'exhausted-empty'})
+    assert.deepEqual(finalizationDecision({loopExit: 'exhausted', answerContent: '有正文'}), {action: 'none', reason: 'has-answer'})
+    assert.deepEqual(finalizationDecision({loopExit: 'exhausted', answerContent: '', aborted: true}), {action: 'none', reason: 'aborted'})
+    assert.deepEqual(finalizationDecision({loopExit: 'exhausted', answerContent: '', finalizeDisabled: true}), {action: 'none', reason: 'disabled'})
+})
+
+test('buildFinalizeBody：摘掉工具、追加提示，且不改动入参', () => {
+    const createBody = {model: 'm', messages: [{role: 'user', content: 'q'}], tools: [{type: 'function'}], tool_choice: 'auto', max_tokens: 100, stream: true}
+    const messages = [{role: 'user', content: 'q'}, {role: 'assistant', content: null, tool_calls: [{id: 'c'}]}]
+    const body = buildFinalizeBody(createBody, messages)
+
+    assert.equal(body.tools, undefined, '收尾调用不能还带工具，否则模型会继续调')
+    assert.equal(body.tool_choice, undefined)
+    assert.equal(body.stream, true, '仍然流式：用户要能看到结论逐字出来')
+    assert.equal(body.max_tokens, 100, '其余参数原样继承')
+    assert.equal(body.messages[body.messages.length - 1].content, FINALIZE_HINT_TEXT)
+    assert.equal(messages.length, 2, '入参数组不能被改：它还要用于落库与检查点')
+    assert.equal(createBody.messages.length, 1)
+})
+
+test('exhaustedFallback：非 exhausted 原样透传，exhausted 才给部分正文与 error', () => {
+    assert.deepEqual(exhaustedFallback({loopExit: 'break', answerContent: '正常答案', answerList: ['a']}),
+        {answer: '正常答案', progress: 'finish', usedPartial: false, notice: ''})
+    assert.deepEqual(exhaustedFallback({loopExit: 'exhausted', answerContent: '补出来的结论', answerList: ['a']}),
+        {answer: '补出来的结论', progress: 'finish', usedPartial: false, notice: ''}, '补救成功就用补救结果，不该再兜底')
+
+    const withPartial = exhaustedFallback({loopExit: 'exhausted', answerContent: '', answerList: ['第一段', '第二段']})
+    assert.equal(withPartial.progress, 'error')
+    assert.equal(withPartial.usedPartial, true)
+    assert.equal(withPartial.answer, '第一段第二段' + EXHAUSTED_NOTICE_TEXT)
+
+    const empty = exhaustedFallback({loopExit: 'exhausted', answerContent: '', answerList: []})
+    assert.equal(empty.progress, 'error')
+    assert.equal(empty.answer, EXHAUSTED_NOTICE_TEXT)
+    assert.equal(exhaustedFallback({loopExit: 'exhausted', answerContent: '', answerList: [null, '', undefined]}).usedPartial, false, '脏分段不算救回来')
+})
 
 /* ---------- 场景 ---------- */
 
@@ -326,24 +422,56 @@ test('场景：一轮工具后再回答，reset 把上一段推进 answerList', 
     assert.equal(r.messages[1].role, 'tool')
 })
 
-test('场景：§2E-3 空答案缺陷离线复现——maxIterations 打满时 answer 空却记 finish', async () => {
-    const r = await simLoop({rounds: toolRounds(6)})
+test('场景：§2E-3 修复前的形态可用 finalize=disabled 复现（回归锚点）', async () => {
+    /** 关掉补救调用 ⇒ 行为回到 v1.14：末段为空、循环被上限掐断 */
+    const r = await simLoop({rounds: toolRounds(6), finalize: 'disabled'})
     assert.equal(r.exit, 'exhausted')
     assert.equal(r.iterationCount, 6)
     assert.equal(r.toolRounds, 6)
     assert.equal(r.resets, 6)
-    assert.equal(r.answer, '', '末段被 reset 清空，而循环没有机会再生成一段')
-    assert.equal(r.persisted.answer, '')
-    assert.equal(r.persisted.progress, 'finish', '现状：progress 不看退出方式，空答案照样记成功')
+    assert.equal(r.finDecision.action, 'none')
+    assert.equal(r.finDecision.reason, 'disabled')
+    assert.equal(r.forcedFinal, false)
+    /** 修复后哪怕不补救，也不再记 finish：progress=error + 可读原因 */
+    assert.equal(r.persisted.progress, 'error')
+    assert.match(r.persisted.answer, /工具调用达到上限/)
 })
 
-test('场景：§2E-3 的另一种形态——6 段正文都产生了，落库却只有空串', async () => {
-    const r = await simLoop({rounds: toolRounds(6, true)})
+test('场景：§2E-3 修复——上限打满时补一次无工具收尾调用，用户拿到结论而不是空白', async () => {
+    const r = await simLoop({rounds: toolRounds(6)})
     assert.equal(r.exit, 'exhausted')
-    assert.equal(r.answer, '')
-    assert.equal(r.answerList.length, 6, '内容确实产出过 6 段，只是没进 answer 字段')
-    assert.equal(r.answerList.join(''), '第1段第2段第3段第4段第5段第6段')
-    /** 修复方向（PR-A 决定）：answerList 非空且末段为空时，要么强制续写一段，要么把 progress 记成 abort 并带提示 */
+    assert.equal(r.finDecision.action, 'force-final')
+    assert.equal(r.forcedFinal, true)
+    assert.equal(r.persisted.progress, 'finish')
+    assert.equal(r.persisted.answer, '（基于已取回结果的收尾结论）', '落库不再是空串')
+    assert.equal(r.iterationCount, 7, '收尾调用也要计入迭代，成本可核对')
+    /** 事件形态：6 段 reset 之后，客户端必须还能看到一段正文 */
+    assert.equal(r.events.filter(e => e.type === 'delta' && e.content).length, 1)
+})
+
+test('场景：§2E-3 修复——收尾调用返回空正文时保住历史分段并记 error', async () => {
+    const r = await simLoop({rounds: toolRounds(6, true), finalize: 'empty'})
+    assert.equal(r.forcedFinal, true)
+    assert.equal(r.persisted.progress, 'error', '空答案绝不记 finish')
+    assert.equal(r.persisted.answer, '第1段第2段第3段第4段第5段第6段' + EXHAUSTED_NOTICE_TEXT)
+    assert.equal(r.fallback.usedPartial, true, '被 reset 抹掉的 6 段正文要救回来')
+})
+
+test('场景：§2E-3 修复——收尾调用抛错时同样退化成 error，而不是整轮失败', async () => {
+    const r = await simLoop({rounds: toolRounds(6), finalize: 'throw'})
+    assert.equal(r.forcedFinal, true)
+    assert.equal(r.persisted.progress, 'error')
+    assert.equal(r.persisted.answer, EXHAUSTED_NOTICE_TEXT, '没有历史分段时只落原因')
+})
+
+test('场景：正常收尾不触发收尾调用、不改 progress', async () => {
+    const r = await simLoop({rounds: [toolRound('search_web', '先说一句'), textRound('这是结论')]})
+    assert.equal(r.exit, 'break')
+    assert.equal(r.finDecision.action, 'none')
+    assert.equal(r.finDecision.reason, 'normal-exit')
+    assert.equal(r.forcedFinal, false)
+    assert.equal(r.persisted.progress, 'finish')
+    assert.equal(r.persisted.answer, '这是结论')
 })
 
 test('场景：maxIterations=0 时循环一次都不跑', async () => {
@@ -407,18 +535,23 @@ test('场景：事件顺序——本段正文先发，工具结果次之，reset
     assert.deepEqual(r.events.map(e => e.type), ['delta', 'tool_result', 'reset', 'delta'])
 })
 
-test('场景：与线上观测对照，结构逐字相同（v1.6 与 v1.13 探针都是 6 reset / 6 tool_result / 末段 0 字符）', async () => {
+test('场景：与 v1.6/v1.13 线上观测逐字对照（用 finalize=disabled 还原修复前的形态）', async () => {
     const names = ['get_current_datetime', 'search_web', 'search_web', 'search_web', 'search_web', 'search_web']
-    const r = await simLoop({rounds: names.map(n => toolRound(n))})
+    const r = await simLoop({rounds: names.map(n => toolRound(n)), finalize: 'disabled'})
     assert.equal(r.resets, 6)
     assert.equal(r.events.filter(e => e.type === 'tool_result').length, 6)
-    assert.equal(r.answer.length, 0)
     assert.equal(r.iterationCount, 6)
-    assert.equal(r.persisted.progress, 'finish')
+    /** 修复前：末段 0 字符 + progress finish；修复后同样条件下是 error + 原因文案（见上一条用例） */
+    assert.equal(r.answerList.length, 0, '纯工具帧不产生分段')
+    assert.match(r.persisted.answer, /工具调用达到上限/)
 
-    /** 线上"实收 256 字符 / 末段 0 字符"的形态：假正文全被 reset 抹掉 */
-    const withText = await simLoop({rounds: toolRounds(6, true)})
-    const recv = withText.events.reduce((n, e) => n + (e.type === 'delta' ? e.content.length : 0), 0)
-    assert.equal(recv, 18, '6 段 × 3 字符')
-    assert.equal(withText.answer, '', '实收字符非零、末段为零——正是探针记录的形态')
+    /** v1.6 探针记录的是"实收 253~256 字符全被 reset 抹掉"，这里用 6 段各 3 字符复算 */
+    const withText = await simLoop({rounds: toolRounds(6, true), finalize: 'disabled'})
+    const recv = withText.events.filter(e => e.type === 'delta' && !e.notice).reduce((n, e) => n + e.content.length, 0)
+    assert.equal(recv, 18, '6 段 × 3 字符，与"被 reset 抹掉字符数"同口径')
+    /** 修复前这里是 `answer === ''`；修复后分段被救回来并附原因 */
+    assert.equal(withText.fallback.usedPartial, true)
+    assert.ok(withText.answer.startsWith('第1段第2段第3段第4段第5段第6段'), '历史分段不再丢失')
+    assert.match(withText.answer, /工具调用达到上限/)
+    assert.equal(withText.persisted.progress, 'error')
 })

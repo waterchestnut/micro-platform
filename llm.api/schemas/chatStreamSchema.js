@@ -41,7 +41,18 @@ export const chatStreamBodySchema = {
                         workspaceId: {type: ['string', 'null'], maxLength: 64, pattern: '^[0-9a-zA-Z][0-9a-zA-Z._-]*$', description: 'PR-16 工作区分区：给了则本轮记忆的写/召都限定在该分区（严格隔离，不与全局分区互见）；缺省/空=全局分区，行为与现状一致'},
                     },
                 },
-                streamToolResults: {type: ['boolean', 'number'], description: '协议 1 客户端单独开启 tool_result；协议 2 默认下发'},
+                /**
+     * 工具迭代上限（原来硬编码在 llmChat.js 里）：打满会截断回答——
+     * 最后一轮以工具结果 continue、又被 reset 清空正文 ⇒ 空答案落库。
+     * 默认 6 与原值一致；请求级可覆盖，上限 20（与 llmLoop.MAX_ITERATIONS_CEILING 一致）。
+     */
+    maxIterations: {
+        type: 'number',
+        minimum: 1,
+        maximum: 20,
+        description: '本轮工具迭代上限；缺省取全局配置 limits.maxIterations（6）。打满时会自动补一次无工具收尾调用',
+    },
+    streamToolResults: {type: ['boolean', 'number'], description: '协议 1 客户端单独开启 tool_result；协议 2 默认下发'},
                 protocol: {type: 'number', enum: [1, 2], description: 'SSE 事件协议版本；2 表示按事件名分派并附带 meta/tool_result，缺省按 1 兼容旧客户端'},
                 llmParams: {
                     type: 'object',

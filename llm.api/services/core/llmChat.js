@@ -44,6 +44,10 @@ import {
     drainAssistantStream,
     iterationDecision,
     loopExitReason,
+    resolveMaxIterations,
+    finalizationDecision,
+    buildFinalizeBody,
+    exhaustedFallback,
 } from './llmLoop.js'
 
 const tools = llm.tools
@@ -352,11 +356,45 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     /** 被裁剪掉的工具全文，随消息留档，避免上下文爆炸同时不丢信息 */
     const toolOverflows = []
 
-    // 最多迭代6次，用于处理工具调用
+    // 最多迭代多少次：原为硬编码 6，现按 请求 > 频道 > 全局配置 > 6 解析
     let iterationCount = 0
-    const maxIterations = 6
+    const maxIterations = resolveMaxIterations({
+        requestValue: options.maxIterations,
+        channelValue: llmChannelData?.maxIterations,
+        configValue: config.limits?.maxIterations,
+    })
+    /**
+     * @description 上限打满时补一次"无工具收尾调用"：只带 messages 与提示，产出结论并照常流式下发
+     * @returns {Promise<Boolean>} 是否拿到了非空正文
+     */
+    const runFinalizeCall = async () => {
+        try {
+            /** 预算重核与主循环每轮同口径：这一步也要求解，否则补落反而撑爆上下文 */
+            compactToBudget(messages, contextBudget, {tokenizerOptions})
+            const finalizeBody = buildFinalizeBody(createBody, messages)
+            logger.info(`无工具收尾调用开始: messages=${finalizeBody.messages.length}, maxIterations=${maxIterations}`)
+            const finalizeStream = await openai.chat.completions.create(finalizeBody, {signal: options.signal})
+            const drained = await drainAssistantStream(finalizeStream, {
+                onDelta: (delta) => {
+                    options.streamCallback(JSON.stringify({role: 'assistant', ...delta, messageCode}))
+                },
+            })
+            answerContent += drained.content
+            answerReasoning += drained.reasoning
+            iterationCount++
+            logger.info(`无工具收尾调用完成: 本轮answerLen=${drained.content.length}, finishReason=${drained.finishReason}`)
+            return drained.content.length > 0
+        } catch (e) {
+            /** 收尾调用失败不该再拖垮整轮：落到 exhaustedFallback 的"部分内容 + 可读原因" */
+            logger.error(`无工具收尾调用失败: ${String(e?.message || e).slice(0, 300)}`)
+            return false
+        }
+    }
     /** break 与"被上限掐断"是两种退出，抽取前无法区分（空答案缺陷因此不可观测）*/
     let loopBroke = false
+    /** persistTurn 要落这两个字段，必须在定义 persistTurn 之前就初始化（否则 abort 路径撞上 TDZ）*/
+    let loopExit = 'unknown'
+    let forcedFinal = false
 
     /*中断也要留痕：已执行的工具副作用与部分回答需可追溯*/
     const persistTurn = async (progress) => {
@@ -369,6 +407,9 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         await saveMessage(query, messageCode, messages, conversationCode, channel, channelGroup, llmModel, answerContent, answerReasoning, curUserInfo, {
             ...options,
             answerList,
+            /** 把"循环怎么退出的"和"是否补过收尾调用"落进 extInfo，空答案从此可解释、可统计 */
+            loopExit,
+            forcedFinal,
             messageTokens: calcMessagesTokenCount(messages, tokenizerOptions),
             answerTokens: calcTextTokenCount(answerContent + answerReasoning, tokenizerOptions.tokenizer),
             tokenizerVersion: TOKENIZER_VERSION,
@@ -668,17 +709,43 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
      * 退出方式只有在这里才可知（必须在 aborted 提前 return 之后判，否则一次正常打断会被报成异常退出）：
      * `exhausted` 表示循环是被 maxIterations 掐断的，而每一轮 `continue` 都执行过 reset
      * （`answerContent` 已清空），于是落库 answer 为空、progress 仍是 `finish`。
-     * **这里只让它可观测（warn），修复属于后续主循环加固那一轮。**
      */
-    const loopExit = loopExitReason({broke: loopBroke, iterationCount, maxIterations})
+    loopExit = loopExitReason({broke: loopBroke, iterationCount, maxIterations})
     if (loopExit !== 'break') {
         logger.warn(`主循环非正常退出: reason=${loopExit}, iterationCount=${iterationCount}/${maxIterations}, 末段answerLen=${answerContent.length}, answerList段数=${answerList.length}`)
     }
 
-    let answerTokens = calcTextTokenCount(answerContent + answerReasoning, tokenizerOptions.tokenizer)
-    await persistTurn('finish')
+    /**
+     * **到顶不清空**：打满时补一次不带工具的收尾调用，让模型基于已取回的工具结果给出结论，
+     * 而不是把已经花掉的钱和已经查到的信息丢成一条空白回答。
+     */
+    const fin = finalizationDecision({
+        loopExit,
+        answerContent,
+        finalizeDisabled: config.limits?.maxIterationsFinalize === false,
+    })
+    if (fin.action === 'force-final') {
+        forcedFinal = await runFinalizeCall()
+    }
 
-    if (cacheEligible) {
+    /**
+     * **空答案不得记 `finish`**：收尾调用也没拿到正文时，把被 reset 抹掉的分段保住（能救多少救多少）
+     * 并附上可读原因，progress 记 `error`——不为此扩 `MessageProgressEnum`（会波及 schema 校验与前端分派）。
+     */
+    const fb = exhaustedFallback({loopExit, answerContent, answerList})
+    if (fb.notice) {
+        answerContent = fb.answer
+        if (options.streamCallback) {
+            options.streamCallback(JSON.stringify({role: 'assistant', content: fb.notice, messageCode}))
+        }
+        logger.warn(`空答案兜底: reason=${fin.reason}, 保住部分正文=${fb.usedPartial}, progress=${fb.progress}, answerLen=${answerContent.length}`)
+    }
+
+    let answerTokens = calcTextTokenCount(answerContent + answerReasoning, tokenizerOptions.tokenizer)
+    await persistTurn(fb.progress)
+
+    /** 缓存只在真正完成时写：兜底文案进缓存等于把一次失败固化 90 天 */
+    if (cacheEligible && fb.progress === 'finish') {
         /*缓存大模型回答*/
         await saveAnswerCache(query, channel, options.channelCacheKey, llmModel, {
             sourceConversationCode: conversationCode,
@@ -735,6 +802,9 @@ async function saveMessage(query, messageCode, messages, conversationCode, chann
             tools: options.tools,
             toolChoice: options.toolChoice,
             iterationCount: options.iterationCount,
+            /** 循环退出方式（break/exhausted/…）与是否做过无工具收尾补落，空答案从此可解释、可统计 */
+            loopExit: options.loopExit,
+            forcedFinal: options.forcedFinal,
             skills: options.skills,
             contextUsage: options.contextUsage,
             sources: options.sources,

@@ -87,10 +87,16 @@ const invariants = {
     '首事件是 meta': metaFirst === 'meta',
     '有 done 或 error 收尾': done || !!error,
     'tool_result 与 reset 数量同阶（每次工具调用一次 reset）': Math.abs(toolResults - resets) <= 1,
-    '落库 progress 正常': ['finish', 'abort'].includes(m?.progress),
+    '落库 progress 合法': ['finish', 'abort', 'error'].includes(m?.progress),
     'iterationCount 与 reset 次数同阶': Math.abs((m?.process?.iterationCount || 0) - resets) <= 2,
     'process.toolCalls 有名字可展示': (m?.process?.toolCalls || []).every(x => typeof x.name === 'string' && x.name),
     'answer 长度与实收末段一致（reset 后重新计数）': Math.abs((m?.answer || '').length - acc) <= 40,
+    /** PR-A（§2E-3）新增：空答案不再是可落库的形态 */
+    '落库 answer 非空（§2E-3 修复）': (m?.answer || '').length > 0,
+    'progress=finish 时 answer 必非空': !(m?.progress === 'finish' && !(m?.answer || '').length),
+    'process.loopExit 已落库可观测': ['break', 'exhausted', 'no-iterations', 'unknown'].includes(m?.process?.loopExit),
+    'loopExit=exhausted 时要么补过收尾调用、要么 progress 不是 finish':
+        m?.process?.loopExit !== 'exhausted' || m?.process?.forcedFinal === true || m?.progress !== 'finish',
 }
 const failed = Object.entries(invariants).filter(([, v]) => !v).map(([k]) => k)
 
@@ -105,7 +111,15 @@ log('结构不变量', {
     实收字符: chars,
     被reset抹掉字符: charsLost,
     末段字符: acc,
-    落库: m ? {progress: m.progress, answerLen: (m.answer || '').length, iterationCount: m.process?.iterationCount, answerRounds: m.process?.answerRounds, tools: (m.process?.toolCalls || []).map(x => x.name)} : null,
+    落库: m ? {
+        progress: m.progress,
+        answerLen: (m.answer || '').length,
+        iterationCount: m.process?.iterationCount,
+        answerRounds: m.process?.answerRounds,
+        loopExit: m.process?.loopExit,
+        forcedFinal: m.process?.forcedFinal,
+        tools: (m.process?.toolCalls || []).map(x => x.name),
+    } : null,
     error,
-    判定: failed.length ? `❌ 不满足：${failed.join('; ')}` : '✅ 全部结构不变量通过（llmLoop 抽取未改变行为）',
+    判定: failed.length ? `❌ 不满足：${failed.join('; ')}` : '✅ 全部不变量通过（结构不变量 + §2E-3 空答案修复）',
 })

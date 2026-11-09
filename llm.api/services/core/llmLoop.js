@@ -192,6 +192,109 @@ export function loopExitReason({broke = false, iterationCount = 0, maxIterations
     return 'unknown'
 }
 
+/* ---------- 迭代上限：配置化（§2E-3 修法第 3 条） ---------- */
+
+/** 兜底上限：与抽取前的硬编码值一致，保证不配置时行为不变 */
+export const DEFAULT_MAX_ITERATIONS = 6
+
+/** 允许的上限天花板：请求级/频道级配置都不能突破，防止一次会话把上游打爆 */
+export const MAX_ITERATIONS_CEILING = 20
+
+/**
+ * @description 解析本轮的工具迭代上限（原先是硬编码 6）
+ * @param {Object} [src] 各级配置，按优先级从前往后取第一个有效值
+ * @param {Number|String} [src.requestValue] 请求级 `options.maxIterations`
+ * @param {Number|String} [src.channelValue] 频道级 `channelConfig.maxIterations`
+ * @param {Number|String} [src.configValue] 全局级 `config.limits.maxIterations`
+ * @param {Number|String} [src.fallback] 兜底值，默认 6
+ * @returns {Number} 1..20 的整数
+ */
+export function resolveMaxIterations({requestValue, channelValue, configValue, fallback = DEFAULT_MAX_ITERATIONS} = {}) {
+    for (const raw of [requestValue, channelValue, configValue, fallback]) {
+        const n = Number(raw)
+        if (Number.isFinite(n) && n >= 1) {
+            return Math.min(Math.floor(n), MAX_ITERATIONS_CEILING)
+        }
+    }
+    return DEFAULT_MAX_ITERATIONS
+}
+
+/* ---------- 上限打满后的收尾补救（§2E-3 修法第 1、2 条） ---------- */
+
+/** 收尾调用里追加的用户提示：说明为什么到此为止，并要求直接给结论 */
+export const FINALIZE_HINT_TEXT = '工具调用次数已达上限，请不要再调用工具，直接基于以上结果给出结论。'
+
+/** 收尾调用也失败时，落库与下发给用户的可读原因 */
+export const EXHAUSTED_NOTICE_TEXT = '（本轮工具调用达到上限，未能得出完整结论；以上为已获得的部分内容，请缩小问题范围后重试。）'
+
+/**
+ * @description 决定循环异常退出后要不要补一次"无工具收尾调用"
+ * @param {Object} [state]
+ * @param {String} [state.loopExit] `loopExitReason` 的结果
+ * @param {String} [state.answerContent] 末段已累加的正文（`exhausted` 时必然为空）
+ * @param {Boolean} [state.finalizeDisabled] 配置关闭补救（`config.limits.maxIterationsFinalize === false`）
+ * @param {Boolean} [state.aborted] 本轮已被中断（中断不该再花钱补调用）
+ * @returns {{action: 'none'|'force-final', reason: String}}
+ */
+export function finalizationDecision({loopExit = 'break', answerContent = '', finalizeDisabled = false, aborted = false} = {}) {
+    if (loopExit !== 'exhausted') {
+        return {action: 'none', reason: 'normal-exit'}
+    }
+    if (aborted) {
+        return {action: 'none', reason: 'aborted'}
+    }
+    if (answerContent) {
+        /** 上限打满但末段仍有正文：已经是可用答案，不再补调用 */
+        return {action: 'none', reason: 'has-answer'}
+    }
+    if (finalizeDisabled) {
+        return {action: 'none', reason: 'disabled'}
+    }
+    return {action: 'force-final', reason: 'exhausted-empty'}
+}
+
+/**
+ * @description 构造"无工具收尾调用"的请求体
+ * @param {Object} createBody 主循环在用的请求体（不被修改）
+ * @param {Object[]} messages 已含全部工具结果的消息数组（不被修改）
+ * @param {String} [hint] 追加的用户提示
+ * @returns {Object} 去掉 tools/tool_choice、末尾追加一条 user 提示的新请求体
+ */
+export function buildFinalizeBody(createBody = {}, messages = [], hint = FINALIZE_HINT_TEXT) {
+    const body = {...createBody, messages: [...messages, {role: 'user', content: hint}], stream: true}
+    delete body.tools
+    delete body.tool_choice
+    return body
+}
+
+/**
+ * @description 收尾补救之后（或补救被关闭时）决定落库正文与 progress
+ * @param {Object} [state]
+ * @param {String} [state.loopExit] 循环退出方式
+ * @param {String} [state.answerContent] 收尾补落后仍为空的末段正文
+ * @param {String[]} [state.answerList] 被 reset 抹掉的历史分段
+ * @param {String} [state.notice] 可读原因
+ * @returns {{answer: String, progress: 'finish'|'error', usedPartial: Boolean, notice: String}}
+ * @description
+ * `progress` 的口径：**空答案绝不能记 `finish`**。这是 §2E-3 的用户可见症状（一条空白"完成"的回答）。
+ * 有历史分段时把它们作为部分内容保住（修法第 1 条"到顶时不得清空"），同时把 progress 记成 `error`，
+ * 让前端与监控都能看到"这一轮没成功"。不新增 `truncated` 枚举值：
+ * `MessageProgressEnum` 被 schema 的 enum 校验引用，扩枚举会波及 mongo 校验与前端分派，收益不抵风险。
+ */
+export function exhaustedFallback({loopExit = 'break', answerContent = '', answerList = [], notice = EXHAUSTED_NOTICE_TEXT} = {}) {
+    if (loopExit !== 'exhausted') {
+        return {answer: answerContent, progress: 'finish', usedPartial: false, notice: ''}
+    }
+    if (answerContent) {
+        return {answer: answerContent, progress: 'finish', usedPartial: false, notice: ''}
+    }
+    const partial = (answerList || []).filter(Boolean).join('')
+    if (partial) {
+        return {answer: partial + notice, progress: 'error', usedPartial: true, notice}
+    }
+    return {answer: notice, progress: 'error', usedPartial: false, notice}
+}
+
 /* ---------- 工具分派分类（对应 llmChat.js:551-555） ---------- */
 
 /**
@@ -295,7 +398,15 @@ export default {
     drainAssistantStream,
     iterationDecision,
     loopExitReason,
+    resolveMaxIterations,
+    finalizationDecision,
+    buildFinalizeBody,
+    exhaustedFallback,
     detachAction,
     steerAction,
     RUN_PHASES,
+    DEFAULT_MAX_ITERATIONS,
+    MAX_ITERATIONS_CEILING,
+    FINALIZE_HINT_TEXT,
+    EXHAUSTED_NOTICE_TEXT,
 }
