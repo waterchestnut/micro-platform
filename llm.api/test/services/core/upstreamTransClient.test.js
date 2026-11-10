@@ -60,6 +60,68 @@ function fake(opt = {}) {
     }
 }
 
+describe('长度感知的超时', () => {
+    test('默认参数就是实测拟合值：短文本 30s 起，332 字 ≈ 40s，超长封顶 120s', async () => {
+        const {resolveTransTimeout, TRANS_TIMEOUT_DEFAULTS} = await import('../../../services/core/upstreamTransClient.js')
+        assert.equal(resolveTransTimeout({chars: 0}), 30000)
+        assert.equal(resolveTransTimeout({chars: 332}), 30000 + 30 * 332)
+        assert.equal(resolveTransTimeout({chars: 99999}), TRANS_TIMEOUT_DEFAULTS.maxMs)
+    })
+
+    test('env 风格的字符串要能直接用；垃圾值退回默认而不是 NaN', async () => {
+        const {resolveTransTimeout} = await import('../../../services/core/upstreamTransClient.js')
+        assert.equal(resolveTransTimeout({chars: 100, cfg: {baseMs: '5000', perCharMs: '20'}}), 7000)
+        const bad = resolveTransTimeout({chars: 100, cfg: {baseMs: 'abc', perCharMs: 'xyz'}})
+        assert.equal(Number.isFinite(bad), true)
+        assert.equal(bad, 30000 + 30 * 100)
+    })
+
+    test('字符数要算上系统提示词（它是每次的固定成本），且**不许**给图片编一个等效字数', async () => {
+        const {bodyChars, bodyHasImage} = await import('../../../services/core/upstreamTransClient.js')
+        const text = {messages: [{role: 'system', content: 'a'.repeat(100)}, {role: 'user', content: 'b'.repeat(50)}]}
+        assert.equal(bodyChars(text), 150)
+        const withImg = {
+            messages: [{role: 'user', content: [
+                {type: 'text', text: 'c'.repeat(20)},
+                {type: 'image_url', image_url: {url: 'http://x/y.png'}},
+            ]}],
+        }
+        assert.equal(bodyChars(withImg), 20, '图片不计入：没有实测就不放系数')
+        assert.equal(bodyHasImage(withImg), true)
+        assert.equal(bodyHasImage(text), false)
+    })
+
+    test('文本请求带上算出来的 timeout；含图请求不带（保持改造前行为）', async () => {
+        const captured = []
+        const raw = {chat: {completions: {create: async (body, opts) => {
+            captured.push(opts)
+            return {choices: [{message: {content: 'x'}}]}
+        }}}}
+        const f = fake()
+        f.makeRaw = () => raw
+        f.withUpstreamRetry = async (args) => ({value: await args.invoke({attempt: 1, usingFallback: false, markFirstByte: () => {}})})
+        const client = createTransClient({...f, timeoutCfg: {}})
+        await client.chat.completions.create({messages: [{role: 'user', content: 'hello'}]})
+        assert.equal(captured[0].timeout, 30150, '5 字 ⇒ 30000 + 30*5')
+        /** 调用方显式指定的超时应被尊重，策略不覆盖它 */
+        await client.chat.completions.create({messages: [{role: 'user', content: 'hello'}]}, {timeout: 1234})
+        assert.equal(captured[1].timeout, 1234, `显式 timeout 被策略覆盖了：${JSON.stringify(captured[1])}`)
+
+        await client.chat.completions.create({
+            messages: [{role: 'user', content: [{type: 'text', text: 'hi'}, {type: 'image_url', image_url: {url: 'http://x/y.png'}}]}],
+        })
+        /** 图片请求走"不加超时"分支 ⇒ 传给 SDK 的 opts 就是 undefined（不是带了个假超时） */
+        assert.equal(captured.length, 3)
+        assert.ok(captured[2] === undefined || captured[2].timeout === undefined,
+            `含图请求不应带超时，实际拿到 ${JSON.stringify(captured[2])}`)
+    })
+
+    test('SDK 默认超时是 10 分钟——这条断言存在的意义是：忘记配超时的代价有具体数字可看', async () => {
+        const OpenAI = (await import('openai')).default
+        assert.equal(OpenAI.DEFAULT_TIMEOUT ?? 600000, 600000)
+    })
+})
+
 describe('createTransClient', () => {
     test('缺 modelConfig 必须立刻报错，不能悄悄造一个无 key 的客户端', () => {
         const f = fake()

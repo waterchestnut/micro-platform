@@ -439,6 +439,22 @@ export default {
         failureThreshold: parseInt(process.env['upstreamBreaker_failureThreshold'] || '5', 10),
         openMs: parseInt(process.env['upstreamBreaker_openMs'] || '15000', 10),
     },
+    /**
+     * 翻译链路的超时：**按请求体长度算**，不是固定值。
+     * 依据是源仓 dev 实测（autoTrans 8 样本：34字/1822ms … 332字/6537ms，拟合约 15.8ms/字 + 1.28s）；
+     * 这里取 base 30s + 30ms/字（≈斜率 1.9 倍余量），封顶 120s 对应 8000 字业务硬顶。
+     * 为什么必须配：OpenAI SDK 默认 DEFAULT_TIMEOUT = 600000（10 分钟），
+     * 配我方最多 3 次尝试 ⇒ 一次挂住的翻译可以占住 handler 约半小时。
+     * 含图片的请求**不加超时**：OCR 没有实测样本，没测过的东西不配拥有系数
+     * （见 services/core/upstreamTransClient.js 的 bodyHasImage 分支）。
+     */
+    trans: {
+        timeout: {
+            baseMs: parseInt(process.env['trans_timeoutBaseMs'] || '30000', 10),
+            perCharMs: parseInt(process.env['trans_timeoutPerCharMs'] || '30', 10),
+            maxMs: parseInt(process.env['trans_timeoutMaxMs'] || '120000', 10),
+        },
+    },
     /** 资源服务的配置 */
     resourceConfig: {
         /** 基地址 */

@@ -38,6 +38,8 @@ function transClient(modelConfig) {
         keyOf: ({modelConfig: m}) => breakerKeyFor({baseURL: m.baseURL, modelKey: m.key}),
         withUpstreamRetry,
         parseRetryAfterMs,
+        /** 超时按请求体长度算；参数与拟合来源见 conf 的 trans.timeout 注释 */
+        timeoutCfg: config.trans?.timeout || {},
         log: (e) => logger.warn(`trans 上游退避 ${JSON.stringify(e)}`),
     })
 }
