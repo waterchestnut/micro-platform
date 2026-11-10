@@ -5,6 +5,8 @@
  */
 
 import {OpenAI} from 'openai'
+import {withUpstreamRetry, parseRetryAfterMs} from './llmLoop.js'
+import {getBreaker, breakerKeyFor} from './upstreamBreaker.js'
 import retSchema from '../../daos/retSchema.js'
 import conversationDac from '../../daos/core/dac/conversationDac.js'
 import llmChannelDataSet, {getChannelMemory} from '../../conf/llmChannel.js'
@@ -365,11 +367,27 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         tlog.warn(`历史预算 ${historyBudget} / 总预算 ${contextBudget}，历史丢弃 ${historyDropped.length} 轮，装配再丢弃 ${assembled.dropped.length} 条`)
     }
 
+    /**
+     * 上游容错（与源仓同一份判据：`llmLoop.withUpstreamRetry` + `upstreamBreaker`）。
+     * 默认全关：`upstreamRetry_enabled`/`upstreamBreaker_enabled` 不为 true 时行为与改造前逐字一致。
+     */
+    const upstreamCfg = config.upstreamRetry || {}
+    const upstreamBreaker = getBreaker({
+        cfg: config.upstreamBreaker || {},
+        /** 熔断是进程级状态，事件走 llm.logger；绑在 tlog 上会让单例一直握着第一条请求的 trace */
+        log: (e) => logger.warn(`upstreamBreaker ${JSON.stringify(e)}`),
+    })
+    /**
+     * SDK 的隐式重试（默认 2 次）必须在我方退避开启时显式设 0——它在 SDK 内部、首字节之前，
+     * 我方 `markFirstByte` 拦不住，两层相乘会让"最多几次"变成乘法。
+     */
+    const sdkRetries = upstreamCfg.enabled === true ? 0 : undefined
     const openai = new OpenAI({
         apiKey: llmConfig.apiKey,
         baseURL: llmConfig.baseURL,
         /** 上游请求头带 traceId：relay/网关侧的日志才能与我们这一侧对上 */
         defaultHeaders: traceHeaders(trace),
+        maxRetries: sdkRetries,
     })
 
     // 检查当前频道是否启用了MCP工具
@@ -580,16 +598,31 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             budgetMeter.invalidate()
             const finalizeBody = buildFinalizeBody(createBody, messages)
             tlog.info(`无工具收尾调用开始: messages=${finalizeBody.messages.length}, maxIterations=${maxIterations}`)
-            trackCall()
-            const finalizeStream = await openai.chat.completions.create(finalizeBody, {signal: options.signal})
-            const drained = await drainAssistantStream(finalizeStream, {
-                onDelta: (delta, snapshot) => {
-                    liveAnswer = snapshot?.content || liveAnswer
-                    liveReasoning = snapshot?.reasoning || liveReasoning
-                    options.streamCallback(JSON.stringify({role: 'assistant', ...delta, messageCode}))
+            /**
+             * `trackCall()` 放在 invoke **里面**：一次真实上游尝试就该记一次调用，
+             * 否则重试过的 run 在账本上看起来只打了一次，成本与"循环告警"口径都会偏。
+             */
+            const {value: drained} = await withUpstreamRetry({
+                cfg: {...upstreamCfg, fallbackModel: ''},
+                breaker: upstreamBreaker,
+                breakerKeyOf: () => breakerKeyFor({baseURL: llmConfig.baseURL, modelKey: llmConfig.key}),
+                invoke: async ({markFirstByte}) => {
+                    trackCall()
+                    const finalizeStream = await openai.chat.completions.create(finalizeBody, {signal: options.signal})
+                    return drainAssistantStream(finalizeStream, {
+                        onDelta: (delta, snapshot) => {
+                            /** 首字节护栏：一旦向客户端吐过字，本次失败就不许再重发（否则用户看到两份正文） */
+                            markFirstByte()
+                            liveAnswer = snapshot?.content || liveAnswer
+                            liveReasoning = snapshot?.reasoning || liveReasoning
+                            options.streamCallback(JSON.stringify({role: 'assistant', ...delta, messageCode}))
+                        },
+                        /** 每帧之前问一次：客户端断开（aborted）或抢救下了停止位都要立刻停，别再花钱 */
+                        shouldStop: async () => (options.signal?.aborted ? 'aborted' : shutdownStopRequested),
+                    })
                 },
-                /** 每帧之前问一次：客户端断开（aborted）或抢救下了停止位都要立刻停，别再花钱 */
-                shouldStop: async () => (options.signal?.aborted ? 'aborted' : shutdownStopRequested),
+                retryAfterMsOf: (e) => parseRetryAfterMs(e?.headers),
+                log: (e) => tlog.warn(`chat 上游退避(收尾) ${JSON.stringify(e)}`),
             })
             /**
              * 早停就是终态：判据必须是**真值**（源仓就错过一次——写死 `=== 'aborted'`
@@ -860,20 +893,31 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                 toolState: {pendingCalls: [], completedCalls: toolCallTrace.map(t => t.id)},
             })
             //console.log(`createBody ${JSON.stringify(createBody)}`)
-            trackCall()
-            const chatStream = await openai.chat.completions.create(createBody, {signal: options.signal})
+            const {value: drained} = await withUpstreamRetry({
+                cfg: {...upstreamCfg, fallbackModel: ''},
+                breaker: upstreamBreaker,
+                breakerKeyOf: () => breakerKeyFor({baseURL: llmConfig.baseURL, modelKey: llmConfig.key}),
+                /** 护栏与成本口径同收尾调用处：trackCall 进 invoke，markFirstByte 在吐字之前 */
+                invoke: async ({markFirstByte}) => {
+                    trackCall()
+                    const chatStream = await openai.chat.completions.create(createBody, {signal: options.signal})
 
             /**
              * 整轮流式响应的消费与聚合在 `llmLoop.drainAssistantStream` 里：
              * 这样循环级测试可以注入假 stream（不依赖 OpenAI 客户端），且 SSE 下发时机与抽取前逐字一致。
              */
-            const drained = await drainAssistantStream(chatStream, {
-                onDelta: (delta, snapshot) => {
-                    liveAnswer = snapshot?.content || liveAnswer
-                    liveReasoning = snapshot?.reasoning || liveReasoning
-                    options.streamCallback(JSON.stringify({role: 'assistant', ...delta, messageCode}))
+                    return drainAssistantStream(chatStream, {
+                        onDelta: (delta, snapshot) => {
+                            markFirstByte()
+                            liveAnswer = snapshot?.content || liveAnswer
+                            liveReasoning = snapshot?.reasoning || liveReasoning
+                            options.streamCallback(JSON.stringify({role: 'assistant', ...delta, messageCode}))
+                        },
+                        shouldStop: async () => (options.signal?.aborted ? 'aborted' : shutdownStopRequested),
+                    })
                 },
-                shouldStop: async () => (options.signal?.aborted ? 'aborted' : shutdownStopRequested),
+                retryAfterMsOf: (e) => parseRetryAfterMs(e?.headers),
+                log: (e) => tlog.warn(`chat 上游退避 ${JSON.stringify(e)}`),
             })
             /**
              * 早停就是终态（判据写真值，理由见上面收尾调用处那条注释）。

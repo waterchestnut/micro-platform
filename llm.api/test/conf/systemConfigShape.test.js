@@ -58,10 +58,23 @@ describe('system.config 的形状（括号错位会让开关静默失效）', ()
         assert.equal(typeof c.llmUsageLive?.enabled, 'boolean')
     })
 
-    test('upstreamRetry 只该有它那五个键，不许吞掉别的配置块', async () => {
+    test('upstreamRetry 只该有它那四个键，不许吞掉别的配置块', async () => {
         const c = await loadConfig()
+        /**
+         * 与源仓不同是**刻意的**：模板的 chat 侧只接了"退避 + 熔断 + 首字节护栏"，
+         * 档位回退（fallbackModel）需要换档 client map 与窗口可行性检查，模板没实现，
+         * 所以 conf 里**不提供这个键**（见 conf/system.config.js 同位置的注释）。
+         * 这里仍然断言**精确集合**而不是"包含"——放宽成"包含"就再也照不出"少写一个 } 把下一块吞进来"
+         * 那个真实存在过的缺陷。
+         */
         assert.deepEqual(Object.keys(c.upstreamRetry).sort(),
-            ['baseMs', 'capMs', 'enabled', 'fallbackModel', 'maxAttempts'])
+            ['baseMs', 'capMs', 'enabled', 'maxAttempts'])
+    })
+
+    test('模板不提供 fallbackModel：没实现的开关不该出现在配置面上', async () => {
+        const c = await loadConfig()
+        assert.equal(Object.prototype.hasOwnProperty.call(c.upstreamRetry, 'fallbackModel'), false,
+            '出现了 fallbackModel 却没有对应实现 ⇒ 这是一个"配了没人读"的开关')
     })
 
     test('llmUsageLive_enabled=false 必须真的能关掉（这正是被嵌套吃掉的那条开关）', async () => {

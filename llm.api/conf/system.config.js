@@ -419,8 +419,13 @@ export default {
         /** 退避基准与上限（毫秒）。满抖动，见 `backoffMs` */
         baseMs: parseInt(process.env['upstreamRetry_baseMs'] || '300', 10),
         capMs: parseInt(process.env['upstreamRetry_capMs'] || '4000', 10),
-        /** 备选档位 key（留空=不换档） */
-        fallbackModel: process.env['upstreamRetry_fallbackModel'] || '',
+        /**
+         * 这里**故意不提供** `fallbackModel`（换档）。
+         * 模板的 chat 侧只接了"退避 + 熔断 + 首字节护栏"；档位回退还需要换档 client map 与
+         * 窗口可行性检查（源仓的 `fallbackClients` / `canFallbackTo`），没实现就不配暴露开关——
+         * 一个"设了也没人读"的 env，正是本工作流一整天在清除的那类隐患。
+         * 要支持换档时，请连同实现一起加回来。
+         */
     },
     /**
      * 网关级熔断。存在理由与退避不同：多个模型档常常共用同一个中转出口与同一把 key，
