@@ -10,7 +10,7 @@ dotenv.config()
 
 export default {
     /** debug为true时，为调试模式 */
-    debug: true,
+    debug: process.env['debug'] ? process.env['debug'] === 'true' : true,
     /** 部署环境需要修改，mongodb数据库配置 */
     mongodbConfig: {
         uri: process.env['MONGO_URI'],
