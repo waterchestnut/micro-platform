@@ -76,6 +76,10 @@ export const CLOSE_RESERVE_MS = 10000
  * @param {Number} [params.defaultMs] 无 env / env 无效时的默认
  * @param {Number} [params.terminationGraceSeconds] k8s `terminationGracePeriodSeconds`（未配则不钳制）
  * @param {Number} [params.reserveMs] 留给关闭序列的余量
+ * @param {Number|String} [params.preStopSeconds] `preStop` 钩子占用的秒数。
+ *   必须计入：grace 从 `deletionTimestamp` 起算，而 preStop 是**在这同一个窗口里跑完才发 SIGTERM** 的，
+ *   所以进程真正可用的窗口是 `grace − preStop − 余量`。
+ *   漏掉它的后果不是崩溃而是"预算被静默吃掉 5 秒"——清单里那 6 处 `sleep 5` 此前对代码完全不可见。
  * @returns {{delayMs: Number, applied: Boolean, reason: String}} 结果；`applied:false` 表示 env 写了但没被采纳
  */
 export function resolveCloseGraceDelay({
@@ -83,6 +87,7 @@ export function resolveCloseGraceDelay({
     defaultMs = DEFAULT_CLOSE_GRACE_MS,
     terminationGraceSeconds,
     reserveMs = CLOSE_RESERVE_MS,
+    preStopSeconds = 0,
 } = {}) {
     const raw = String(envValue ?? '').trim()
     let delayMs
@@ -105,15 +110,21 @@ export function resolveCloseGraceDelay({
         }
     }
     const graceMs = Number(terminationGraceSeconds) * 1000
+    const preStopMs = Math.max(0, Number(preStopSeconds) || 0) * 1000
     if (Number.isFinite(graceMs) && graceMs > 0) {
         /**
-         * 上限 = grace − 关闭序列余量。
-         * 这条钳制是"两个必要条件"里被反复忽略的那一半：宽限比 grace 长，就是自欺。
-         * 实测 dev/prod 用 grace 60 ⇒ 允许的最长宽限 50000ms。
+         * 上限 = grace − preStop − 关闭序列余量。
+         * 这一版之前少减了 preStop：`60 − 10 = 50` 看着有余量，
+         * 但 preStop 的 5s 也来自同一个窗口 ⇒ 实际可用只有 45s，配置 45000 恰好贴着上限（零余量）。
          */
-        const max = Math.max(1000, graceMs - reserveMs)
+        const max = Math.max(1000, graceMs - preStopMs - reserveMs)
         if (delayMs > max) {
-            return {delayMs: max, applied, reason: `clamped: env ${delayMs}ms 超过 grace ${terminationGraceSeconds}s 减余量 ${reserveMs}ms，压到 ${max}ms`}
+            return {
+                delayMs: max,
+                applied,
+                reason: `clamped: env ${delayMs}ms 超过 grace ${terminationGraceSeconds}s`
+                    + ` − preStop ${preStopMs / 1000}s − 余量 ${reserveMs}ms ⇒ ${max}ms`,
+            }
         }
     }
     return {delayMs, applied, reason}

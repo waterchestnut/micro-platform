@@ -5,7 +5,12 @@
  */
 import '../init.js'
 import grpc from '@grpc/grpc-js'
+import dotenv from 'dotenv'
 import fs from 'fs'
+import {installGrpcShutdown} from './shutdown.js'
+
+// Read the .env file
+dotenv.config()
 
 /**
  * 1. 创建gRPC服务器实例
@@ -38,4 +43,10 @@ server.bindAsync(`${process.env.GRPC_ADDRESS || '0.0.0.0'}:${process.env.GRPC_PO
     }
     llm.logger.info(`服务器启动成功，端口：${port}。`)
     console.log(`服务器启动成功，端口：${port}。`)
+    /**
+     * 停机处理装在绑定成功之后：deployment 的 PID 1 已是 node（入口被覆盖过），
+     * 而**没有 SIGTERM 处理器时 node 的默认行为是立即终止** ⇒ 在途 RPC 会被当场切断。
+     * 见 `grpc/shutdown.js` 的模块注释（这条是补做：入口翻转当初跑在了优雅停止前面）。
+     */
+    installGrpcShutdown({server, logger: llm.logger})
 })

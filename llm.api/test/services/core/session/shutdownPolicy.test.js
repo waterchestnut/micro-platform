@@ -68,6 +68,26 @@ describe('resolveCloseGraceDelay', () => {
         assert.match(r.reason, /clamped/)
     })
 
+    test('preStop 必须从同一个窗口里扣：grace 60 + preStop 5 ⇒ 上限 60−5−10=45s（以前算成 50s，等于把这 5 秒用了两次）', () => {
+        const r = resolveCloseGraceDelay({envValue: '90000', terminationGraceSeconds: 60, preStopSeconds: '5'})
+        assert.equal(r.delayMs, 60000 - 5000 - CLOSE_RESERVE_MS)
+        assert.match(r.reason, /preStop 5s/)
+    })
+
+    test('dev/prod 现行组合在计入 preStop 之后仍然合法：45000 恰好等于上限（贴线，不是有余量）', () => {
+        const r = resolveCloseGraceDelay({envValue: '45000', terminationGraceSeconds: 60, preStopSeconds: '5'})
+        assert.equal(r.delayMs, 45000)
+        assert.equal(r.applied, true)
+        assert.equal(r.reason, 'from-env')
+    })
+
+    test('preStop 是垃圾值时不能把预算变成 NaN；字符串数字要照用（清单里读出来就是字符串）', () => {
+        const junk = resolveCloseGraceDelay({envValue: '90000', terminationGraceSeconds: 60, preStopSeconds: 'abc'})
+        assert.equal(junk.delayMs, 60000 - CLOSE_RESERVE_MS, '垃圾 preStop 必须当成 0，不能污染算术')
+        const ten = resolveCloseGraceDelay({envValue: '90000', terminationGraceSeconds: 60, preStopSeconds: '10'})
+        assert.equal(ten.delayMs, 60000 - 10000 - CLOSE_RESERVE_MS)
+    })
+
     test('grace 60 配 env 45000 ⇒ 原样采纳（这就是 dev/prod 现在的组合）', () => {
         const r = resolveCloseGraceDelay({envValue: '45000', terminationGraceSeconds: 60})
         assert.equal(r.delayMs, 45000)

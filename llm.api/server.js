@@ -67,6 +67,8 @@ app.register(appService)
 const closeGrace = resolveCloseGraceDelay({
     envValue: process.env.FASTIFY_CLOSE_GRACE_DELAY,
     terminationGraceSeconds: process.env.TERM_GRACE_PERIOD_SECONDS,
+    /** 清单里的 preStop `sleep 5` 与 grace 来自同一个窗口，不传进来就会被静默重复使用（源仓 §25 v1.54） */
+    preStopSeconds: process.env.PRE_STOP_SECONDS,
 })
 /** 生效值必须成为可读事实：配了却没生效这种事故，靠注释拦不住 */
 app.log.info(`停机宽限: delay=${closeGrace.delayMs}ms, env采纳=${closeGrace.applied}, reason=${closeGrace.reason}`)
