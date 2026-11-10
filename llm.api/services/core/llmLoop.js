@@ -334,9 +334,43 @@ export function loopExitReason({broke = false, iterationCount = 0, maxIterations
     if (iterationCount >= maxIterations) {
         return 'exhausted'
     }
-    /** 理论上不可达：while 的另一个出口是 `options.signal.aborted` 的提前 return，不会走到这里 */
+    /**
+     * 走到这里说明 while 是从 `options.signal.aborted` 那条早退分支离开的。
+     * **这句原来写的是"理论上不可达"——v1.72 的 dev 实测把它证伪了**：
+     * 断开落在工具批之后那一轮，档案里 `progress:abort` 且 `loopExit:unknown`，
+     * 也就是"不可达"的那个值确实落了库。留下这个值，但补齐规则改由
+     * `exitReasonForPersist` 在落库那一点统一处理（判据只放一份）。
+     */
     return 'unknown'
 }
+
+/**
+ * @description 落库时的退出原因：`abort` 路径不许带着 `unknown` 进档案
+ * @param {Object} p 现场
+ * @param {String} p.progress 本次落库的 progress（finish/abort/error…）
+ * @param {String} p.loopExit 循环自己算出的退出原因（可能是 'unknown'）
+ * @param {String} [p.via] 落库来源（`PERSIST_VIA` 之一）
+ * @param {Boolean} [p.closing] 进程是否已进入关闭序列
+ * @returns {String} 要写进 `extInfo.loopExit` 的值
+ *
+ * 为什么必须在这里补，而不是在四个早退点各写一行 `loopExit = ...`：
+ * `persistTurn` 是唯一一个"确定要落档"的地方，规则放四遍就会有四份漂移——
+ * 而"这轮为什么没答完"这个问题恰恰需要**跨来源可比**（断开 / 发版 / 兜底各占多少）。
+ * `unknown` 从此只剩一种含义：落库前循环确实没给出原因，且这里也能补出原因。
+ */
+export function exitReasonForPersist({progress, loopExit, via = '', closing = false} = {}) {
+    if (progress !== 'abort') {
+        /** 非 abort 的落库不动循环给的原因（包括它自己就是 'unknown' 的情形：那是另一条问题，不该在这里被掩盖） */
+        return loopExit
+    }
+    if (loopExit && loopExit !== 'unknown') {
+        return loopExit
+    }
+    const cause = closing ? 'shutdown' : 'aborted'
+    return `${cause}:${via || 'unattributed'}`
+}
+
+
 
 /* ---------- 迭代预算的增量测量（PR-K1，实测后缩小的一刀） ---------- */
 
@@ -997,6 +1031,7 @@ export default {
     drainAssistantStream,
     iterationDecision,
     loopExitReason,
+    exitReasonForPersist,
     describeError,
     createBudgetMeter,
     createEmptyUsage,

@@ -59,6 +59,7 @@ import {
     drainAssistantStream,
     iterationDecision,
     loopExitReason,
+    exitReasonForPersist,
     describeError,
     createBudgetMeter,
     deriveUsageMetrics,
@@ -710,6 +711,12 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
          * 归列规矩（源仓 v1.38 定）：**估算归估算列，实测归实测列**，不许互相冒充。
          */
         const answerTokensNow = calcTextTokenCount(answerContent + answerReasoning, tokenizerOptions.tokenizer)
+        /**
+         * 与 usage 快照同一个道理：`loopExit` 在四个早退点上都还是 `unknown`（源仓 v1.72 的 dev 实测就落在那）。
+         * 这里现算一次，档案 `extInfo.loopExit` 与账本 `llmUsage.loopExit` **共用同一个值**——
+         * 只补一张表就会出现"同一个问题在两张表里两个答案"，那比两边都 unknown 更难查。
+         */
+        const loopExitNow = exitReasonForPersist({progress, loopExit, via: extra.via, closing: isClosing()})
         /** 落一条终态检查点（finish/abort），续跑与审计都以此为准 */
         scheduleCp(progress === 'abort' ? 'abort' : 'final', {
             messages: messages.map(m => ({...m})),
@@ -721,8 +728,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             answerList,
             /** 异常路径的归因（`describeError` 的 kind:message）；正常路径为 null */
             error: errorMessage || null,
-            /** 把"循环怎么退出的"和"是否补过收尾调用"落进 extInfo，空答案从此可解释、可统计 */
-            loopExit,
+            /** 同上：与账本共用 `loopExitNow`（abort 路径不再带 unknown 落库） */
+            loopExit: loopExitNow,
             forcedFinal,
             /**
              * 打断来源单独一列。`progress:'abort'` 必须同时表达"用户按停止"与"发版切连接"两件事，
@@ -791,7 +798,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                 /** 估算输出（非上游回传）：被切断的 run 唯一的成本量级来源，与实测列分开存 */
                 estCompletionTokens: answerTokensNow,
                 callAlert: snap.alert.level,
-                loopExit,
+                /** 与档案同一个现算值：两张表对同一个问题必须给同一个答案 */
+                loopExit: loopExitNow,
                 progress,
                 latencyMs: Date.now() - turnStart,
             })
