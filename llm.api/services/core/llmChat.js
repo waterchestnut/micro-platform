@@ -897,7 +897,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     try {
         while (iterationCount < maxIterations) {
             if (options.signal?.aborted) {
-                await persistTurn('abort')
+                /** 入口命中：这次迭代还没开始，钱没花 */
+                await persistTurn('abort', null, {interruptedBy: interruptReason(), via: PERSIST_VIA.LOOP_ENTRY})
                 return 'aborted'
             }
 
@@ -1172,7 +1173,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         }
 
         if (options.signal?.aborted) {
-            await persistTurn('abort')
+            /** 出口命中：这一轮的迭代已经跑完（可能含工具批），停在安全边界上 */
+            await persistTurn('abort', null, {interruptedBy: interruptReason(), via: PERSIST_VIA.LOOP_EXIT})
             return 'aborted'
         }
 
@@ -1198,6 +1200,19 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         if (fin.action === 'force-final') {
             forcedFinal = await runFinalizeCall()
         }
+
+        /**
+         * 收尾调用被打断 ⇒ 同样是终态：把已保留的正文落成 abort 就结束这一轮。
+         * 少写这一段，它会继续走 `exhaustedFallback`——那套逻辑解释的是"循环到顶"，
+         * 与"被打断"是两回事。**早停必须在每一个上游调用点就地收尾，漏一个点就漏一类损失。**
+         */
+        if (finalizeInterrupted) {
+            /** 收尾调用被打断：损失的是"基于已查到的信息给结论"那一次，与前两处都不同 */
+            await persistTurn('abort', null, {interruptedBy: interruptReason(), via: PERSIST_VIA.FINALIZE_INTERRUPTED})
+            return 'aborted'
+        }
+
+
 
         /**
          * **空答案不得记 `finish`**：收尾调用也没拿到正文时，把被 reset 抹掉的分段保住（能救多少救多少）

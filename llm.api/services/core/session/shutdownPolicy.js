@@ -50,7 +50,24 @@ export const PERSIST_VIA = {
     RESCUE: 'rescue',
     /** 异常路径（describeError 之后） */
     ERROR: 'error',
-    /** 循环入口/出口的 aborted 检查（还没区分到具体是哪一处） */
+    /**
+     * 循环顶部（还没进入本次迭代）就命中 aborted 检查。
+     * 与 `LOOP_EXIT` 的损失量级不同：入口这次什么都没做，出口那轮的迭代已经跑完。
+     */
+    LOOP_ENTRY: 'loop-entry',
+    /**
+     * 循环体之后、退出方式判定之前的 aborted 检查 ⇒ 这一轮的迭代已经跑完（是否含工具批要看 iterationCount）。
+     * 注释不许写成"必然发生过工具批"：没调工具的轮次同样从这里退出，把偶发写成必然，
+     * 下一次读数不一致时就会退回猜。
+     */
+    LOOP_EXIT: 'loop-exit',
+    /** 无工具收尾调用被打断（§2E-3 补的那次调用没跑完） */
+    FINALIZE_INTERRUPTED: 'finalize-interrupted',
+    /**
+     * 真正的"不知道是谁写的"。
+     * 原来它的注释写着"循环入口/出口的 aborted 检查（还没区分到具体是哪一处）"——那等于把"我还没接线"
+     * 记成"数据本身不明"。现在三处各有标签，这里只留给**确实没带来源**的调用。
+     */
     UNATTRIBUTED: 'unattributed',
     /** 事后回填扫描补的档（区别于当场落下的） */
     BACKFILL: 'backfill',

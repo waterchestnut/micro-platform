@@ -2,6 +2,7 @@ import {test, describe} from 'node:test'
 import * as assert from 'node:assert'
 import fs from 'node:fs'
 import {exitReasonForPersist, loopExitReason} from '../../../services/core/llmLoop.js'
+import {PERSIST_VIA} from '../../../services/core/session/shutdownPolicy.js'
 
 /**
  * `loopExit` 落库前的最后一道补齐。
@@ -51,10 +52,12 @@ describe('exitReasonForPersist：只有 abort 才允许被补', () => {
 
     test('补出的值必须带前缀且可聚合（统计要按来源分组，不能是自由文本）', () => {
         const seen = new Set()
-        for (const via of ['normal', 'early-stop', 'rescue', 'error', 'unattributed']) {
+        /** 遍历**枚举本身**：抄一份名单会在下次加 via 时悄悄少测一个值 */
+        for (const via of Object.values(PERSIST_VIA)) {
             for (const closing of [false, true]) {
                 const v = exitReasonForPersist({progress: 'abort', loopExit: 'unknown', via, closing})
                 assert.match(v, /^(aborted|shutdown):[a-z-]+$/, `形状不合约定：${v}`)
+                assert.ok(!/unknown/.test(v), `补齐后不许还留着 unknown：${v}`)
                 seen.add(v.split(':')[0])
             }
         }
@@ -103,6 +106,22 @@ describe('落库点的接线（llmChat 离线跑不起来，所以守形状）',
         assert.match(src[i + 1], /^\s*loopExit,\s*$/,
             `收尾判定必须读未加工的循环结果，实际是 [${src[i + 1].trim()}]`)
         assert.ok(!/loopExitNow/.test(src[i + 1]), '把补齐值传进收尾判定=用落库口径倒推动作口径')
+    })
+
+    test('每个 abort 落库点都必须自带来源（新增站点忘了接线就要红）', () => {
+        const calls = lines().filter(l => /persistTurn\('abort'/.test(l) && !/^\s*(\*|\/\/)/.test(l))
+        assert.ok(calls.length >= 4, `至少应有 4 个 abort 落库点，实际 ${calls.length}：接线可能整体丢了`)
+        const naked = calls.filter(l => !/via:\s*PERSIST_VIA\./.test(l))
+        assert.deepEqual(naked, [], `这些 abort 落库点没有来源标签：${JSON.stringify(naked.map(s => s.trim().slice(0, 70)))}`)
+    })
+
+    test('站点用的是各自的标签，不是同一个笼统值', () => {
+        const s2 = lines().join('\n')
+        for (const k of ['LOOP_ENTRY', 'LOOP_EXIT', 'FINALIZE_INTERRUPTED']) {
+            assert.ok(s2.includes(`PERSIST_VIA.${k}`), `站点 ${k} 的接线不见了`)
+        }
+        const direct = lines().filter(l => /persistTurn\([^)]*PERSIST_VIA\.UNATTRIBUTED/.test(l))
+        assert.deepEqual(direct, [], `仍有 abort 站点直接落 unattributed：${JSON.stringify(direct.map(x => x.trim().slice(0, 70)))}`)
     })
 
     test('llmLoop 里"理论上不可达"那句话只能以被证伪的形式存在', () => {
