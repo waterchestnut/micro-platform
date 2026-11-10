@@ -13,8 +13,11 @@
  * 所以必须有预算，否则一个挂住的调用能把停机拖到 grace 到点被 SIGKILL。
  *
  * 预算与 http/kafka 同一份判据（`resolveDrainBudget`，会按 `TERM_GRACE_PERIOD_SECONDS` 与
- * `PRE_STOP_SECONDS` 钳制）。另注：清单上那条 `FASTIFY_CLOSE_GRACE_DELAY` 在本入口**没人读**，
- * 它是从 http 抄 env 块时带过来的惰性配置，已记入 §25，不再让它看起来"已生效"。
+ * `PRE_STOP_SECONDS` 钳制）。
+ * 一条历史注脚（别当成现状读）：grpc 的清单上曾挂着 `FASTIFY_CLOSE_GRACE_DELAY=45000`，
+ * 而全仓只有 http 入口 `server.js` 读它，且 `server.js` 不被任何模块 import ⇒ 挂在 grpc 上是纯惰性。
+ * 该 env 已于 §25 v1.56 从 grpc/consumer/cron 的清单删除；留这段话是为了说明
+ * **"grpc 没有这条 env"是正确状态**，免得后来人看别的部署有、这里没有就顺手补回来。
  */
 import {resolveDrainBudget} from '../daos/core/policy/drainPolicy.js'
 
