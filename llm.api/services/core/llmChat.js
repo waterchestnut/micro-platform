@@ -39,7 +39,7 @@ import {scheduleCheckpoint, flushCheckpoints} from './session/checkpoint.js'
  */
 import {isClosing} from './session/shutdownState.js'
 import {attachArchive, detachArchive} from './session/runRegistry.js'
-import {CLOSE_ARCHIVE_WAIT_FOR_RUN_MS} from './session/shutdownPolicy.js'
+import {CLOSE_ARCHIVE_WAIT_FOR_RUN_MS, PERSIST_VIA} from './session/shutdownPolicy.js'
 import {truncateToolMessage} from '../../tools/truncate.js'
 import {resolveMemory, safeWorkspaceId} from './memory/policy.js'
 /**
@@ -643,7 +643,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
      * @param {String} [errorMessage] 异常归因文本，写进 message.error 供历史与排障使用
      * @returns {Promise<void>}
      */
-    const persistTurn = async (progress, errorMessage) => {
+    const persistTurn = async (progress, errorMessage, extra = {}) => {
         if (persisted) {
             /** 重复落库会写出两条同 messageCode 的记录，历史与记忆采集都会翻倍 ⇒ 直接拒绝 */
             tlog.warn(`本轮已落库，忽略重复 persistTurn: progress=${progress}`)
@@ -678,6 +678,12 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
              * 压进一个字段就等于把 P-10 重新变回查不出来。
              */
             interruptedBy: progress === 'abort' ? interruptReason() : null,
+            /**
+             * 这条档由哪条路径写下（取值见 PERSIST_VIA）。
+             * 与 interruptedBy 是两个问题：后者是"为什么被打断"，前者是"谁把这段字写下来的"。
+             * 循环入口/出口那两处检查故意留 unattributed —— 给一个看似合理的假来源比留空更坏。
+             */
+            writtenBy: extra.via || PERSIST_VIA.UNATTRIBUTED,
             /** PR-B：过程分段。中间正文从此不再只存在于已经断开的那条 SSE 连接里 */
             segments: segments.list(),
             segmentSummary: segments.summary(),
@@ -784,7 +790,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             tlog.warn(`抢救未落档: 等待 ${Date.now() - tWait}ms 后仍无正文，留给回填扫描处理（写 0 字 abort 会挡住真正的 finish）`)
             return
         }
-        await persistTurn('abort', 'shutdown:process-lost')
+        await persistTurn('abort', 'shutdown:process-lost', {via: PERSIST_VIA.RESCUE})
         tlog.warn(`抢救兜底落档: 等待ms=${Date.now() - tWait}, 并入实时正文=${mergedLive}, answerLen=${answerContent.length}`)
     })
 
@@ -889,7 +895,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                         now: Date.now(),
                     })
                 }
-                await persistTurn('abort')
+                await persistTurn('abort', null, {via: PERSIST_VIA.EARLY_STOP})
                 tlog.warn(`流被打断并就地落档: reason=${drained.stopped}, answerLen=${answerContent.length}, chunkCount=${drained.chunkCount}`)
                 return 'aborted'
             }
@@ -1163,7 +1169,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         }
 
         let answerTokens = calcTextTokenCount(answerContent + answerReasoning, tokenizerOptions.tokenizer)
-        await persistTurn(fb.progress)
+        await persistTurn(fb.progress, null, {via: PERSIST_VIA.NORMAL})
 
         /** 缓存只在真正完成时写：兜底文案进缓存等于把一次失败固化 90 天 */
         if (cacheEligible && fb.progress === 'finish') {
@@ -1202,7 +1208,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         const errProgress = turnErr.kind === 'abort' ? 'abort' : 'error'
         if (!persisted) {
             try {
-                await persistTurn(errProgress, `${turnErr.kind}:${turnErr.message}`)
+                await persistTurn(errProgress, `${turnErr.kind}:${turnErr.message}`, {via: PERSIST_VIA.ERROR})
             } catch (e2) {
                 /** 落库也失败时绝不掩盖原始异常：两份错误各留一次日志 */
                 tlog.error(`异常路径落库失败: ${String(e2?.message || e2).slice(0, 200)}`)
@@ -1289,6 +1295,8 @@ async function saveMessage(query, messageCode, messages, conversationCode, chann
              * 这一列是给我们自己审计用的：事后要能分清当场落的档与补的档。
              */
             interruptedBy: options.interruptedBy,
+            /** 写下这条档的路径：normal / early-stop / rescue / error / backfill / unattributed */
+            writtenBy: options.writtenBy,
             toolOverflows: options.toolOverflows,
         },
         messageTokens: options.messageTokens,
