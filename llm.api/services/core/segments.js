@@ -31,6 +31,12 @@ export const SEGMENT_KINDS = {
     FINALIZE: 'finalize',
     /** 最终回答（正文不重复存，只给计数与指针） */
     ANSWER: 'answer',
+    /**
+     * §8.2/D3 的"半句"：生成被打断时已经产出的那段文字。
+     * 正文同样已在 `message.answer` 里（见 `BODY_IN_ANSWER`），段里只给计数与指针；
+     * 它让"这一轮被打断在何处、当时已说多少字"成为可回放的事实，而不是只剩一条 progress 让人猜。
+     */
+    CANCELLED: 'cancelled',
 }
 
 /** 前端分组用的大类：与 kind 分开，是为了让 kind 可以细化而不影响渲染 */
@@ -64,6 +70,8 @@ export function segmentTitle(kind, tools = [], extra = '') {
             return '工具次数用尽，补一次无工具收尾'
         case SEGMENT_KINDS.ANSWER:
             return '最终回答'
+        case SEGMENT_KINDS.CANCELLED:
+            return '生成被打断，已产出的部分留在答案里'
         default:
             return extra || '过程片段'
     }
@@ -88,7 +96,45 @@ export function segmentCategory(kind) {
  * 正文以 `message.answer` 为准的 kind：这些段的全文已经在 answer 里，
  * 段里再存一份就是同一篇文章占两处（实测一轮 finalize 610 字，重复一份就是 610 字白占）。
  */
-export const BODY_IN_ANSWER = [SEGMENT_KINDS.ANSWER, SEGMENT_KINDS.FINALIZE]
+export const BODY_IN_ANSWER = [SEGMENT_KINDS.ANSWER, SEGMENT_KINDS.FINALIZE, SEGMENT_KINDS.CANCELLED]
+
+/**
+ * @description 判断"这次落库要不要补一段 `cancelled`"（纯函数，判决与写分离）
+ * @param {Object} p 现场
+ * @param {String} p.progress 本次落库的 progress
+ * @param {String} p.answer 即将写进 `message.answer` 的正文
+ * @param {Object[]} [p.sealed] 已经封存的段（按 seq 升序）
+ * @returns {Boolean} 是否该补
+ *
+ * 四条拒绝规则都有对应的真实形状，不是防御性凑数：
+ * - 非 abort ⇒ 没有"被打断"这件事；
+ * - 正文空 ⇒ 没有可标的事实，硬封一段 0 字只会让时间线多一张空卡；
+ * - 最后一段就是同样字数 ⇒ 已经标过了（`persistTurn` 有幂等位，但幂等位挡不住
+ *   同一次里既走早停封存、又走这里的补封）；
+ * - 早停路径已经把同样的正文封成 `answer`/`finalize` ⇒ 再补 `cancelled` 就是**同一句话记两次**，
+ *   而那正是 PR-B 立项时要消灭的东西。
+ */
+export function needsCancelledSegment({progress, answer = '', sealed = []} = {}) {
+    if (progress !== 'abort') {
+        return false
+    }
+    if (!answer || !answer.length) {
+        return false
+    }
+    const last = sealed[sealed.length - 1]
+    if (!last) {
+        return true
+    }
+    const sameBody = last.metrics?.chars === answer.length
+    if (sameBody && (last.kind === SEGMENT_KINDS.CANCELLED
+        || last.kind === SEGMENT_KINDS.ANSWER
+        || last.kind === SEGMENT_KINDS.FINALIZE)) {
+        return false
+    }
+    return true
+}
+
+
 
 /**
  * @description 把原始正文与工具调用折成一段可入库的 segment（纯函数）

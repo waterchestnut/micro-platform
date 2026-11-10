@@ -135,6 +135,27 @@ describe('落库点的接线（llmChat 离线跑不起来，所以守形状）',
         assert.deepEqual(naked, [], `这些 abort 落库点没写打断来源：${JSON.stringify(naked.map(s => s.trim().slice(0, 80)))}`)
         assert.ok(calls.length >= 5, `abort 落库点应不少于 5 个，实际 ${calls.length}`)
     })
+    test('cancelled 段只在唯一落库点封，且必须排在段列表被读走之前', () => {
+        /**
+         * 两个失败模式都静默：
+         * ① 写在四个早退点各一遍 ⇒ 漏一个点就漏一类中断，且四处会各自漂移；
+         * ② 写在 `segments.list()` 之后 ⇒ 封了个寂寞，档案里根本没有这段，
+         *    而代码看起来是对的（这与"配置写在不生效的位置"是同一类错误）。
+         */
+        const src = lines()
+        const at = src.map((l, i) => [l, i]).filter(([l]) => /needsCancelledSegment\(/.test(l) && !/^\s*(\*|\/\/)/.test(l))
+        assert.equal(at.length, 1, `判决点应只有一处，实际 ${at.length}：${JSON.stringify(at.map(([l]) => l.trim().slice(0, 60)))}`)
+        const sealLine = at[0][1]
+        const readLine = src.findIndex(l => /segments:\s*segments\.list\(\)/.test(l))
+        assert.ok(readLine > sealLine, `封段(${sealLine + 1}) 必须早于段被读走(${readLine + 1})，否则档案里没有这一段`)
+        const body = src.slice(sealLine, sealLine + 8).join('\n')
+        assert.match(body, /SEGMENT_KINDS\.CANCELLED/, '封的必须是 cancelled 段')
+        assert.match(body, /text:\s*answerContent/, '正文取当前累积的半句')
+        /** 不用正则：这里要匹配的是"含引号与斜杠的一行 import"，写成正则要一路转义，用 includes 反而没有猜的空间 */
+        const hasImport = src.some(l => l.includes('needsCancelledSegment') && l.includes(`from './segments.js'`))
+        assert.ok(hasImport, '没 import 就无法调用；判据是那一行 import 本身，不是"前 80 行里大概能找到"')
+    })
+
     test('llmLoop 里"理论上不可达"那句话只能以被证伪的形式存在', () => {
         const src = fs.readFileSync(new URL('../../../services/core/llmLoop.js', import.meta.url), 'utf8')
         const hits = src.split(/\r?\n/).filter(l => l.includes('理论上不可达'))

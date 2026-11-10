@@ -20,6 +20,7 @@ import {
     fitSegments,
     fitSegmentsVolume,
     createSegmentLedger,
+    needsCancelledSegment,
 } from '../../../services/core/segments.js'
 
 /* ========================= 标题与大类 ========================= */
@@ -58,16 +59,22 @@ test('sealSegment：形态字段齐全，前端不需要推断任何东西', () 
     assert.equal(s.truncated, false)
 })
 
-test('sealSegment：answer 与 finalize 都不重复存正文，只留计数与指针', () => {
+test('sealSegment：answer / finalize / cancelled 都不重复存正文，只留计数与指针', () => {
     /** 一轮 finalize 实测 610 字：它的输出就是最终答案，段里再存一份就是同一篇文章占两处 */
-    for (const kind of [SEGMENT_KINDS.ANSWER, SEGMENT_KINDS.FINALIZE]) {
+    for (const kind of [SEGMENT_KINDS.ANSWER, SEGMENT_KINDS.FINALIZE, SEGMENT_KINDS.CANCELLED]) {
         const s = sealSegment({kind, text: '最终答案全文', tools: kind === SEGMENT_KINDS.FINALIZE ? [] : undefined})
         assert.equal(s.text, '', kind)
         assert.equal(s.ref, 'answer', `${kind} 要告诉读的人去哪儿找全文`)
         assert.equal(s.metrics.chars, '最终答案全文'.length, '全文在 message.answer 里，这里只留量')
         assert.equal(s.truncated, false, `${kind} 没存正文，不该报截断`)
     }
-    assert.deepEqual(BODY_IN_ANSWER, [SEGMENT_KINDS.ANSWER, SEGMENT_KINDS.FINALIZE])
+    /**
+     * 这条把列表**整体**钉住，所以加类别时必须显式改它——这正是钉住的价值：
+     * `cancelled` 是 §8.2 要求的新类别，而它的半句随 `progress:'abort'` 一起落进 `message.answer`
+     * （dev 实测 `loop-exit` 那轮 answer 存了 53 字），所以它属于"正文在答案里"这一族；
+     * 漏在这里就等于把同一篇半句存两处。
+     */
+    assert.deepEqual(BODY_IN_ANSWER, [SEGMENT_KINDS.ANSWER, SEGMENT_KINDS.FINALIZE, SEGMENT_KINDS.CANCELLED])
 })
 
 test('fitSegmentsVolume：不存正文的段不会被误标成截断', () => {
@@ -208,4 +215,86 @@ test('账本：正常收尾（没补调用）只有 tool-round + answer 两段',
     assert.equal(ledger.list()[1].text, '', 'answer 段全文在 message.answer 里')
     assert.equal(ledger.list()[1].metrics.ms, 500)
     assert.equal(ledger.summary().processChars, '先说一句'.length, 'answer 段不计入过程字数')
+})
+
+/* ========================= §8.2 的 `cancelled` 段（半句成为事实） ========================= */
+
+test('cancelled：SEGMENT_KINDS 里有它，大类是 text（渲染分组不受 kind 细化影响）', () => {
+    assert.equal(SEGMENT_KINDS.CANCELLED, 'cancelled')
+    assert.equal(segmentCategory(SEGMENT_KINDS.CANCELLED), SEGMENT_CATEGORIES.TEXT)
+})
+
+test('cancelled：标题由服务端给，直接说明"被打断"与"字在答案里"', () => {
+    const t = segmentTitle(SEGMENT_KINDS.CANCELLED)
+    /** 要求是"说清被打断 + 正文在哪儿"两件事；用 | 而不是死磕某一个词，免得用例只锁住我的措辞而不是语义 */
+    assert.match(t, /打断|中断/, `标题要说明这一轮是被打断的：${t}`)
+    assert.match(t, /答案|answer/, `标题要告诉读的人去哪儿看正文：${t}（前端不该为此再猜一次，D63 ①）`)
+})
+
+test('cancelled：属于 BODY_IN_ANSWER，段里只给计数与指针', () => {
+    assert.ok(BODY_IN_ANSWER.includes(SEGMENT_KINDS.CANCELLED),
+        '不在这一列就会把同一篇半句存两处（PR-B 立项要消灭的东西）')
+    const seg = sealSegment({seq: 2, kind: SEGMENT_KINDS.CANCELLED, text: '已经说了一半的内容', startedAt: 1000, now: 1800})
+    assert.equal(seg.text, '', '正文不重复存')
+    assert.equal(seg.ref, 'answer')
+    assert.equal(seg.metrics.chars, '已经说了一半的内容'.length, '计数必须是原文真实长度')
+    assert.equal(seg.metrics.ms, 800)
+    assert.equal(seg.truncated, false, '正文不在段里，谈不上截断')
+})
+
+test('needsCancelledSegment：只有 abort 且确实有正文时才封', () => {
+    assert.equal(needsCancelledSegment({progress: 'finish', answer: '半句'}), false)
+    assert.equal(needsCancelledSegment({progress: 'error', answer: '半句'}), false)
+    assert.equal(needsCancelledSegment({progress: 'abort', answer: ''}), false, '空正文硬封只会多一张空卡')
+    assert.equal(needsCancelledSegment({progress: 'abort', answer: '半句', sealed: []}), true)
+})
+
+test('needsCancelledSegment：同样正文已封成 answer/finalize/cancelled 时不重复记', () => {
+    const answer = '这一段是被打断时已经产出的文字'
+    for (const kind of [SEGMENT_KINDS.ANSWER, SEGMENT_KINDS.FINALIZE, SEGMENT_KINDS.CANCELLED]) {
+        assert.equal(needsCancelledSegment({
+            progress: 'abort',
+            answer,
+            sealed: [{kind, metrics: {chars: answer.length}}],
+        }), false, `最后一段已是 ${kind} 且字数相同，再封就是同一句话记两次`)
+    }
+})
+
+test('needsCancelledSegment：工具批段之后被打断要封（dev 实测正是这个形状）', () => {
+    /**
+     * 用例的来源是读数，不是想象：`writtenBy=loop-exit` 那轮 `message.answer` 存了 53 字，
+     * 而段列表里只有 `tool-round`——没有 cancelled 时，"被打断时已经说了 53 字"只能从 answer 长度反推。
+     */
+    assert.equal(needsCancelledSegment({
+        progress: 'abort',
+        answer: 'x'.repeat(53),
+        sealed: [{kind: SEGMENT_KINDS.TOOL_ROUND, metrics: {chars: 0}}],
+    }), true)
+    /** 字数不同也不算"已记录"：答案在封存之后又长了 */
+    assert.equal(needsCancelledSegment({
+        progress: 'abort',
+        answer: 'x'.repeat(60),
+        sealed: [{kind: SEGMENT_KINDS.ANSWER, metrics: {chars: 53}}],
+    }), true)
+})
+
+test('账本：cancelled 也遵守成对与 seq 规则，且不计入过程字数', () => {
+    const calls = []
+    const ledger = createSegmentLedger({events: true, onEvent: (e, p) => calls.push(`${e}:${p.seq}:${p.kind}`)})
+    ledger.seal({kind: SEGMENT_KINDS.TOOL_ROUND, text: '先说一句', tools: ['search'], startedAt: 1000, now: 1400})
+    ledger.seal({kind: SEGMENT_KINDS.CANCELLED, text: '被打断的半句', startedAt: 1400, now: 1900})
+    assert.deepEqual(calls, [
+        'segment_start:1:tool-round', 'segment_end:1:tool-round',
+        'segment_start:2:cancelled', 'segment_end:2:cancelled',
+    ])
+    assert.equal(ledger.list()[1].ref, 'answer')
+    assert.equal(ledger.summary().processChars, '先说一句'.length, 'cancelled 的字在 answer 里，不该算成过程量')
+})
+
+test('cancelled：正文超预算也不写进段里（BODY_IN_ANSWER 优先于截断）', () => {
+    const long = '啊'.repeat(5000)
+    const seg = sealSegment({seq: 1, kind: SEGMENT_KINDS.CANCELLED, text: long, textChars: 100})
+    assert.equal(seg.text, '')
+    assert.equal(seg.metrics.chars, long.length)
+    assert.equal(seg.truncated, false)
 })

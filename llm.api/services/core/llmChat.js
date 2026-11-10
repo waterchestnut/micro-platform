@@ -72,7 +72,7 @@ import {
     exhaustedFallback,
 } from './llmLoop.js'
 /** 过程分段（PR-B）：把被 reset 抹掉的中间正文留住 */
-import {createSegmentLedger, SEGMENT_KINDS} from './segments.js'
+import {createSegmentLedger, SEGMENT_KINDS, needsCancelledSegment} from './segments.js'
 
 const tools = llm.tools
 const logger = llm.logger
@@ -702,6 +702,24 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             tlog.warn(`本轮已落库，忽略重复 persistTurn: progress=${progress}`)
             return
         }
+        /**
+         * §8.2/D3 的"半句成 `cancelled` 段"：判断规则在 `needsCancelledSegment`（纯函数、有穷举用例），
+         * 这里只负责**在唯一落库点**执行一次——写在四个早退点各一遍就会漂移，
+         * 而 `persistTurn` 恰好是那四条路径的汇合处。
+         *
+         * 顺序要求：必须在 `segments.list()` 被读走之前封好，否则档案里就没有这一段；
+         * 协议 3 的客户端也只有在**这里**收到 `segment_end{kind:"cancelled"}`，
+         * 才不必去猜"这条 abort 到底说到哪儿了"。
+         */
+        if (needsCancelledSegment({progress, answer: answerContent, sealed: segments.list()})) {
+            segments.seal({
+                kind: SEGMENT_KINDS.CANCELLED,
+                text: answerContent,
+                startedAt: roundStartedAt,
+                now: Date.now(),
+            })
+        }
+
         /** 现算快照：abort/error 路径不会走到收尾代码，读"稍后赋值"的外层变量会拿到过期初始值 */
         const snap = usageSnapshot()
         /**
