@@ -11,6 +11,27 @@ import {LlmUsage} from '../schema/index.js'
 import {abandonedQuery, DEFAULT_OLDER_THAN_MS, LEDGER_PROGRESS} from '../policy/llmUsagePolicy.js'
 import BaseDac from './BaseDac.js'
 
+/**
+ * `listAbandoned` 的投影。**必须包含服务层读到的每一个字段**，否则回填会静默失效——
+ * 这不是假想：这一版之前它缺了 `progress` 与 `estPromptTokens`，
+ * 于是 `planBackfill` 拿到的 `row.progress` 是 `undefined`，
+ * `isAbandonedRun` 第一句 `progress !== 'processing'` 就判假 ⇒ **9 条候选全部被当成"心跳新鲜"跳过，
+ * 一条都不会回填**，而日志看起来完全正常。
+ * 是谁照出来的：计划视图（自带投影、含 progress）与任务层（走这个投影）给出**相互矛盾的读数**，
+ * 我没有先信任何一边，而是把那 9 行的 `progress`/`updateTime` 直接打出来复算。
+ * 现在这条约束由 `test/services/core/session/abandonedBackfill.test.js` 里的漂移守卫用例把住，
+ * 不再靠"记得加字段"。
+ */
+export const LIST_ABANDONED_SELECT = {
+    /** ↓ 这七个是 services/core/session/abandonedBackfill.js 实际读的字段，缺一个功能就哑 */
+    messageCode: 1, conversationCode: 1, userCode: 1, progress: 1, updateTime: 1,
+    modelCalls: 1, estPromptTokens: 1,
+    /** ↓ 以下只为对账/展示用，缺了不影响判定 */
+    channel: 1, llmModel: 1,
+    billablePromptTokens: 1, completionTokens: 1, upstreamAttempts: 1,
+    fallbackTo: 1, latencyMs: 1, insertTime: 1,
+}
+
 export class LlmUsageDac extends BaseDac {
     constructor(Model) {
         super(Model, 'messageCode')
@@ -154,11 +175,7 @@ export class LlmUsageDac extends BaseDac {
          * 现在 dac 与用例共用同一个函数，规则只存在一份。
          */
         return await LlmUsage.find(abandonedQuery({olderThanMs, now}))
-            .select({
-                messageCode: 1, conversationCode: 1, userCode: 1, channel: 1, llmModel: 1,
-                modelCalls: 1, billablePromptTokens: 1, completionTokens: 1, upstreamAttempts: 1,
-                fallbackTo: 1, latencyMs: 1, insertTime: 1, updateTime: 1,
-            })
+            .select(LIST_ABANDONED_SELECT)
             .lean()
             .limit(limit)
             .exec()

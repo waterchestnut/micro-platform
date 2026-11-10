@@ -26,11 +26,21 @@
  * 需要真依赖时由 `backfillAbandonedRuns` 动态 import（测试一律注入 `dacs`，根本不走到这条路）。
  * 同一原则见 `llmLoop.js` 文件头。
  */
-import {abandonedQuery, DEFAULT_OLDER_THAN_MS, isAbandonedRun} from '../../../daos/core/policy/llmUsagePolicy.js'
+import {abandonedQuery, DEFAULT_OLDER_THAN_MS, isAbandonedRun, LEDGER_PROGRESS} from '../../../daos/core/policy/llmUsagePolicy.js'
 import {shutdownArchiveDecision, PERSIST_VIA} from './shutdownPolicy.js'
 
 /** 回填行的标记：审计时要把"服务端当场落的档"和"事后补的档"分开 */
 export const BACKFILL_MARKER = 'abandoned-backfill'
+
+/**
+ * 回填判定与写档**实际读取的 `llmUsage` 字段**。
+ * 存在理由是有一条漂移守卫用例（`abandonedBackfill.test.js`）拿它去核对
+ * `LIST_ABANDONED_SELECT`：投影少一个字段，回填就会静默失效——
+ * 之前少 `progress` 就是这个形状（`row.progress` 为 undefined ⇒ 全部判成"心跳新鲜"）。
+ */
+export const BACKFILL_ROW_FIELDS = [
+    'messageCode', 'conversationCode', 'userCode', 'progress', 'updateTime', 'modelCalls', 'estPromptTokens',
+]
 
 /**
  * @description 从检查点里把"用户当时问了什么"捞回来（纯函数，可离线测）
@@ -72,7 +82,18 @@ export function planBackfill({row, hasArchive = false, checkpoint = null, olderT
         return {action: 'skip', reason: 'archive-exists', fields: null}
     }
     if (!isAbandonedRun({progress: row.progress, updateTime: row.updateTime, olderThanMs, now})) {
-        return {action: 'skip', reason: 'heartbeat-fresh', fields: null}
+        /**
+         * 这里以前一律报 `heartbeat-fresh`，把两种完全不同的病因压成一条：
+         * "progress 根本不是从中（或字段缺失）" 与 "心跳确实还新"。
+         * 投影缺 `progress` 那次故障，日志上就是一条无可指摘的 `heartbeat-fresh` ⇒ 看不出问题。
+         * 现在分开报，缺字段会写成 `not-processing:missing`，一眼就是数据形状错了。
+         */
+        const p = row.progress ?? 'missing'
+        return {
+            action: 'skip',
+            reason: p !== LEDGER_PROGRESS.PROCESSING ? `not-processing:${p}` : 'heartbeat-fresh',
+            fields: null,
+        }
     }
     const {query} = recoverQueryFromCheckpoints(checkpoint ? [checkpoint] : [])
     /**
