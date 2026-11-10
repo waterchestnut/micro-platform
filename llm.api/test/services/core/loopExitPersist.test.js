@@ -124,6 +124,17 @@ describe('落库点的接线（llmChat 离线跑不起来，所以守形状）',
         assert.deepEqual(direct, [], `仍有 abort 站点直接落 unattributed：${JSON.stringify(direct.map(x => x.trim().slice(0, 70)))}`)
     })
 
+    test('每个 abort 落库点都必须说明"是谁打断的"（interruptedBy 不许漏）', () => {
+        /**
+         * 这条正是底座原来缺的东西：RESCUE 与 EARLY_STOP 站点只带了 via，
+         * 于是 `extInfo.interruptedBy` 落成默认值 `unspecified`——而"用户按停止"与"发版切连接"
+         * 恰恰是这一列要分的两件事。**只能靠人工对比发现的不变量等于没有不变量。**
+         */
+        const calls = lines().filter(l => /persistTurn\(\s*'abort'/.test(l) && !/^\s*(\*|\/\/)/.test(l))
+        const naked = calls.filter(l => !/interruptedBy/.test(l))
+        assert.deepEqual(naked, [], `这些 abort 落库点没写打断来源：${JSON.stringify(naked.map(s => s.trim().slice(0, 80)))}`)
+        assert.ok(calls.length >= 5, `abort 落库点应不少于 5 个，实际 ${calls.length}`)
+    })
     test('llmLoop 里"理论上不可达"那句话只能以被证伪的形式存在', () => {
         const src = fs.readFileSync(new URL('../../../services/core/llmLoop.js', import.meta.url), 'utf8')
         const hits = src.split(/\r?\n/).filter(l => l.includes('理论上不可达'))

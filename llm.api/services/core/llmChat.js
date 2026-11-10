@@ -850,7 +850,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             tlog.warn(`抢救未落档: 等待 ${Date.now() - tWait}ms 后仍无正文，留给回填扫描处理（写 0 字 abort 会挡住真正的 finish）`)
             return
         }
-        await persistTurn('abort', 'shutdown:process-lost', {via: PERSIST_VIA.RESCUE})
+        await persistTurn('abort', 'shutdown:process-lost', {interruptedBy: 'process-lost', via: PERSIST_VIA.RESCUE})
         tlog.warn(`抢救兜底落档: 等待ms=${Date.now() - tWait}, 并入实时正文=${mergedLive}, answerLen=${answerContent.length}`)
     })
 
@@ -968,7 +968,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                         now: Date.now(),
                     })
                 }
-                await persistTurn('abort', null, {via: PERSIST_VIA.EARLY_STOP})
+                await persistTurn('abort', null, {interruptedBy: interruptReason(), via: PERSIST_VIA.EARLY_STOP})
                 tlog.warn(`流被打断并就地落档: reason=${drained.stopped}, answerLen=${answerContent.length}, chunkCount=${drained.chunkCount}`)
                 return 'aborted'
             }
