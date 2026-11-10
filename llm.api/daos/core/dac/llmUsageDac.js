@@ -108,6 +108,34 @@ export class LlmUsageDac extends BaseDac {
     }
 
     /**
+     * @description 原子认领一条遗弃行（回填的前置闸门）
+     * @param {Object} params 参数
+     * @param {String} params.messageCode 本轮标识
+     * @param {Number} [params.olderThanMs] 心跳阈值
+     * @param {Function} [params.now] 时间源
+     * @returns {Promise<Boolean>} 本次是否认领成功
+     * @description
+     * 只有把 `progress` 从 `processing` 改成 `abort` 的那个调用方返回 true。
+     * **为什么必须先认领再写档案**：多进程（两个 pod、或 cron 与人工回填同时跑）下，
+     * 先写档案会产出两条同 `messageCode` 的档案——重复档案同时污染历史与记忆采集，
+     * 而 `messageCode` 上没有唯一索引可以兜底。认领用同一条心跳判据（`abandonedQuery`），
+     * 所以"还没判死"的行不会被抢走。
+     *
+     * 代价要写明：认领后写档前进程崩了，这条会变成"账本 abort、档案没有"。
+     * 窗口是毫秒级，失败方会把 `messageCode` 留在日志里便于人工补——比写重复行的后果轻。
+     */
+    async claimAbandoned({messageCode, olderThanMs = DEFAULT_OLDER_THAN_MS, now = Date.now} = {}) {
+        if (!messageCode) {
+            throw new Error('messageCode 不能为空')
+        }
+        const r = await LlmUsage.updateOne(
+            {...abandonedQuery({olderThanMs, now}), messageCode},
+            {$set: {progress: 'abort', updateTime: new Date()}},
+        )
+        return (r?.modifiedCount ?? 0) === 1
+    }
+
+    /**
      * @description 查"被遗弃的 run"：progress 仍是从中、且早已不再刷新
      * @param {Object} params 参数
      * @param {Number} [params.olderThanMs] 多久没更新算遗弃（**必须大于一次正常 run 的墙钟上限**，否则把在途误判成损失）

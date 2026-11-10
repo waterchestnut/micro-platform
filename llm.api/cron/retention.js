@@ -21,6 +21,7 @@ const cronConfig = llm.config.cron || {}
 
 import {CronJob} from 'cron'
 import {runRetention} from '../tasks/retention.js'
+import {runBackfill} from '../tasks/abandonedBackfill.js'
 
 /** 定时进程不能被一次任务异常带走：记日志继续等下一个周期（参照 callin 的兜底写法） */
 const _fnError = function (err) {
@@ -52,6 +53,35 @@ if (cronConfig.retentionEnabled) {
     logger.info(`cron/retention 已注册 pattern=${pattern} tz=${cronConfig.timezone || 'Asia/Shanghai'} nextDate=${String(job.nextDate?.() ?? '-')}`)
 } else {
     logger.info('cron/retention 未启用（需 cron_retentionEnabled=true），进程存活但不注册任务')
+}
+
+/**
+ * 遗弃 run 回填。两道开关、默认都关（配置注释在 conf/system.config.js 的 cron 段）：
+ * `backfillEnabled` 决定要不要注册，`backfillWrite` 决定是只出计划还是真写档案。
+ * 这个任务改的是**用户会看见的档案行**，所以"开了定时"与"开始写库"必须能分别回退。
+ */
+if (cronConfig.backfillEnabled) {
+    const backfillPattern = cronConfig.backfillPattern || '15 4 * * *'
+    const backfillJob = new CronJob(backfillPattern, async () => {
+        jobs.backfill = jobs.backfill || {executing: false}
+        if (jobs.backfill.executing) {
+            logger.info('abandonedBackfill-任务仍在执行，跳过本次触发')
+            return
+        }
+        jobs.backfill.executing = true
+        try {
+            const ret = await runBackfill({})
+            logger.info(`abandonedBackfill 完成: ${JSON.stringify(ret)}`)
+        } catch (e) {
+            logger.error(`abandonedBackfill 任务异常: ${e.stack || e.message}`)
+        } finally {
+            jobs.backfill.executing = false
+        }
+    }, null, true, cronConfig.timezone || 'Asia/Shanghai')
+    logger.info(`cron/abandonedBackfill 已注册 pattern=${backfillPattern} `
+        + `写档=${cronConfig.backfillWrite ? 'ON' : 'OFF(只出计划)'} nextDate=${String(backfillJob.nextDate?.() ?? '-')}`)
+} else {
+    logger.info('cron/abandonedBackfill 未启用（需 cron_backfillEnabled=true；写库另需 cron_backfillWrite=true）')
 }
 
 process.on('SIGTERM', () => process.exit(0))

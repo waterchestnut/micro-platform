@@ -87,6 +87,17 @@ export default {
         /** 缓存压实与记忆清理；默认关——迁移完成时不改运行行为，env 设 true 开启（多副本靠 redis 锁保证单执行） */
         retentionPattern: process.env['cron_retentionPattern'] || '45 3 * * *',
         retentionEnabled: process.env['cron_retentionEnabled'] === 'true',
+        /**
+         * 遗弃 run 回填（把"账本说在跑、档案却没一行"的行补成一条可见的 abort）。
+         * 两道开关默认都关：这个任务写的是**用户会看见的档案行**，
+         * 所以 Enabled（注册与否）与 Write（只出计划 / 真写库）要能分别回退。
+         */
+        backfillPattern: process.env['cron_backfillPattern'] || '15 4 * * *',
+        backfillEnabled: process.env['cron_backfillEnabled'] === 'true',
+        backfillWrite: process.env['cron_backfillWrite'] === 'true',
+        /** 心跳静默多久算遗弃：必须 ≥ 最长 run 墙钟的 3 倍，否则一次长生成会被判死并补 abort */
+        backfillOlderThanMs: Number(process.env['cron_backfillOlderThanMs']) || 600000,
+        backfillLimit: Number(process.env['cron_backfillLimit']) || 200,
         /** 显式锁时区，避免不同机器时区不一致导致错时 */
         timezone: process.env['cron_timezone'] || 'Asia/Shanghai',
     },
