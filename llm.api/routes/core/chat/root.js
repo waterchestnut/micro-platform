@@ -3,7 +3,9 @@ import {createSseChannel} from '../../../tools/sseChannel.js'
 import {validateChannels} from '../../../conf/llmChannel.js'
 import {chatStreamBodySchema} from '../../../schemas/chatStreamSchema.js'
 import {auditBody} from '../../../tools/schemaAudit.js'
-import {admitRun, releaseRun, snapshot} from '../../../services/core/session/runRegistry.js'
+import {admitRun, releaseRun, snapshot, archiveCount, detachArchive} from '../../../services/core/session/runRegistry.js'
+import {socketCloseAbortDecision} from '../../../services/core/session/shutdownPolicy.js'
+import {isClosing, shutdownStatus} from '../../../services/core/session/shutdownState.js'
 
 const logger = llm.logger
 const tools = llm.tools
@@ -68,8 +70,24 @@ export default async function (fastify, opts) {
         const controller = new AbortController()
         const {signal} = controller
         request.raw.socket.on('close', () => {
-            logger.info(`request closed execChat request.raw.aborted:${request.raw.aborted} request.raw.aborted:${request.raw.destroyed}`)
-            if (request.raw.destroyed) {
+            /**
+             * 断开要不要打断这一轮，判据在 `shutdownPolicy.socketCloseAbortDecision`：
+             * **关闭期间的断开不是用户按停止**。源仓的真实滚动实测：网关只拆客户端侧，
+             * 应用侧连接还活着 ⇒ 被动等 socket close 根本等不到，所以抢救必须自己主动下停止位。
+             *
+             * 这行日志原来有两处必须修：① 同一个字段 `request.raw.aborted` 打了两遍
+             * （第二处本意是 destroyed）；② 不带 reqId/messageCode ⇒ keep-alive 复用时
+             * 一行日志归属不到具体请求。**归属不明的日志不能作为证据**——源仓就因此下错过一次结论。
+             */
+            const callSite = socketCloseAbortDecision({
+                closing: isClosing(),
+                destroyed: request.raw.destroyed,
+                aborted: controller.signal.aborted,
+            })
+            logger.info(`request closed execChat reqId=${request.id}, messageCode=${messageCodeForGate}, `
+                + `aborted=${request.raw.aborted}, destroyed=${request.raw.destroyed}, `
+                + `closing=${isClosing()}, 决策=${callSite.reason}`)
+            if (callSite.abort) {
                 controller.abort()
             }
         })
@@ -123,6 +141,12 @@ export default async function (fastify, opts) {
             if (Number(gateCfg.limit) > 0) {
                 releaseRun(messageCodeForGate)
             }
+            /**
+             * 摘掉落档函数**必须放在闸的 if 外面**：放进 `if (limit > 0)` 就是重复同一个错——
+             * 闸关着时挂上的函数永远不摘 ⇒ archives 只增不减，直到某天关闭时把几百条历史
+             * messageCode 当成"在途 run"去落档。
+             */
+            detachArchive(messageCodeForGate)
         }
         /** 两侧的键都写上：reqId 接 HTTP 层日志，traceId（=messageCode）接 run 层日志与账本 */
         logger.info(`SSE 结束: reqId=${request.id}, seq=${channel.close()}, aborted=${aborted}`)
@@ -143,6 +167,15 @@ export default async function (fastify, opts) {
             response: {},
         },
     }, async function (request, reply) {
+        /**
+         * 身份校验不能省。公网一侧由网关拦 token，但**内部路径不能当成已鉴权**：
+         * 集群里任意 pod 直连 12008 就能匿名读到闸的 limit/active/rejected 与抢救表长度。
+         */
+        if (!request.userInfo?.userCode) {
+            const err = new Error('缺少有效的用户身份（user-info）')
+            err.statusCode = 401
+            throw err
+        }
         const s = snapshot()
         const cfg = llm.config.limits?.concurrentRuns || {}
         return {
@@ -157,6 +190,13 @@ export default async function (fastify, opts) {
             limit: Number(cfg.limit) || 0,
             perUserLimit: Number(cfg.perUserLimit) || 0,
             gateEnabled: (Number(cfg.limit) || 0) > 0,
+            /**
+             * 停机抢救的两个可读事实。放这里的理由很具体：`active` 在闸关闭时恒为 0（设计如此），
+             * 如果抢救表也挂在那张表上，"有没有东西等着被抢救"就变成**查不到**——
+             * 而这是一个必须能被查到的问题（源仓 §25 v1.43 就是在途采样 archiving=1 才证成分表设计）。
+             */
+            archiving: archiveCount(),
+            shutdown: shutdownStatus(),
         }
     })
 }

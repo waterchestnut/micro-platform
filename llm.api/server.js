@@ -9,6 +9,14 @@ import closeWithGrace from 'close-with-grace'
 import Fastify from 'fastify'
 import {accessLoggerOptions} from './logger/index.js'
 import {parseJSON} from './tools/index.js'
+/**
+ * 停机三件套：尺寸换算、状态位、关闭编排（都可离线测）。
+ * 抽出来的原因是本机发不出可用 SIGTERM（Windows 的 taskkill /F 等价 SIGKILL，不触发处理器），
+ * **不可测的关闭逻辑等于没写**。
+ */
+import {resolveCloseGraceDelay} from './services/core/session/shutdownPolicy.js'
+import {beginShutdown} from './services/core/session/shutdownState.js'
+import {closeWithRescue} from './services/core/session/shutdownSequence.js'
 
 // Instantiate Fastify with some config
 const app = Fastify({
@@ -49,12 +57,41 @@ app.register(appService)
  * 2. 关闭序列是**有顺序的**：先在途检查点落地 → 关 mongo → 断两个 redis（见 plugins/lifecycle.js），
  *    顺序反了就是"想续跑但现场没了"。
  */
-const closeListeners = closeWithGrace({delay: process.env.FASTIFY_CLOSE_GRACE_DELAY || 25000},
+/**
+ * 停机尺寸必须走 `resolveCloseGraceDelay` 换算成**数字**（接线自源仓 §25 v1.37–v1.43）。
+ * 旧写法 `process.env.X || 25000` 传下去的是字符串，而 `close-with-grace@2.2` 第 24 行是
+ * `typeof opts.delay === 'number' ? opts.delay : undefined` ⇒ 字符串被判成"无上限"，
+ * **这条 env 从来没生效过**，线上看起来"配了 45s"其实是"没有上限、由 k8s 硬切"。
+ * 源仓实测：`kill` 档 SIGTERM 后仍送了 103,984ms 才自然结束。
+ */
+const closeGrace = resolveCloseGraceDelay({
+    envValue: process.env.FASTIFY_CLOSE_GRACE_DELAY,
+    terminationGraceSeconds: process.env.TERM_GRACE_PERIOD_SECONDS,
+})
+/** 生效值必须成为可读事实：配了却没生效这种事故，靠注释拦不住 */
+app.log.info(`停机宽限: delay=${closeGrace.delayMs}ms, env采纳=${closeGrace.applied}, reason=${closeGrace.reason}`)
+
+const closeListeners = closeWithGrace({delay: closeGrace.delayMs},
     async function ({signal, err, manual}) {
+        /**
+         * 第一件事必须是置停机状态位：在途 run 要靠它区分"用户按停止"与"发版拆连接"。
+         * 放在 app.close() 之后就来不及了——app.close() 会等在途请求，那段等待里断开随时到达。
+         */
+        beginShutdown({signal: signal || (manual ? 'manual' : '')})
         if (err) {
             app.log.error(err)
         }
-        await app.close()
+        /**
+         * 关闭编排在 `closeWithRescue`：先等在途跑完，到点没跑完的**主动落档并停止生成**，
+         * 收尾仍交给 app.close() 的 promise（检查点 flush → 关 mongo → 断 redis）。
+         * 为什么这段必须在 run 之外还有一个主动动作：源仓实测真实滚动里**应用收不到断开事件**
+         * （网关只拆客户端侧），被动等 socket close 等于什么都没做。
+         */
+        await closeWithRescue({
+            app,
+            delayMs: closeGrace.delayMs,
+            log: (msg, obj) => app.log.warn(msg, obj),
+        })
     })
 
 app.addHook('onClose', (instance, done) => {

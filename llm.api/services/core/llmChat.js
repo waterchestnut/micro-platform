@@ -31,6 +31,15 @@ import {buildOverflowTools, isOverflowTool, readOverflow, OVERFLOW_TOOL_NAME} fr
 import {buildCodeTools, isCodeTool, executeCodeTool, codeToolEnabled} from '../sandbox/codeTool.js'
 import {peekSharedSandboxId} from '../sandbox/runner.js'
 import {scheduleCheckpoint, flushCheckpoints} from './session/checkpoint.js'
+/**
+ * 停机三件套（接线自源仓 §25 v1.40–v1.43）：
+ * isClosing 用来区分"用户按停止"与"发版拆连接"（HTTP 层两者都是 destroyed=true，无法分辨）；
+ * attachArchive 让关闭序列能主动抢救，而不是等一个**可能永远不来**的断开事件
+ * ——源仓实测：真实滚动里网关只拆客户端侧，应用侧连接一直活着，所以被动等必然落空。
+ */
+import {isClosing} from './session/shutdownState.js'
+import {attachArchive, detachArchive} from './session/runRegistry.js'
+import {CLOSE_ARCHIVE_WAIT_FOR_RUN_MS} from './session/shutdownPolicy.js'
 import {truncateToolMessage} from '../../tools/truncate.js'
 import {resolveMemory, safeWorkspaceId} from './memory/policy.js'
 /**
@@ -417,6 +426,38 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     let answerContent = ''
     let answerReasoning = ''
     let answerList = []
+    /**
+     * 停机抢救需要的实时正文与停止位（接线自源仓 §25 v1.40–v1.43）。
+     *
+     * 为什么必须有 `liveAnswer`：已累计的正文只存在于 `drainAssistantStream` 的局部变量里，
+     * `answerContent` 要等 drain **返回**才累加；而抢救发生在它返回之前 ⇒
+     * 不加这三个变量，兜底就只能写出 **0 字 abort**，而那条档一旦落下，
+     * `persistTurn` 的幂等保护会把随后真正的 `finish` 永久挡在门外（源仓实测：客户端拿到 6,898 字，档案 0 字）。
+     * 这里只做引用赋值（字符串不可变），不复制、不额外分配。
+     */
+    let liveAnswer = ''
+    let liveReasoning = ''
+    let liveAnswerMerged = false
+    /** 停机抢救的本地停止位：由 `shouldStop` 在帧间检查，命中即带着已生成的正文早退 */
+    let shutdownStopRequested = null
+    /**
+     * @description 把实时正文并进 answerContent（幂等：并过一次就不再并）
+     * @returns {Boolean} 本次是否真的并了
+     */
+    const mergeLiveAnswer = () => {
+        if (liveAnswerMerged || !liveAnswer) {
+            return false
+        }
+        answerContent = liveAnswer
+        answerReasoning = liveReasoning
+        liveAnswerMerged = true
+        return true
+    }
+    /**
+     * @description 打断来源：只由"进程是否已在关闭"区分
+     * @returns {String} process-lost（发版/关机拆连接）或 client-disconnect（用户或网络）
+     */
+    const interruptReason = () => (isClosing() ? 'process-lost' : 'client-disconnect')
     /** 被裁剪掉的工具全文，随消息留档，避免上下文爆炸同时不丢信息 */
     const toolOverflows = []
 
@@ -542,10 +583,29 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             trackCall()
             const finalizeStream = await openai.chat.completions.create(finalizeBody, {signal: options.signal})
             const drained = await drainAssistantStream(finalizeStream, {
-                onDelta: (delta) => {
+                onDelta: (delta, snapshot) => {
+                    liveAnswer = snapshot?.content || liveAnswer
+                    liveReasoning = snapshot?.reasoning || liveReasoning
                     options.streamCallback(JSON.stringify({role: 'assistant', ...delta, messageCode}))
                 },
+                /** 每帧之前问一次：客户端断开（aborted）或抢救下了停止位都要立刻停，别再花钱 */
+                shouldStop: async () => (options.signal?.aborted ? 'aborted' : shutdownStopRequested),
             })
+            /**
+             * 早停就是终态：判据必须是**真值**（源仓就错过一次——写死 `=== 'aborted'`
+             * 把抢救的 `'shutdown-archive'` 整个漏掉，于是 finish 被幂等挡住、档案停在 0 字 abort）。
+             * `liveAnswerMerged` 为真时抢救已经并过正文，不能再累加一次（会变两份）。
+             */
+            if (drained.stopped) {
+                if (!liveAnswerMerged) {
+                    answerContent += drained.content
+                    answerReasoning += drained.reasoning
+                }
+                trackUsage(drained.usage)
+                finalizeInterrupted = true
+                tlog.warn(`无工具收尾调用被打断: reason=${drained.stopped}, answerLen=${answerContent.length}`)
+                return false
+            }
             answerContent += drained.content
             answerReasoning += drained.reasoning
             trackUsage(drained.usage)
@@ -568,6 +628,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     }
     /** break 与"被上限掐断"是两种退出，抽取前无法区分（空答案缺陷因此不可观测）*/
     let loopBroke = false
+    /** 无工具收尾调用是否被打断：打断要走 abort 落档，不能当成"补落成功" */
+    let finalizeInterrupted = false
     /** persistTurn 要落这两个字段，必须在定义 persistTurn 之前就初始化（否则 abort 路径撞上 TDZ）*/
     let loopExit = 'unknown'
     let forcedFinal = false
@@ -589,6 +651,13 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         }
         /** 现算快照：abort/error 路径不会走到收尾代码，读"稍后赋值"的外层变量会拿到过期初始值 */
         const snap = usageSnapshot()
+        /**
+         * 本地 tokenizer 量一次正文 token，两处共用：档案 `answerTokens` 与账本 `estCompletionTokens`。
+         * 为什么账本要多这一列：usage 帧在流的**末尾**，客户端一断或容器一死就永远到不了 ⇒
+         * 被切断的 run 在账本里 `completionTokens` 记 0，而实际生成了几千字 ⇒ 成本报表系统性低估损失。
+         * 归列规矩（源仓 v1.38 定）：**估算归估算列，实测归实测列**，不许互相冒充。
+         */
+        const answerTokensNow = calcTextTokenCount(answerContent + answerReasoning, tokenizerOptions.tokenizer)
         /** 落一条终态检查点（finish/abort），续跑与审计都以此为准 */
         scheduleCp(progress === 'abort' ? 'abort' : 'final', {
             messages: messages.map(m => ({...m})),
@@ -603,13 +672,19 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             /** 把"循环怎么退出的"和"是否补过收尾调用"落进 extInfo，空答案从此可解释、可统计 */
             loopExit,
             forcedFinal,
+            /**
+             * 打断来源单独一列。`progress:'abort'` 必须同时表达"用户按停止"与"发版切连接"两件事，
+             * 而这两件事在运维上是完全不同的问题（前者正常、后者是我们的损失）——
+             * 压进一个字段就等于把 P-10 重新变回查不出来。
+             */
+            interruptedBy: progress === 'abort' ? interruptReason() : null,
             /** PR-B：过程分段。中间正文从此不再只存在于已经断开的那条 SSE 连接里 */
             segments: segments.list(),
             segmentSummary: segments.summary(),
             /** §14/G-6：本 run 的模型用量与调用次数（非缓存 token 为主指标） */
             usage: {...runUsage, ...snap.metrics, callAlert: snap.alert.level},
             messageTokens: calcMessagesTokenCount(messages, tokenizerOptions),
-            answerTokens: calcTextTokenCount(answerContent + answerReasoning, tokenizerOptions.tokenizer),
+            answerTokens: answerTokensNow,
             tokenizerVersion: TOKENIZER_VERSION,
             tools: createBody.tools,
             toolChoice: createBody.tool_choice,
@@ -655,6 +730,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                 billablePromptTokens: snap.metrics.billablePromptTokens,
                 reasoningTokens: runUsage.reasoningTokens,
                 hasUsage: snap.metrics.hasUsage,
+                /** 估算输出（非上游回传）：被切断的 run 唯一的成本量级来源，与实测列分开存 */
+                estCompletionTokens: answerTokensNow,
                 callAlert: snap.alert.level,
                 loopExit,
                 progress,
@@ -682,6 +759,34 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         /** 收尾/中断路径把在途检查点落地，否则续跑现场缺失 */
         await flushCheckpoints()
     }
+
+    /**
+     * 挂上停机抢救用的落档函数（两张表分开的理由见源仓 §25 v1.38：闸默认关着时
+     * 登记表恒空，复用那张表会让"待抢救集合"在默认配置下永远是空的）。
+     *
+     * 两步、顺序不能反（源仓被真机读数纠正过两次）：
+     *  1. 只下停止位 ⇒ run 在下一帧早退，由上面的 `drained.stopped` 分支带着正文自己落档；
+     *  2. 等 CLOSE_ARCHIVE_WAIT_FOR_RUN_MS 仍未落档才兜底；**没正文就什么都不写**，
+     *     留给回填扫描——写一条 0 字 abort 会挡住随后真正的 finish，比留着 processing 更坏。
+     */
+    attachArchive(messageCode, async () => {
+        shutdownStopRequested = 'shutdown-archive'
+        const tWait = Date.now()
+        while (!persisted && Date.now() - tWait < CLOSE_ARCHIVE_WAIT_FOR_RUN_MS) {
+            await new Promise(res => setTimeout(res, 50))
+        }
+        if (persisted) {
+            tlog.info(`抢救只下了停止位，run 自己落档完成: 等待ms=${Date.now() - tWait}, answerLen=${answerContent.length}`)
+            return
+        }
+        const mergedLive = mergeLiveAnswer()
+        if (!(answerContent.length > 0 || answerReasoning.length > 0)) {
+            tlog.warn(`抢救未落档: 等待 ${Date.now() - tWait}ms 后仍无正文，留给回填扫描处理（写 0 字 abort 会挡住真正的 finish）`)
+            return
+        }
+        await persistTurn('abort', 'shutdown:process-lost')
+        tlog.warn(`抢救兜底落档: 等待ms=${Date.now() - tWait}, 并入实时正文=${mergedLive}, answerLen=${answerContent.length}`)
+    })
 
     /** 检查点公共上下文：会话、本轮消息与首帧冻结的记忆快照 */
     const checkpointBase = () => ({
@@ -757,10 +862,37 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
              * 这样循环级测试可以注入假 stream（不依赖 OpenAI 客户端），且 SSE 下发时机与抽取前逐字一致。
              */
             const drained = await drainAssistantStream(chatStream, {
-                onDelta: (delta) => {
+                onDelta: (delta, snapshot) => {
+                    liveAnswer = snapshot?.content || liveAnswer
+                    liveReasoning = snapshot?.reasoning || liveReasoning
                     options.streamCallback(JSON.stringify({role: 'assistant', ...delta, messageCode}))
                 },
+                shouldStop: async () => (options.signal?.aborted ? 'aborted' : shutdownStopRequested),
             })
+            /**
+             * 早停就是终态（判据写真值，理由见上面收尾调用处那条注释）。
+             * 源仓实测：漏判这一次，用户拿到完整回答而档案是 0 字 abort。
+             */
+            if (drained.stopped) {
+                if (!liveAnswerMerged) {
+                    answerContent += drained.content
+                    answerReasoning += drained.reasoning
+                }
+                /** 本 run 的用量：早停也要合并，否则账本会显示"跑了但没花钱" */
+                trackUsage(drained.usage)
+                if (drained.content) {
+                    /** 与源仓同义：早停前那段正文要进过程分段，否则 PR-B 的段留存在这条路径上是空的 */
+                    segments.seal({
+                        kind: SEGMENT_KINDS.ANSWER,
+                        text: drained.content,
+                        startedAt: roundStartedAt,
+                        now: Date.now(),
+                    })
+                }
+                await persistTurn('abort')
+                tlog.warn(`流被打断并就地落档: reason=${drained.stopped}, answerLen=${answerContent.length}, chunkCount=${drained.chunkCount}`)
+                return 'aborted'
+            }
             answerContent += drained.content
             answerReasoning += drained.reasoning
             /** 本 run 的用量：每一轮 create 合并一次（次数已在发起处计过） */
@@ -1152,6 +1284,11 @@ async function saveMessage(query, messageCode, messages, conversationCode, chann
             sources: options.sources,
             toolCalls: options.toolCalls,
             recallStats: options.recallStats,
+            /**
+             * 打断来源。注意它是 message.extInfo 里的字段，前端只读 `progress`（三端已能正确渲染 abort），
+             * 这一列是给我们自己审计用的：事后要能分清当场落的档与补的档。
+             */
+            interruptedBy: options.interruptedBy,
             toolOverflows: options.toolOverflows,
         },
         messageTokens: options.messageTokens,
