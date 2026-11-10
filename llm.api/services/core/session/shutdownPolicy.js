@@ -30,6 +30,32 @@ export const CLOSE_ARCHIVE_RESERVE_MS = 5000
 /** 单条 run 主动落档的时限（毫秒）：一条卡住不能拖死其余所有条 */
 export const CLOSE_ARCHIVE_PER_RUN_TIMEOUT_MS = 1500
 /**
+ * 档案是哪条路径写的（写进 `message.extInfo.writtenBy`）。
+ *
+ * 为什么必须有这个标记：2026-11-10 连续三轮验收里，我都无法回答"这条档是谁写的"——
+ * 客户端收到完整答案而档案是 0 字 abort 那一次（v1.40/v1.41）、
+ * 以及"档案比 abort 事件晚约 1 秒"那一次（v1.43），
+ * **两个解释我都不能排除**，只能靠再花一次长流去猜。
+ * 归因缺失的代价不是"多看一行日志"，而是每次改动都要重跑真实滚动才能验证。
+ *
+ * `unattributed` 是**故意保留**的默认值：它表示"这条档来自我还没区分的路径"，
+ * 而不是"没有来源"。宁可读到 unattributed 也不给一个看似合理的假来源。
+ */
+export const PERSIST_VIA = {
+    /** 正常收尾 */
+    NORMAL: 'normal',
+    /** drain 每帧检查命中停止位 ⇒ 带着已生成正文早退落档 */
+    EARLY_STOP: 'early-stop',
+    /** 关闭序列的兜底抢救（archiveAllInflight 调用） */
+    RESCUE: 'rescue',
+    /** 异常路径（describeError 之后） */
+    ERROR: 'error',
+    /** 循环入口/出口的 aborted 检查（还没区分到具体是哪一处） */
+    UNATTRIBUTED: 'unattributed',
+    /** 事后回填扫描补的档（区别于当场落下的） */
+    BACKFILL: 'backfill',
+}
+/**
  * 抢救置完停止位之后，**先等 run 自己收尾**多久（毫秒）。
  * 必须小于 `CLOSE_ARCHIVE_PER_RUN_TIMEOUT_MS`，否则兜底动作会被外层超时切断，
  * 结果两边都没落成——这是"预算互相吃掉"的老错，这里显式留出余量。

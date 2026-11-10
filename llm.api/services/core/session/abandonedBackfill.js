@@ -27,7 +27,7 @@
  * 同一原则见 `llmLoop.js` 文件头。
  */
 import {abandonedQuery, DEFAULT_OLDER_THAN_MS, isAbandonedRun} from '../../../daos/core/policy/llmUsagePolicy.js'
-import {shutdownArchiveDecision} from './shutdownPolicy.js'
+import {shutdownArchiveDecision, PERSIST_VIA} from './shutdownPolicy.js'
 
 /** 回填行的标记：审计时要把"服务端当场落的档"和"事后补的档"分开 */
 export const BACKFILL_MARKER = 'abandoned-backfill'
@@ -91,6 +91,8 @@ export function planBackfill({row, hasArchive = false, checkpoint = null, olderT
         extInfo: {
             interruptedBy: 'process-lost',
             recoveredBy: BACKFILL_MARKER,
+            /** 事后补的档必须与当场落的档分得开，否则"回填救回多少"永远答不了 */
+            writtenBy: PERSIST_VIA.BACKFILL,
             /** 留量级而不是留正文：让人能判断这条损失有多大 */
             lostChars: 0,
             modelCalls: row.modelCalls || 0,

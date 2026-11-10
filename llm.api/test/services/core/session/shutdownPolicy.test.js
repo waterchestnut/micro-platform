@@ -7,6 +7,7 @@ import {
     shutdownArchiveDecision,
     DEFAULT_CLOSE_GRACE_MS,
     CLOSE_RESERVE_MS,
+    PERSIST_VIA,
 } from '../../../../services/core/session/shutdownPolicy.js'
 
 /**
@@ -107,6 +108,28 @@ describe('socketCloseAbortDecision', () => {
     test('已经打断过就幂等，不再改判', () => {
         assert.deepEqual(socketCloseAbortDecision({closing: true, destroyed: true, aborted: true}),
             {abort: false, reason: 'already-aborted'})
+    })
+})
+
+describe('PERSIST_VIA（档案来源标记）', () => {
+    /**
+     * 这个枚举本身不值钱，值钱的是它让"这条档是谁写的"成为可读事实。
+     * 源仓连续三轮验收（v1.40 的 0 字 abort、v1.43 的"档案比 abort 事件晚 1 秒"）
+     * 都因为缺这个标记而无法归因，只能再花一次长流去猜。
+     */
+    test('取值互不相同，且没有一个是看起来合理的假来源', () => {
+        const vs = Object.values(PERSIST_VIA)
+        assert.equal(new Set(vs).size, vs.length, `取值必须互不相同：${vs.join(',')}`)
+        assert.ok(vs.includes('unattributed'), '保留 unattributed：宁可读到"没区分"，也不给一个假来源')
+        assert.ok(!vs.includes('unknown'), '不许用 unknown 当默认：它会让"我没接线"看起来像"数据本身不明"')
+    })
+
+    test('抢救、早停、回填是三个不同来源（顺序事故只能靠这三者区分）', () => {
+        assert.equal(PERSIST_VIA.RESCUE, 'rescue')
+        assert.equal(PERSIST_VIA.EARLY_STOP, 'early-stop')
+        assert.equal(PERSIST_VIA.BACKFILL, 'backfill')
+        /** 抢救先落、run 后跑完却被 persistTurn 幂等挡住——这种事故要能从档上读出来 */
+        assert.notEqual(PERSIST_VIA.RESCUE, PERSIST_VIA.NORMAL)
     })
 })
 
