@@ -27,7 +27,7 @@ const Jump: React.FC = () => {
     return (
       <WujieReact
         width='100%'
-        height='100%'
+        height='calc(100vh - 64px)'
         name={clientInfo.clientCode}
         url={visitPath}
         sync={true}
@@ -41,7 +41,7 @@ const Jump: React.FC = () => {
     return (
       <iframe
         src={visitPath}
-        style={{width: '100%', height: 'calc(100% - 3px)', border: 'none'}}
+        style={{width: '100%', height: 'calc(100vh - 67px)', border: 'none'}}
         allow='microphone'>
       </iframe>
     )

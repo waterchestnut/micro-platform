@@ -11,8 +11,8 @@ const App: React.FC = () => {
   return (
     // 保活模式，name相同则复用一个子应用实例，改变url无效，必须采用通信的方式告知路由变化
     <iframe
-      src='https://www.jtxuexi.com/'
-      style={{width: '100%', height: 'calc(100% - 3px)'}}
+      src='https://open.maic.chat/'
+      style={{width: '100%', height: 'calc(100vh - 67px)'}}
       frameBorder='0'
       allow='microphone'>
     </iframe>

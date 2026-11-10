@@ -12,7 +12,7 @@ const App: React.FC = () => {
     // 保活模式，name相同则复用一个子应用实例，改变url无效，必须采用通信的方式告知路由变化
     <WujieReact
       width='100%'
-      height='100%'
+      height='calc(100vh - 64px)'
       name='app'
       // @ts-ignore
       url={APP_PLATFORM_BASE}
