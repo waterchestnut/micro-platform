@@ -406,6 +406,34 @@ export default {
         /** 历史供应商名（qwenPlus、deepseek31 …）指向对应档位，老调用方与库里老数据不用改 */
         ...Object.fromEntries(Object.entries(legacyModelAliases).map(([legacy, target]) => [legacy, relayModels[target]])),
     },
+    /**
+     * 上游（中转站）调用的重试与换档。与源仓同名同义、env 也同名：
+     * 一份运维约定覆盖模板与产品，不留"这边配了那边不认"的坑。
+     * **默认关**：不配就与没有这层逻辑时逐字一致（一次失败直接抛给上层）。
+     * 打开后只覆盖**首字节前的失败**——已经吐过字的调用重发会让用户看到重复内容。
+     */
+    upstreamRetry: {
+        enabled: process.env['upstreamRetry_enabled'] === 'true',
+        /** 同一档位最多打几次（含首发）；1 表示不重试但保留换档 */
+        maxAttempts: parseInt(process.env['upstreamRetry_maxAttempts'] || '3', 10),
+        /** 退避基准与上限（毫秒）。满抖动，见 `backoffMs` */
+        baseMs: parseInt(process.env['upstreamRetry_baseMs'] || '300', 10),
+        capMs: parseInt(process.env['upstreamRetry_capMs'] || '4000', 10),
+        /** 备选档位 key（留空=不换档） */
+        fallbackModel: process.env['upstreamRetry_fallbackModel'] || '',
+    },
+    /**
+     * 网关级熔断。存在理由与退避不同：多个模型档常常共用同一个中转出口与同一把 key，
+     * 出口整体不可用时换档救不了，退避只会把"每个请求都失败"摊得更久。
+     * 语义是**连续网关级失败达到阈值后一段时间内直接拒绝**，到期放一条半开探测。
+     * **默认关**。源仓那侧的参数由账本量得（相邻失败 p50=62ms、失败→恢复 p50=9.6s），
+     * 模板沿用同一组默认值，但真实阈值仍应由各服务自己的故障频次定。
+     */
+    upstreamBreaker: {
+        enabled: process.env['upstreamBreaker_enabled'] === 'true',
+        failureThreshold: parseInt(process.env['upstreamBreaker_failureThreshold'] || '5', 10),
+        openMs: parseInt(process.env['upstreamBreaker_openMs'] || '15000', 10),
+    },
     /** 资源服务的配置 */
     resourceConfig: {
         /** 基地址 */

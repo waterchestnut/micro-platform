@@ -7,12 +7,15 @@
  * 再让 `llmChat.js` 反过来消费它——这样后续重构有一张真正的网，而不是靠改完手点。
  *
  * 三条纪律：
- * 1. **零副作用、零外部依赖**：判定所需的谓词（哪些是记忆/溢出/代码工具）由调用方注入，
+ * 1. **零副作用、零 IO 依赖**：判定所需的谓词（哪些是记忆/溢出/代码工具）由调用方注入，
  *    否则本模块会被 `mcp/`、`memory/`、`sandbox/` 的模块级连接拖住，又变成离线不可测。
+ *    唯一允许的 import 是同样纯的判据模块（`./upstreamBreaker.js`：不建连接、不读 env、不碰时钟以外的事物）。
  * 2. **行为必须与抽出前逐字一致**：包括"没有 index 的 tool_call 增量被丢弃"这类看起来像 bug
  *    的现状——**先钉住现状，再在 PR-A 里决定是否改**，不要在抽取的同一刀里夹带修复。
  * 3. 新增的判定表（如断开阶段策略）**只定义不接线**，等 PR-C 用到时再接，避免提前改行为。
  */
+
+import {breakerCountsFailure} from './upstreamBreaker.js'
 
 /* ---------- 协议协商（对应 llmChat.js 的 clientProtocol / emitToolResults） ---------- */
 
@@ -713,11 +716,18 @@ export function canFallbackTo({tokens = 0, target = null, slackTokens = 0} = {})
  * @param {Function} [params.retryAfterMsOf] 从异常里取 429 的 Retry-After（毫秒）
  * @param {Function} [params.fallbackUsable] 换档前的可行性检查 `({usingFallback}) => {ok, reason}`
  * @param {Object} [params.cfg] 重试配置
+ * @param {Object} [params.breaker] 进程内熔断器（`createBreaker`/`getBreaker` 的产物）。
+ *   **不传就是完全旧行为**——这既是渐进上线的要求，也是让本函数保持可测的前提
+ * @param {Function} [params.breakerKeyOf] `({usingFallback}) => 出口键`。
+ *   必须是**当次真正使用的那一档**的出口，否则换档后的失败会记到错误的键上
  * @param {Function} [params.sleep] 等待实现（测试注入，避免真等）
  * @param {Function} [params.log] 观测回调 `({note, ...})`
  * @param {Function} [params.rng] 随机源
  * @returns {Promise<{value: any, attempts: Number, usingFallback: Boolean}>} 成功结果与过程计数
- * @throws 最后一次异常（原样抛出，不包装：上层要按原始错误决定落库形态）
+ * @throws 最后一次异常（原样抛出，不包装：上层要按原始错误决定落库形态）；
+ *   熔断拒绝时抛 `UpstreamCircuitOpenError`（消息自描述 + `retryAfterMs`）——
+ *   `describeError` 只看 `status`，不带特征串的话账本里会退化成一条普通 "api 503"，
+ *   事后分不清"上游回了 503"与"我们自己没打出去"
  * @description
  * `markFirstByte` 是安全边界：`invoke` 内部**每次向客户端下发内容前**都要调它一次。
  * 一旦调过，本次失败就绝不重试（见 `upstreamRetryDecision` 规则 1）。
@@ -734,6 +744,8 @@ export async function withUpstreamRetry({
      */
     fallbackUsable = () => ({ok: true, reason: ''}),
     cfg = {},
+    breaker = null,
+    breakerKeyOf = null,
     sleep = (ms) => new Promise(r => setTimeout(r, ms)),
     log = () => {},
     rng = Math.random,
@@ -744,6 +756,28 @@ export async function withUpstreamRetry({
     while (true) {
         attempt++
         const state = {firstByteSent: false}
+        /**
+         * 熔断问在**打出去之前**。放在 catch 里等于"先烧一次再说"，
+         * 而 D39 要救的场景恰恰是"整个出口已经不行了还在打"。
+         */
+        const bKey = breaker && typeof breakerKeyOf === 'function' ? String(breakerKeyOf({usingFallback}) || '') : ''
+        if (breaker && bKey) {
+            const gate = breaker.allow({key: bKey})
+            if (!gate.allowed) {
+                log({note: '上游熔断中，未发起请求', key: bKey, reason: gate.reason, retryAfterMs: gate.retryAfterMs, phase: gate.phase, attempt})
+                const err = new Error(`UpstreamCircuitOpen: relay 出口熔断中(${gate.reason})，未发起请求 retryAfterMs=${gate.retryAfterMs}`)
+                err.name = 'UpstreamCircuitOpenError'
+                err.retryAfterMs = gate.retryAfterMs
+                err.upstreamKey = bKey
+                /**
+                 * 状态给 503：`describeError` 靠 `status` 归类，调用方与前端按"服务暂不可用"处理是对的。
+                 * 但**不计入熔断**——被自己拒掉的请求不代表上游又坏了一次，
+                 * 否则一旦打开就会靠自我拒绝永远关不上。
+                 */
+                err.status = 503
+                throw err
+            }
+        }
         try {
             const value = await invoke({
                 attempt,
@@ -752,9 +786,27 @@ export async function withUpstreamRetry({
                     state.firstByteSent = true
                 },
             })
+            /** 成功是唯一的"上游恢复了"证据：闭合电路并清零（半开探测成功也走这里） */
+            if (breaker && bKey) {
+                breaker.recordSuccess({key: bKey})
+            }
             return {value, attempts: attempt, usingFallback}
         } catch (e) {
             const errorInfo = errorInfoOf(e)
+            if (breaker && bKey) {
+                /**
+                 * 计不计由 `breakerCountsFailure` 判：上下文超长、内容审核、客户端中断
+                 * 都**不是**出口健康信号——否则一个坏请求就能把所有人的会话熔断掉，
+                 * 那比原来的缺陷更糟。
+                 */
+                const bcls = classifyUpstreamError(errorInfo)
+                const bcnt = breakerCountsFailure({errorInfo, cls: bcls})
+                const st = breaker.recordFailure({key: bKey, counts: bcnt.counts, reason: bcnt.reason})
+                log({
+                    note: '上游失败已交熔断记账', key: bKey, counts: bcnt.counts,
+                    reason: bcnt.reason, phase: st.phase, failures: st.failures,
+                })
+            }
             /**
              * 已经决定要换档、却在换档这一步被可行性检查拦下时，不再回到主档反复试：
              * 主档已经试尽 maxAttempts 次了，回到它只会是同一个 503。
