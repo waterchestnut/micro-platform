@@ -5,6 +5,7 @@
  */
 
 import {Producer, stringSerializers, Consumer, stringDeserializers, Admin} from '@platformatic/kafka'
+import {createDrainController, resolveDrainBudget} from '../core/policy/drainPolicy.js'
 
 const kafkaConfig = llm.config.kafka
 const logger = llm.logger
@@ -100,10 +101,54 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
         deserializers: stringDeserializers
     })
 
-    registerErrorHandler(consumer)
-
     let activeStream = null
     let recreateTimer = null
+
+    /**
+     * 停机排空控制器（判据与源仓同一份：daos/core/policy/drainPolicy.js）。
+     * 为什么不能照抄源仓整个文件：底座这份 kafka client 是另一代实现（没有 stopping / 重建互斥），
+     * 只把"排空"这一层差量接上，其余保持原样 —— 混着搬会把未经验证的改动一起带进来。
+     */
+    const drain = createDrainController()
+
+    registerErrorHandler(consumer, {
+        /**
+         * @description 收到信号后的排空动作（必须先于 close）
+         * @param {String} signal 信号名
+         * @returns {Promise<Object>} 排空结果
+         */
+        onSignal: async (signal) => {
+            const budget = resolveDrainBudget({
+                envValue: process.env.KAFKA_DRAIN_TIMEOUT_MS,
+                terminationGraceSeconds: process.env.TERM_GRACE_PERIOD_SECONDS,
+                preStopSeconds: process.env.PRE_STOP_SECONDS,
+            })
+            const snap = drain.beginDraining()
+            if (activeStream && !activeStream.destroyed) {
+                activeStream.pause()
+            }
+            const r = await drain.waitForDrain(budget.budgetMs)
+            /**
+             * 排空之后、close 之前必须 destroy 流：只 pause 时 close 会报
+             * `Cannot leave group while consuming messages`（源仓 dev 实测），等于没干净退组。
+             * destroy 一定在 waitForDrain 之后 —— 早一步就掐断了正在提交的位点。
+             */
+            const dying = activeStream
+            if (dying && !dying.destroyed) {
+                await new Promise(resolve => {
+                    dying.once('close', resolve)
+                    dying.destroy()
+                    setTimeout(resolve, 2000)
+                })
+            }
+            logger.warn(`Kafka 停机排空: signal=${signal} 预算=${budget.budgetMs}ms(${budget.reason}, env采纳=${budget.applied}) `
+                + `置位时在途=${snap.wasInFlight} 结果=${r.drained ? '已排空' : '超时未排空'} 等待=${r.waitedMs}ms `
+                + `流已销毁=${dying ? String(!!dying.destroyed) : '无流'} `
+                + `未提交=${JSON.stringify(r.pending)}${r.pending.length ? ' ⇒ 这些消息会被其他成员重跑（at-least-once）' : ''}`)
+            return r
+        },
+    })
+
     const withTimeout = (promise, ms) => {
         return Promise.race([
             promise,
@@ -112,6 +157,8 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
     }
 
     async function createStream() {
+        /** 排空期间不再建流：建了就会继续向 broker 要活（分发消息时也会被拒，但那已经是浪费） */
+        if (drain.draining) return null
         if (activeStream && !activeStream.destroyed) {
             activeStream.destroy()
         }
@@ -126,6 +173,16 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
         })
 
         stream.on('data', async (message) => {
+            const ref = `${message.topic}/${message.partition}/${message.offset}`
+            if (!drain.start(ref)) {
+                /**
+                 * 停机中：不处理也**不提交**。提交等于把没干过的活标记成干过（那才是真丢消息）；
+                 * 位点留在原地，leave group 之后由别的成员取走。
+                 */
+                logger.warn(`Kafka 停机中，不接新消息（offset 不提交，留给其他成员）: ${ref}`)
+                stream.pause()
+                return
+            }
             try {
                 logger.info(`Message received [Topic: ${message.topic}, Partition: ${message.partition}, Offset: ${message.offset}]`)
                 stream.pause()
@@ -141,12 +198,14 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
                 } catch (e) {
                     logger.error('Kafka commit failed:' + e)
                 }
-                stream.resume()
+                /** finish 在 commit 之后：排空的定义是"活干完且位点提交已尝试"，不是"callback 返回了" */
+                drain.finish(ref)
+                if (!drain.draining) stream.resume()
             }
         })
 
         stream.on('error', (err) => {
-            if (recreateTimer) return
+            if (drain.draining || recreateTimer) return
             logger.error('Kafka Stream runtime error:' + err + ', will recreate in 3s')
             recreateTimer = setTimeout(() => {
                 recreateTimer = null
@@ -155,7 +214,7 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
         })
 
         stream.on('end', () => {
-            if (recreateTimer) return
+            if (drain.draining || recreateTimer) return
             logger.warn('Stream ended, will recreate in 3s')
             recreateTimer = setTimeout(() => {
                 recreateTimer = null
@@ -175,6 +234,8 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
     })
 
     consumer.on('consumer:group:join', () => {
+        /** createStream 里也有同样的守卫；这里先返回是为了不打那句误导性的 info */
+        if (drain.draining) return
         logger.info('Kafka rebalance completed, creating new stream to fetch fresh data')
         createStream().catch(err => logger.error('Failed to create stream after rebalance:' + err))
     })
@@ -185,8 +246,11 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
 /**
  * 进程出错时消费者错误处理
  * @param {Object} consumer 消费者对象
+ * @param {Object} [hooks] 停机钩子
+ * @param {Function} [hooks.onSignal] 收到 SIGTERM/SIGINT 时**先于 close** 执行的排空动作
+ * @param {Function} [hooks.exit] 退出动作（默认 process.exit；仅测试注入，用于断言真实顺序）
  */
-function registerErrorHandler(consumer) {
+function registerErrorHandler(consumer, hooks = {}) {
     for (let type of ['unhandledRejection', 'uncaughtException']) {
         process.on(type, async e => {
             try {
@@ -203,15 +267,30 @@ function registerErrorHandler(consumer) {
         process.once(type, async () => {
             logger.warn(`Received ${type}, closing consumer gracefully`)
             try {
+                if (typeof hooks.onSignal === 'function') {
+                    try {
+                        await hooks.onSignal(type)
+                    } catch (e) {
+                        /** 排空异常不能吃掉 close：不 leave group 就要白等 sessionTimeout 30s */
+                        logger.error(`Kafka 停机排空异常（继续 close 以触发重新分配）: ${e.stack || e}`)
+                    }
+                }
                 await consumer.close()
             } catch (err) {
                 logger.error(`Error closing consumer on ${type}: ${err}`)
             } finally {
-                process.exit(0)
+                /** 退出动作可注入：会 process.exit 的函数没法被测（顺序断言需要一个记账替身） */
+                ;(hooks.exit || ((code) => process.exit(code)))(0)
             }
         })
     }
 }
+
+/**
+ * 导出只为一条测试：`先排空 → 再 close → 才退出` 是核心不变量，
+ * 不导出就只能靠读代码相信它。
+ */
+export {registerErrorHandler}
 
 export async function listAllGroups() {
     const admin = new Admin({

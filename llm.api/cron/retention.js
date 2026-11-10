@@ -22,6 +22,7 @@ const cronConfig = llm.config.cron || {}
 import {CronJob} from 'cron'
 import {runRetention} from '../tasks/retention.js'
 import {runBackfill} from '../tasks/abandonedBackfill.js'
+import {createDrainController, resolveDrainBudget} from '../daos/core/policy/drainPolicy.js'
 
 /** 定时进程不能被一次任务异常带走：记日志继续等下一个周期（参照 callin 的兜底写法） */
 const _fnError = function (err) {
@@ -32,9 +33,37 @@ process.on('unhandledRejection', _fnError)
 
 const jobs = {}
 
+/**
+ * 停机排空（判据与 kafka 消费者共用一份）。原来这里是 `process.on('SIGTERM', () => process.exit(0))`：
+ * 收到信号就**当场放弃在途任务**。对本进程来说代价不是"少删点数据"，
+ * 而是 runRetention 内部那把 redis 锁（10 分钟窗口）会一直挂着 ——
+ * 下一次触发被锁挡掉，看起来像"定时任务静默失效"。
+ */
+const drain = createDrainController()
+/** @type {Array<Object>} 已注册的 CronJob，停机时逐个 stop */
+const registeredJobs = []
+
+/**
+ * @description 给一轮任务加停机闸门：置位后不再开新轮，在途轮次计入排空等待
+ * @param {String} name 任务名（日志与 pending 标识）
+ * @param {Function} body 任务体
+ * @returns {Promise<void>} 结果
+ */
+async function runGuarded(name, body) {
+    if (!drain.start(name)) {
+        logger.info(`${name}-进程停机中，不开新轮`)
+        return
+    }
+    try {
+        await body()
+    } finally {
+        drain.finish(name)
+    }
+}
+
 if (cronConfig.retentionEnabled) {
     const pattern = cronConfig.retentionPattern || '45 3 * * *'
-    const job = new CronJob(pattern, async () => {
+    const job = new CronJob(pattern, () => runGuarded('retention', async () => {
         jobs.retention = jobs.retention || {executing: false}
         if (jobs.retention.executing) {
             logger.info('retention-任务仍在执行，跳过本次触发')
@@ -49,7 +78,8 @@ if (cronConfig.retentionEnabled) {
         } finally {
             jobs.retention.executing = false
         }
-    }, null, true, cronConfig.timezone || 'Asia/Shanghai')
+    }), null, true, cronConfig.timezone || 'Asia/Shanghai')
+    registeredJobs.push(job)
     logger.info(`cron/retention 已注册 pattern=${pattern} tz=${cronConfig.timezone || 'Asia/Shanghai'} nextDate=${String(job.nextDate?.() ?? '-')}`)
 } else {
     logger.info('cron/retention 未启用（需 cron_retentionEnabled=true），进程存活但不注册任务')
@@ -62,7 +92,7 @@ if (cronConfig.retentionEnabled) {
  */
 if (cronConfig.backfillEnabled) {
     const backfillPattern = cronConfig.backfillPattern || '15 4 * * *'
-    const backfillJob = new CronJob(backfillPattern, async () => {
+    const backfillJob = new CronJob(backfillPattern, () => runGuarded('abandonedBackfill', async () => {
         jobs.backfill = jobs.backfill || {executing: false}
         if (jobs.backfill.executing) {
             logger.info('abandonedBackfill-任务仍在执行，跳过本次触发')
@@ -77,12 +107,47 @@ if (cronConfig.backfillEnabled) {
         } finally {
             jobs.backfill.executing = false
         }
-    }, null, true, cronConfig.timezone || 'Asia/Shanghai')
+    }), null, true, cronConfig.timezone || 'Asia/Shanghai')
+    registeredJobs.push(backfillJob)
     logger.info(`cron/abandonedBackfill 已注册 pattern=${backfillPattern} `
         + `写档=${cronConfig.backfillWrite ? 'ON' : 'OFF(只出计划)'} nextDate=${String(backfillJob.nextDate?.() ?? '-')}`)
 } else {
     logger.info('cron/abandonedBackfill 未启用（需 cron_backfillEnabled=true；写库另需 cron_backfillWrite=true）')
 }
 
-process.on('SIGTERM', () => process.exit(0))
-process.on('SIGINT', () => process.exit(0))
+/**
+ * @description 收到终止信号后的收尾：停注册 → 等在途 → 退出
+ * @param {String} signal 信号名
+ * @returns {Promise<void>} 结果
+ */
+async function shutdown(signal) {
+    const budget = resolveDrainBudget({
+        envValue: process.env.CRON_DRAIN_TIMEOUT_MS,
+        terminationGraceSeconds: process.env.TERM_GRACE_PERIOD_SECONDS,
+        preStopSeconds: process.env.PRE_STOP_SECONDS,
+    })
+    const snap = drain.beginDraining()
+    /** 先 stop 再等：不停的话排空期间 cron 还能再点一轮，等待就永远等不到头 */
+    for (const j of registeredJobs) {
+        try {
+            j.stop()
+        } catch (e) {
+            logger.error(`cron stop 失败（不影响退出）: ${e.stack || e.message}`)
+        }
+    }
+    const r = await drain.waitForDrain(budget.budgetMs)
+    logger.warn(`cron 停机排空: signal=${signal} 预算=${budget.budgetMs}ms(${budget.reason}, env采纳=${budget.applied}) `
+        + `置位时在途=${JSON.stringify(snap.pending)} 结果=${r.drained ? '已排空' : '超时未排空'} 等待=${r.waitedMs}ms `
+        + `未完成=${JSON.stringify(r.pending)}${r.timedOut ? ' ⇒ 可能留下未释放的 redis 锁，下一次触发会被挡到锁过期' : ''}`)
+    process.exit(0)
+}
+
+/** 用 once：收尾里有 await，重复信号不能把流程重入 */
+for (const sig of ['SIGTERM', 'SIGINT']) {
+    process.once(sig, () => {
+        shutdown(sig).catch(e => {
+            logger.error(`cron 停机收尾异常，直接退出: ${e.stack || e.message}`)
+            process.exit(1)
+        })
+    })
+}
