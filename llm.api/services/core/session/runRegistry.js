@@ -117,10 +117,82 @@ export function snapshot() {
 }
 
 /**
+ * 停机落档用的函数表：**与闸的登记表分开存**（同一个文件、两张表）。
+ * 为什么必须分开，是一条会静默失效的坑：`runRegistry` 在闸关闭时**根本不登记**
+ * （`limits_concurrentRuns=0` 是默认值，见上面第 42-50 行）。
+ * 如果关闭序列去遍历那张表，默认配置下集合恒空 ⇒ "我们修好了停机丢档"这句话
+ * 会在所有没开闸的环境里悄悄变成假的。
+ */
+const archives = new Map()
+
+/**
+ * @description 挂上"这一轮的落档函数"，供关闭序列主动调用
+ * @param {String} messageCode 本轮标识
+ * @param {Function} archive 无参异步函数：把当前已有的正文落成终态
+ * @returns {Boolean} 是否挂上（没 messageCode 或不是函数就挂不上，调用方要能看见）
+ */
+export function attachArchive(messageCode, archive) {
+    if (!messageCode || typeof archive !== 'function') {
+        return false
+    }
+    archives.set(messageCode, archive)
+    return true
+}
+
+/**
+ * @description 摘掉落档函数（run 正常收尾后必须摘，否则关闭时会重复落档）
+ * @param {String} messageCode 本轮标识
+ * @returns {Boolean} 是否真的摘掉了
+ */
+export function detachArchive(messageCode) {
+    return archives.delete(messageCode)
+}
+
+/**
+ * @description 当前挂着的落档函数数量（`/runStats` 用它证明"闸关着也有这张表"）
+ * @returns {Number} 数量
+ */
+export function archiveCount() {
+    return archives.size
+}
+
+/**
+ * @description 停机时主动把在途 run 落档（**不等客户端断开被察觉**）
+ * @param {Object} [params] 参数
+ * @param {Number} [params.perRunTimeoutMs] 单条时限：关闭预算是共享的，一条卡死不等于全部卡死
+ * @param {Function} [params.now] 时间源（测试注入）
+ * @returns {Promise<Array<{messageCode: String, ok: Boolean, ms: Number, error: String}>>} 逐条结果
+ *
+ * 三条口径：
+ * 1. 一条失败不影响其他条——这是抢救，不是事务；
+ * 2. 每条都有时限，超时就记失败继续走（否则 SIGKILL 会替我们决定所有人都不落）；
+ * 3. **逐条回报结果**："落了档"只能由这些读数支撑，不能由我的一句话支撑。
+ */
+export async function archiveAllInflight({perRunTimeoutMs = 3000, now = Date.now} = {}) {
+    const entries = [...archives.entries()]
+    const out = []
+    for (const [messageCode, archive] of entries) {
+        const t = now()
+        try {
+            await Promise.race([
+                Promise.resolve(archive()),
+                new Promise((_, reject) => setTimeout(
+                    () => reject(new Error(`archive timeout ${perRunTimeoutMs}ms`)), perRunTimeoutMs)),
+            ])
+            out.push({messageCode, ok: true, ms: now() - t, error: ''})
+        } catch (e) {
+            out.push({messageCode, ok: false, ms: now() - t, error: String(e?.message || e).slice(0, 160)})
+        }
+    }
+    return out
+}
+
+/**
  * @description 清空（只给测试与探针用；线上清空会把在途 run 的额度白送出去）
  * @returns {void}
  */
 export function resetForTest() {
+    archives.clear()
     runs.clear()
     for (const k of Object.keys(counters)) {
         counters[k] = 0

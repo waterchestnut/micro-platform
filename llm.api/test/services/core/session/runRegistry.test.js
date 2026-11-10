@@ -1,6 +1,15 @@
 import {test, describe, beforeEach} from 'node:test'
 import * as assert from 'node:assert'
-import {admitRun, releaseRun, snapshot, resetForTest} from '../../../../services/core/session/runRegistry.js'
+import {
+    admitRun,
+    releaseRun,
+    snapshot,
+    resetForTest,
+    attachArchive,
+    detachArchive,
+    archiveCount,
+    archiveAllInflight,
+} from '../../../../services/core/session/runRegistry.js'
 
 /**
  * 并发闸的计数侧。
@@ -11,6 +20,60 @@ const CFG = {limit: 2, perUserLimit: 0, retryAfterMs: 1500}
 
 beforeEach(() => {
     resetForTest()
+})
+
+describe('archives（停机抢救表）', () => {
+    /**
+     * 这一组用例守的是一条会静默失效的坑：
+     * 闸默认是**关**的（`limits_concurrentRuns=0`），而 `runRegistry` 在关闸时刻意不登记。
+     * 如果停机落档复用了那张表，默认配置下集合恒空 ⇒
+     * "我们修好了停机丢档"这句话会在所有没开闸的环境里悄悄变成假的。
+     */
+    test('关闸时 archives 依然可用（抢救能力不能依赖闸开不开）', () => {
+        const admitted = admitRun({messageCode: 'm1', userCode: 'u1', cfg: {limit: 0}})
+        assert.equal(admitted.admit, true)
+        assert.equal(snapshot().active, 0, '关闸时登记表必须是空的——正因如此才不能复用它')
+        assert.equal(attachArchive('m1', async () => {}), true)
+        assert.equal(archiveCount(), 1)
+    })
+
+    test('attach 需要 messageCode 与函数，缺一个就返回 false（静默挂不上是最难查的）', () => {
+        assert.equal(attachArchive('', async () => {}), false)
+        assert.equal(attachArchive('m1', null), false)
+        assert.equal(attachArchive('m1', async () => {}), true)
+        assert.equal(archiveCount(), 1)
+    })
+
+    test('detach 之后不再被抢救（正常收尾的 run 不该在关闭时被重复落档）', () => {
+        let hits = 0
+        attachArchive('m1', async () => { hits++ })
+        assert.equal(detachArchive('m1'), true)
+        assert.equal(detachArchive('m1'), false, '重复摘要能看出来')
+        return archiveAllInflight({}).then(() => assert.equal(hits, 0))
+    })
+
+    test('archiveAllInflight 逐条回报结果，且一条失败不影响其他条', async () => {
+        const done = []
+        attachArchive('ok1', async () => { done.push('ok1') })
+        attachArchive('boom', async () => { throw new Error('写库失败') })
+        attachArchive('ok2', async () => { done.push('ok2') })
+        const rs = await archiveAllInflight({perRunTimeoutMs: 1000, now: () => 0})
+        assert.equal(rs.length, 3)
+        assert.deepEqual(rs.map(r => `${r.messageCode}:${r.ok}`), ['ok1:true', 'boom:false', 'ok2:true'])
+        assert.match(rs.find(r => r.messageCode === 'boom').error, /写库失败/)
+        /** 失败的原文要带回来：只有 ok/false 的回报无法判断"落档为什么没落" */
+        assert.deepEqual(done, ['ok1', 'ok2'])
+    })
+
+    test('单条卡住会被超时切断，而不是拖死整个关闭序列', async () => {
+        attachArchive('hang', () => new Promise(() => {}))
+        const t = Date.now()
+        const out = await archiveAllInflight({perRunTimeoutMs: 60})
+        assert.equal(out.length, 1)
+        assert.equal(out[0].ok, false)
+        assert.match(out[0].error, /timeout 60ms/)
+        assert.ok(Date.now() - t >= 55, '确实等到了超时点，不是提前返回')
+    })
 })
 
 describe('admitRun / releaseRun', () => {

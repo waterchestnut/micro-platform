@@ -56,7 +56,7 @@ const client = await MongoClient.connect(uri, {serverSelectionTimeoutMS: 15000, 
 const db = client.db(d(/dbName: process\.env\['mongodbConfig_options_dbName'\] \|\| '([^']+)'/, 'xxzx-llm-api'))
 const since = new Date(Date.now() - MINUTES * 60000)
 const rows = await db.collection('llmUsage').find({
-    conversationCode: {$regex: '^(p10-|isv-)'},
+    conversationCode: {$regex: '^(p10-|isv-|sfx-|aab-|logcheck-)'},
     insertTime: {$gte: since},
 }, {projection: {
     _id: 0, conversationCode: 1, progress: 1, modelCalls: 1, upstreamAttempts: 1,
@@ -82,6 +82,18 @@ function sum(xs, k) {
 function byPrefix(p) {
     return rows.filter(r => String(r.conversationCode).startsWith(p))
 }
+/**
+ * @description 空桶时 `Math.min(...[])` 会得到 Infinity，那会被读成"墙钟无穷大"
+ * @param {Array<Object>} xs 行
+ * @returns {Object|null} {min,max} 或 null
+ */
+function rangeOf(xs) {
+    if (!xs.length) {
+        return null
+    }
+    const v = xs.map(r => r.latencyMs || 0)
+    return {min: Math.min(...v), max: Math.max(...v)}
+}
 const g = {
     窗口分钟: MINUTES,
     rollout_drop_p10: (() => {
@@ -89,7 +101,7 @@ const g = {
         return {
             行数: xs.length, 发起调用: sum(xs, 'modelCalls'), attempts: sum(xs, 'upstreamAttempts'),
             输入: sum(xs, 'promptTokens'), 缓存: sum(xs, 'cachedTokens'), 输出: sum(xs, 'completionTokens'),
-            墙钟ms: {min: Math.min(...xs.map(r => r.latencyMs || 0)), max: Math.max(...xs.map(r => r.latencyMs || 0))},
+            墙钟ms: rangeOf(xs),
             进度: [...new Set(xs.map(r => r.progress))],
         }
     })(),
@@ -98,7 +110,22 @@ const g = {
         return {
             行数: xs.length, 发起调用: sum(xs, 'modelCalls'), attempts: sum(xs, 'upstreamAttempts'),
             输入: sum(xs, 'promptTokens'), 缓存: sum(xs, 'cachedTokens'), 输出: sum(xs, 'completionTokens'),
-            墙钟ms: {min: Math.min(...xs.map(r => r.latencyMs || 0)), max: Math.max(...xs.map(r => r.latencyMs || 0))},
+            墙钟ms: rangeOf(xs),
+            进度: [...new Set(xs.map(r => r.progress))],
+        }
+    })(),
+    forensics_sfx: (() => {
+        const xs = byPrefix('sfx-')
+        return {
+            行数: xs.length, 发起调用: sum(xs, 'modelCalls'), 输出: sum(xs, 'completionTokens'),
+            进度: [...new Set(xs.map(r => r.progress))],
+        }
+    })(),
+    abort_archive_aab: (() => {
+        const xs = byPrefix('aab-')
+        return {
+            行数: xs.length, 发起调用: sum(xs, 'modelCalls'), 输出: sum(xs, 'completionTokens'),
+            /** 这一组是 PR-E0.5 的基线与验收：每条只跑到被掐断为止，字数应当远小于长文 */
             进度: [...new Set(xs.map(r => r.progress))],
         }
     })(),

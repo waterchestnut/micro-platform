@@ -198,15 +198,21 @@ export function usageCallAlert({modelCalls = 0, maxIterations = 6, warnAt = null
  * @param {Object} [handlers]
  * @param {Function} [handlers.onDelta] 每个含正文/推理的增量回调 `(delta, snapshot)`；
  *        调用时机与抽取前逐字一致（累加之后、同一 chunk 内），因此 SSE 顺序不变
- * @returns {Promise<{content: String, reasoning: String, toolCalls: Object[], receivedToolCall: Boolean, finishReason: String|null, chunkCount: Number, deltaCount: Number, usage: Object, usageChunks: Number}>}
+ * @param {Function} [handlers.shouldStop] 每帧前询问一次"还要不要继续"，返回真值即早停；
+ *        返回值会原样出现在结果的 `stopped` 字段里。**不给这个回调时行为与抽取前逐字一致**
+ * @returns {Promise<{content: String, reasoning: String, toolCalls: Object[], receivedToolCall: Boolean, finishReason: String|null, chunkCount: Number, deltaCount: Number, usage: Object, usageChunks: Number, stopped: String|null}>}
  *
  * 现状（本函数原样保留，不在这一刀改）：
  * - `chunk.choices[0]` 不做空值防护 ⇒ chunk 缺 `choices` 字段会抛错；`execChat` 当时**没有 try/catch**，
  *   异常直接冒到上层（已在 PR-A 补上）；`choices: []`（末帧 usage）是安全的，且 usage 就在这一帧上取。
  * - 判定"本轮是否要求调用工具"用的是 `delta.tool_calls` **字段是否存在**，不是数组是否非空
  *   ⇒ `tool_calls: []` 也会置 receivedToolCall=true。
+ * - `shouldStop` 是**这一刀新加的**（其余行为逐字不变）：它在**每帧之前**问一次，
+ *   命中就带着已累计的正文早退，`stopped` 里放原因。
+ *   为什么必须落在帧间而不是调用方自己判：调用方的判点全在 drain 返回之后，
+ *   而一次生成可以持续一分多钟——那段窗口里断开既不停止生成也不落档（实测见 v1.38）。
  */
-export async function drainAssistantStream(chunks, {onDelta} = {}) {
+export async function drainAssistantStream(chunks, {onDelta, shouldStop} = {}) {
     let content = ''
     let reasoning = ''
     let toolCalls = []
@@ -216,9 +222,25 @@ export async function drainAssistantStream(chunks, {onDelta} = {}) {
     let deltaCount = 0
     let usage = createEmptyUsage()
     let usageChunks = 0
+    let stopped = null
 
     for await (const chunk of chunks) {
         chunkCount++
+        /**
+         * **每帧先看该不该停**。这一行是 2026-11-10 取证换来的：
+         * 旧版这里没有任何停止判据，`execChat` 的 `signal.aborted` 检查都在 drain **返回之后**
+         * （`llmChat.js:888`、`:1138`），所以一旦进入流式生成，
+         * "客户端已断开"既拦不住生成、也到不了 `persistTurn` ——实测 abort() 之后还送了
+         * 45 秒 / 10,772 字，最后档案无行、账本停 `processing`。
+         * 判据由调用方给（`shouldStop`），这里不自己读全局状态：纯函数才能离线测。
+         */
+        if (shouldStop) {
+            const why = await shouldStop()
+            if (why) {
+                stopped = why
+                break
+            }
+        }
         /**
          * usage 帧必须在 `choices` 判空**之前**取：OpenAI 兼容层的最后一帧是 `{choices: [], usage: {...}}`，
          * 顺序写反就等于永远读不到 token 数（这正是 §14 说的"账本没有数据来源"的代码根因，
@@ -259,7 +281,7 @@ export async function drainAssistantStream(chunks, {onDelta} = {}) {
         }
     }
 
-    return {content, reasoning, toolCalls, receivedToolCall, finishReason, chunkCount, deltaCount, usage, usageChunks}
+    return {content, reasoning, toolCalls, receivedToolCall, finishReason, chunkCount, deltaCount, usage, usageChunks, stopped}
 }
 
 /* ---------- 迭代走向决策（对应 llmChat.js:493-645） ---------- */
