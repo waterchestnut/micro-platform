@@ -259,6 +259,20 @@ export default {
      */
     stream: {
         pingIntervalMs: parseInt(process.env['stream_pingIntervalMs'] || '8000'),
+        /**
+         * PR-C：断线续接的事件日志。默认开——D34 把续接定为可用性下限而不是优化项
+         * （生产入口 Traefik idleTimeout=180s 且无法经 k8s Ingress 注解调整，连接必然被切）。
+         * 三重上限是有意为之：单轮条数 / 单轮字节 / 全进程字节；超了就丢最早的并让续接报 gap，
+         * 宁可让前端知道"续不上、去拿快照"，也不给半套事件。
+         */
+        resume: {
+            enabled: process.env['streamResume_enabled'] !== 'false',
+            maxEvents: parseInt(process.env['streamResume_maxEvents'] || '2000'),
+            maxBytes: parseInt(process.env['streamResume_maxBytes'] || `${2 * 1024 * 1024}`),
+            ttlMs: parseInt(process.env['streamResume_ttlMs'] || '120000'),
+            maxRuns: parseInt(process.env['streamResume_maxRuns'] || '200'),
+            maxTotalBytes: parseInt(process.env['streamResume_maxTotalBytes'] || `${32 * 1024 * 1024}`),
+        },
     },
     /**
      * 账本的实时行（v1.33）。默认开：这条改动的目的就是让"看不见的损失"变得看得见，

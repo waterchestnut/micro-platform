@@ -25,11 +25,14 @@ import {breakerCountsFailure} from './upstreamBreaker.js'
  * @returns {{protocol: Number, emitToolResults: Boolean}}
  */
 export function resolveProtocol(options = {}) {
-    const protocol = Number(options.protocol) >= 2 ? 2 : 1
+    const requested = Number(options.protocol)
+    const protocol = requested >= 3 ? 3 : (requested >= 2 ? 2 : 1)
     return {
         protocol,
         /** 协议 2 的客户端按事件名分派，因此默认下发工具结果；协议 1 需显式开启 */
-        emitToolResults: protocol === 2 || !!options.streamToolResults,
+        emitToolResults: protocol >= 2 || !!options.streamToolResults,
+        /** 段事件（segment_start/segment_end）是协议 3 相对协议 2 的全部内容差异 */
+        emitSegments: protocol >= 3,
     }
 }
 

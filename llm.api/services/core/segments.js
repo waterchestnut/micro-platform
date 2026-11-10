@@ -210,9 +210,36 @@ export function createSegmentLedger({
     textChars = DEFAULT_SEGMENT_TEXT_CHARS,
     maxSegments = DEFAULT_MAX_SEGMENTS,
     totalChars = 12000,
+    events = false,
+    onEvent = () => {},
 } = {}) {
     const segs = []
     let dropped = {count: 0, chars: 0}
+    /** 当前开着的段（仅 events 模式用）。seq 是与 segment_end 的唯一关联键 */
+    let opened = null
+
+    /**
+     * @description 开一段：只在协议 3 下产生事件；同一段未封存前重复 open 会被忽略
+     * @param {Object} [meta] 段的开场信息
+     * @returns {Object|null} 事件载荷；events 关闭时返回 null
+     */
+    const open = (meta = {}) => {
+        if (!events) {
+            return null
+        }
+        if (opened) {
+            return segmentStartEvent(opened)
+        }
+        opened = {
+            seq: segs.length + dropped.count + 1,
+            kind: meta.kind || SEGMENT_KINDS.TOOL_ROUND,
+            title: meta.title || segmentTitle(meta.kind || SEGMENT_KINDS.TOOL_ROUND, meta.tools || [], meta.extra || ''),
+            startedAt: meta.startedAt || Date.now(),
+        }
+        const payload = segmentStartEvent(opened)
+        onEvent('segment_start', payload)
+        return payload
+    }
 
     /**
      * @description 封一段（正文与工具快照就地折好）
@@ -225,6 +252,14 @@ export function createSegmentLedger({
             textChars,
             ...input,
         })
+        /** 不变量：segment_end 绝不单独出现；漏 open 时补发 start */
+        if (events) {
+            if (!opened || opened.seq !== seg.seq) {
+                onEvent('segment_start', segmentStartEvent({seq: seg.seq, kind: seg.kind, title: seg.title}))
+            }
+            onEvent('segment_end', segmentEndEvent(seg))
+            opened = null
+        }
         segs.push(seg)
         const fit = fitSegments(segs, maxSegments)
         segs.length = 0
@@ -269,6 +304,7 @@ export function createSegmentLedger({
     const has = (kind) => segs.some(s => s.kind === kind)
 
     return {
+        open,
         seal,
         list,
         summary,
@@ -276,3 +312,44 @@ export function createSegmentLedger({
         count: () => segs.length,
     }
 }
+/**
+ * `segment_start` 的载荷（协议 3）。
+ * 只带"客户端要开一张什么样的卡"所需的最小字段——**全部由服务端给**（D63 ①）：
+ * 四端共用同一个 x-sdk，让前端从事件序列反推"这是什么阶段"就会长出第四份实现。
+ * @param {Object} p 参数
+ * @param {Number} p.seq 段序号（与对应 `segment_end` 相同，是唯一的关联键）
+ * @param {String} p.kind SEGMENT_KINDS 之一
+ * @param {String} [p.title] 人读标题
+ * @param {String} [p.category] 覆盖分组
+ * @returns {Object} 事件载荷
+ */
+export function segmentStartEvent({seq = 1, kind = SEGMENT_KINDS.TOOL_ROUND, title = '', category = ''} = {}) {
+    return {
+        seq,
+        kind,
+        category: category || segmentCategory(kind),
+        title: title || segmentTitle(kind),
+    }
+}
+
+/**
+ * `segment_end` 的载荷（协议 3）：把已封存的段的**计数与形态**告诉客户端，正文不下发。
+ *
+ * 为什么不下发正文：`extInfo.segments` 落库时才有截断与总预算收敛（`fitSegmentsVolume`），
+ * 实时下发若带正文，就会出现"流里看到的"与"库里回放的"两套字数；
+ * 而段的正文本来就该由 `delta` 流呈现，这里只负责**边界与事实**（多长、截断没、几个工具、耗时）。
+ * @param {Object} seg `sealSegment` 的产物
+ * @returns {Object} 事件载荷
+ */
+export function segmentEndEvent(seg = {}) {
+    return {
+        seq: seg.seq,
+        kind: seg.kind,
+        category: seg.category || segmentCategory(seg.kind),
+        title: seg.title || segmentTitle(seg.kind),
+        metrics: seg.metrics || {chars: 0, toolCount: 0, ms: 0},
+        truncated: Boolean(seg.truncated),
+        ref: seg.ref ?? null,
+    }
+}
+

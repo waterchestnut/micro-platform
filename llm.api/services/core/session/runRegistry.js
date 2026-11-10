@@ -194,9 +194,181 @@ export async function archiveAllInflight({perRunTimeoutMs = 3000, now = Date.now
 export function resetForTest() {
     archives.clear()
     runs.clear()
+    eventLogs.clear()
+    for (const k of Object.keys(logCounters)) {
+        logCounters[k] = 0
+    }
     for (const k of Object.keys(counters)) {
         counters[k] = 0
     }
 }
 
 export default {admitRun, releaseRun, snapshot, resetForTest}
+/**
+ * ------------------------------------------------------------------
+ * 事件日志表（PR-C 的 `/resume` 数据源）
+ * ------------------------------------------------------------------
+ * **与闸的登记表、落档函数表分开存**，理由和 `archives` 完全一样：
+ * `limits_concurrentRuns` 默认 0，此时 `runs` 恒空 ⇒ 如果日志挂在 `runs` 上，
+ * 默认配置下 `/resume` 会**永远查不到任何一轮**，而单元测试里我多半会开着闸测，全绿上线。
+ *
+ * 三条纪律：
+ * 1. **只活在本进程**。跨副本续接需要 Redis（PR-C 已定，§25 的 Redis 运维税那格）。
+ *    这里不假装能跨 pod：dev/prod 多副本时，续接请求落到别的副本会拿到
+ *    `EVENT_LOG_UNAVAILABLE`，那是**诚实的答案**而不是"续上了但少了东西"。
+ * 2. **有界**。条数、字节、时长三重上限；淘汰只丢已结束的 run，**不丢在途的**——
+ *    丢在途的等于把它的数据源删了，比丢一条更旧的严重得多。
+ * 3. 上限变化要能看见：`stats()` 里有 `dropped` 三个计数，`/runStats` 直接读。
+ */
+const DEFAULT_LOG_TTL_MS = 120000
+const DEFAULT_LOG_MAX_RUNS = 200
+const DEFAULT_LOG_MAX_TOTAL_BYTES = 32 * 1024 * 1024
+
+/** messageCode -> {log, finishedAt, ttlMs} */
+const eventLogs = new Map()
+const logCounters = {attached: 0, droppedTtl: 0, droppedCount: 0, droppedBytes: 0}
+
+/**
+ * @description 挂上一轮的事件日志（重复挂同一个键会替换：同一轮重开流时旧日志已失效）
+ * @param {String} messageCode 本轮标识
+ * @param {Object} log `createRunEventLog()` 的产物
+ * @param {Object} [opt] 保留与归属
+ * @param {Number} [opt.ttlMs] 结束后保留时长
+ * @param {String} [opt.userCode] **发起者**：续接时必须同级校验，见下面归属注释
+ * @param {String} [opt.conversationCode] 会话标识（诊断与快照指引用）
+ * @returns {Boolean} 是否挂上（无 messageCode 或 log 不合接口就挂不上）
+ */
+export function attachEventLog(messageCode, log, {ttlMs = DEFAULT_LOG_TTL_MS, userCode = '', conversationCode = ''} = {}) {
+    if (!messageCode || !log || typeof log.since !== 'function' || typeof log.record !== 'function') {
+        return false
+    }
+    eventLogs.set(messageCode, {
+        log,
+        finishedAt: 0,
+        userCode,
+        conversationCode,
+        attachedAt: Date.now(),
+        ttlMs: Number(ttlMs) > 0 ? Number(ttlMs) : DEFAULT_LOG_TTL_MS,
+    })
+    logCounters.attached++
+    sweepEventLogs()
+    return true
+}
+
+/**
+ * @description 取一整条登记项（含归属），过期的顺手清掉
+ * @param {String} messageCode 本轮标识
+ * @returns {Object|null} 登记项
+ *
+ * 归属为什么记在**进程里**而不是查库：`/resume` 的典型场景是"这一轮还在跑，客户端断了"，
+ * 那时 message 表里可能还没有这条 assistant 记录（落库在收尾或中断归档时才发生）。
+ * 查库判归属会在最该续接的时刻判不出，退化成"查不到就放行"——那正好是要防的缺陷。
+ */
+export function getEventLogEntry(messageCode) {
+    const hit = eventLogs.get(messageCode)
+    if (!hit) {
+        return null
+    }
+    if (hit.finishedAt && Date.now() - hit.finishedAt > hit.ttlMs) {
+        eventLogs.delete(messageCode)
+        logCounters.droppedTtl++
+        return null
+    }
+    return hit
+}
+
+/**
+ * @description 取某轮的事件日志
+ * @param {String} messageCode 本轮标识
+ * @returns {Object|null} 日志句柄
+ */
+export function getEventLog(messageCode) {
+    return getEventLogEntry(messageCode)?.log || null
+}
+
+/**
+ * @description 标记该轮已结束（开始计 TTL，并交还日志句柄给调用方收尾）
+ * @param {String} messageCode 本轮标识
+ * @returns {Object|null} 日志句柄；没挂过返回 null
+ */
+export function finishEventLog(messageCode) {
+    const hit = eventLogs.get(messageCode)
+    if (!hit) {
+        return null
+    }
+    hit.finishedAt = Date.now()
+    return hit.log
+}
+
+/**
+ * @description 立即摘掉某轮日志（run 释放时用；幂等）
+ * @param {String} messageCode 本轮标识
+ * @returns {Boolean} 是否真的摘掉了
+ */
+export function detachEventLog(messageCode) {
+    return eventLogs.delete(messageCode)
+}
+
+/**
+ * @description 有界清理：按时长、条数、总量字节三重上限淘汰**已结束的** run
+ * @param {Object} [opt] 参数（测试注入用）
+ * @param {Number} [opt.maxRuns] 同时保留的 run 数上限
+ * @param {Number} [opt.maxTotalBytes] 全部日志的字节总预算
+ * @returns {{scanned: Number, dropped: Number}} 本次清理读数
+ */
+export function sweepEventLogs({maxRuns = DEFAULT_LOG_MAX_RUNS, maxTotalBytes = DEFAULT_LOG_MAX_TOTAL_BYTES} = {}) {
+    const now = Date.now()
+    const capRuns = Number(maxRuns) > 0 ? Number(maxRuns) : DEFAULT_LOG_MAX_RUNS
+    const capBytes = Number(maxTotalBytes) > 0 ? Number(maxTotalBytes) : DEFAULT_LOG_MAX_TOTAL_BYTES
+    const before = eventLogs.size
+    /** 先按时长清：已结束且过期的直接走（在途的永远不动） */
+    for (const [k, v] of [...eventLogs.entries()]) {
+        if (v.finishedAt && now - v.finishedAt > v.ttlMs) {
+            eventLogs.delete(k)
+            logCounters.droppedTtl++
+        }
+    }
+    /** 再按条数清：只从"已结束里最早结束的"开始丢 */
+    const finishedFirst = (a, b) => (a[1].finishedAt || Infinity) - (b[1].finishedAt || Infinity)
+    while (eventLogs.size > capRuns) {
+        const victim = [...eventLogs.entries()].sort(finishedFirst).find(([, v]) => v.finishedAt)
+        if (!victim) {
+            break
+        }
+        eventLogs.delete(victim[0])
+        logCounters.droppedCount++
+    }
+    /** 最后按字节清：同上，且在途的即使很大也不动（它的数据源删不得） */
+    const bytesOf = () => [...eventLogs.values()].reduce((s, v) => s + (v.log?.stats?.().bytes ?? 0), 0)
+    while (bytesOf() > capBytes) {
+        const victim = [...eventLogs.entries()].sort(finishedFirst).find(([, v]) => v.finishedAt)
+        if (!victim) {
+            break
+        }
+        eventLogs.delete(victim[0])
+        logCounters.droppedBytes++
+    }
+    return {scanned: before, dropped: before - eventLogs.size}
+}
+
+/**
+ * @description 日志表读数（给 `/runStats` 与探针）
+ * @returns {Object} 读数
+ */
+export function eventLogStats() {
+    const list = [...eventLogs.values()]
+    const bytes = list.reduce((s, v) => s + (v.log?.stats?.().bytes ?? 0), 0)
+    return {
+        attached: logCounters.attached,
+        retained: eventLogs.size,
+        inflight: list.filter(v => !v.finishedAt).length,
+        finished: list.filter(v => v.finishedAt).length,
+        bytes,
+        dropped: {
+            ttl: logCounters.droppedTtl,
+            count: logCounters.droppedCount,
+            bytes: logCounters.droppedBytes,
+        },
+    }
+}
+

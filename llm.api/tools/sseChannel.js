@@ -41,6 +41,7 @@ export function createSseChannel(sink, opts = {}) {
     const {
         pingIntervalMs = DEFAULT_PING_INTERVAL_MS,
         onError = () => { /* 默认吞掉：断线是正常路径 */ },
+        onEmit = () => {},
         now = () => Date.now(),
         setInterval: setIntervalImpl = setInterval,
         clearInterval: clearIntervalImpl = clearInterval,
@@ -99,6 +100,12 @@ export function createSseChannel(sink, opts = {}) {
             return null
         }
         seq = next
+        /** 入日志的时机：号已落下、帧已写出。抛错不能打断流（日志是旁路观测） */
+        try {
+            onEmit(seq, event || 'delta', data)
+        } catch (e) {
+            onError(e)
+        }
         return seq
     }
 
@@ -107,6 +114,25 @@ export function createSseChannel(sink, opts = {}) {
      * @returns {Boolean} 是否写入成功
      */
     const ping = () => writeFrame(serializeSSEEvent({comment: 'ping'}))
+
+    /**
+     * @description 重放一条**别的通道产生的**帧：保留原始 `id`，不推进本通道游标
+     * @param {Object} item 帧（`{seq, event, data}`，来自 `runEventLog`）
+     * @returns {Boolean} 是否写入成功
+     *
+     * 为什么不复用 `emit`：`emit` 会重新分配号。续接时客户端的游标建立在**那一轮当时的号**上，
+     * 换成新号客户端下次就带错游标（要么漏、要么无限重放）。
+     */
+    const replay = (item = {}) => {
+        if (!(Number(item.seq) > 0)) {
+            return false
+        }
+        return writeFrame(serializeSSEEvent({
+            id: String(item.seq),
+            event: item.event || 'delta',
+            data: item.data,
+        }))
+    }
 
     /**
      * @description 启动心跳定时器；重复调用不会起第二个定时器
@@ -148,6 +174,7 @@ export function createSseChannel(sink, opts = {}) {
     return {
         emit,
         ping,
+        replay,
         close,
         getSeq: () => seq,
         isOpen: () => open,

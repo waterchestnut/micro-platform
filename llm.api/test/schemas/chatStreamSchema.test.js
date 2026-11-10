@@ -77,10 +77,15 @@ test('skillLoadMode 只接受枚举值', () => {
 })
 
 test('protocol 只接受已约定的版本', () => {
-  for (const p of [1, 2]) {
+  /**
+   * 3 以前在这里当"未定义的协议版本"用（当时确实没实现）。
+   * 协议 3 落地后它进接受集，拒绝样本换成 4。这条用例是 schema 闸门的守护：
+   * resolveProtocol 认几档不重要，schema 不放行请求就在门口 400。
+   */
+  for (const p of [1, 2, 3]) {
     ok({query: 'q', conversationCode: 'c1', options: {protocol: p}}, `protocol=${p}`)
   }
-  bad({query: 'q', conversationCode: 'c1', options: {protocol: 3}}, '未定义的协议版本')
+  bad({query: 'q', conversationCode: 'c1', options: {protocol: 4}}, '未定义的协议版本')
   bad({query: 'q', conversationCode: 'c1', options: {protocol: 'x'}}, '非数字协议版本')
 })
 

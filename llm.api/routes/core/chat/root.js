@@ -1,9 +1,10 @@
 import {execChat} from '../../../services/core/llmChat.js'
 import {createSseChannel} from '../../../tools/sseChannel.js'
 import {validateChannels} from '../../../conf/llmChannel.js'
-import {chatStreamBodySchema} from '../../../schemas/chatStreamSchema.js'
+import {chatStreamBodySchema, chatResumeBodySchema} from '../../../schemas/chatStreamSchema.js'
 import {auditBody} from '../../../tools/schemaAudit.js'
-import {admitRun, releaseRun, snapshot, archiveCount, detachArchive} from '../../../services/core/session/runRegistry.js'
+import {admitRun, releaseRun, snapshot, archiveCount, detachArchive, attachEventLog, finishEventLog, getEventLogEntry, eventLogStats} from '../../../services/core/session/runRegistry.js'
+import {createRunEventLog} from '../../../services/core/session/runEventLog.js'
 import {socketCloseAbortDecision} from '../../../services/core/session/shutdownPolicy.js'
 import {isClosing, shutdownStatus} from '../../../services/core/session/shutdownState.js'
 
@@ -108,9 +109,32 @@ export default async function (fastify, opts) {
          * 心跳不是优化项——生产入口 Traefik 的 `idleTimeout` 180s 且无法用注解调整（§2B.2），
          * 工具执行/长思考阶段一旦静默超时，连接必被掐断。
          */
+        /**
+         * PR-C：本轮的事件日志（/resume 的数据源），挂在通道的**写成功路径**上，
+         * 所以记下的每一条都真的写出去过（与"号只在写成功时落下"是同一条纪律）。
+         */
+        const resumeCfg = llm.config.stream?.resume || {}
+        const resumeEnabled = resumeCfg.enabled !== false
+        const eventLog = resumeEnabled
+            ? createRunEventLog({
+                maxEvents: resumeCfg.maxEvents,
+                maxBytes: resumeCfg.maxBytes,
+                messageCode: messageCodeForGate,
+            })
+            : null
+        if (eventLog) {
+            /** 归属一起记下：续接时判越权用，此刻库里可能还没有这条 message */
+            attachEventLog(messageCodeForGate, eventLog, {
+                ttlMs: resumeCfg.ttlMs,
+                userCode: request.userInfo.userCode,
+                conversationCode: request.reqParams?.conversationCode,
+            })
+        }
         const channel = createSseChannel(stream, {
             pingIntervalMs: llm.config.stream?.pingIntervalMs,
             onError: (e) => logger.warn(`SSE 写入失败（多半是客户端断开）: ${String(e?.message || e).slice(0, 160)}`),
+            /** 入日志失败绝不打断流：丢了记录只是让续接报 gap，抛出去就是把一轮正常回答弄死 */
+            onEmit: (seq, event, data) => eventLog?.record(seq, event, data),
         })
         let aborted = false
         try {
@@ -147,12 +171,188 @@ export default async function (fastify, opts) {
              * messageCode 当成"在途 run"去落档。
              */
             detachArchive(messageCodeForGate)
+            /** 标结束同样**不能放进闸的 if 里**：只有标了，TTL 才开始走、字节预算才把它当可淘汰对象 */
+            if (eventLog) {
+                finishEventLog(messageCodeForGate)
+            }
         }
         /** 两侧的键都写上：reqId 接 HTTP 层日志，traceId（=messageCode）接 run 层日志与账本 */
         logger.info(`SSE 结束: reqId=${request.id}, seq=${channel.close()}, aborted=${aborted}`)
         stream.end()
+        /** 反了会让"最后一帧已写出但没记录"，续接就少尾巴一帧 */
+        eventLog?.close()
         return reply
     })
+
+    /**
+     * PR-C：断线续接（D34 把它定为**可用性下限**，不是优化项）。
+     *
+     * 语义（§8.1 第一种 resume）：**无新输入**，只补发 `seq > lastSeq` 的已送达事件。
+     * 三条不可让的口径：
+     * 1. **gap 是一等返回**（§734）：缓冲过期/游标失效时给机器可读错误体，而不是裸 410，
+     *    前端据此走快照重建；gap 时**一条事件都不发**——半套正文会被当成完整回答；
+     * 2. 必须校归属：日志里记的是**这个进程里这一轮的原始帧**，含用户刚问的话与模型答的内容，
+     *    任何人拿别人的 messageCode 就能读走——这与我们正在收口的"能读别人会话"是同一类缺陷；
+     * 3. 日志在进程内 ⇒ **跨副本续不上是事实**，如实回 `EVENT_LOG_UNAVAILABLE`，
+     *    不做"查不到就当成没断过"的假成功。
+     */
+    fastify.post('/stream/resume', {
+        schema: {
+            description: '断线后续接：按已收到的事件游标补发本轮剩余 SSE 事件（无新输入）',
+            summary: '流式对话续接',
+            tags: ['llm'],
+            body: chatResumeBodySchema,
+        },
+    }, async function (request, reply) {
+        if (!request.userInfo?.userCode) {
+            const err = new Error('缺少有效的用户身份（user-info）')
+            err.statusCode = 401
+            throw err
+        }
+        const messageCode = request.reqParams?.messageCode
+        /**
+         * 游标来源有两个，优先体、退化到头：浏览器原生 EventSource 重连只带 `Last-Event-ID`，
+         * 而我们的四端是手写 POST。两个都不给**不能当 0 处理**——0 意思是"从头全量重放"，
+         * 那会让一次漏传参数变成整轮内容的流量放大，宁可 400。
+         */
+        const headerLast = Number(request.headers['last-event-id'])
+        const rawLast = request.reqParams?.lastSeq ?? (Number.isInteger(headerLast) ? headerLast : undefined)
+        if (rawLast === undefined || !Number.isInteger(Number(rawLast)) || Number(rawLast) < 0) {
+            const err = new Error('缺少有效的游标：请提供 lastSeq（或 Last-Event-ID 头），值为已完整收到的事件号')
+            err.statusCode = 400
+            throw err
+        }
+        const lastSeq = Number(rawLast)
+
+        const entry = getEventLogEntry(messageCode)
+        if (!entry) {
+            /** 未知/已过期/不在本副本：给可判别的码，前端与探针都能区分"这轮不存在"和"这轮在别的 pod 上" */
+            return reply.code(404).send({
+                code: 'EVENT_LOG_UNAVAILABLE',
+                msg: '本轮事件日志不可用（已结束并过期、或该轮在别的副本上）',
+                messageCode,
+                snapshotUrl: `/core/message/detail?messageCode=${messageCode}`,
+                /** 必须显式写：不写 `preSerialization` 会补 `statusCode:200`，响应体就与 HTTP 状态不一致 */
+                statusCode: 404,
+            })
+        }
+        if (entry.userCode && entry.userCode !== request.userInfo.userCode) {
+            logger.warn(`续接越权拒绝: messageCode=${messageCode}, 归属=${entry.userCode}, 请求=${request.userInfo.userCode}`)
+            const err = new Error('无权续接该消息的流')
+            err.statusCode = 403
+            throw err
+        }
+
+        /**
+         * 续接的帧必须带**原始号**，所以走 `channel.replay` 而不是 `emit`：
+         * `emit` 会重新分配号，客户端的游标体系就会错位（要么漏事件，要么无限重放）。
+         *
+         * 顺序上有个坑，这里刻意绕开：`replayThenLive` 是**同步下发**补发帧的，
+         * 若那时头还没写出去，帧就落在无头的响应上。所以先缓冲，判完再决定写什么：
+         * - gap ⇒ 响应还没开始 ⇒ **直接回结构化 410**（这才叫"一等返回"，帧里塞 gap 是次品）；
+         * - 无 gap ⇒ 写 SSE 头、把缓冲刷出去、继续直播。
+         */
+        /**
+         * 单一订阅、两个阶段：补发期先进缓冲，写完 SSE 头之后**同一个回调**改为直发。
+         * 为什么不用"cancel 掉再 subscribe 一次"：那样两次订阅之间产生的事件谁都没接住，
+         * 而这段代码的风险恰恰全集中在"补发与直播的接缝"上。
+         * 切换点安全是因为从 `replayThenLive` 到 `streaming = true` 之间没有 await，
+         * 单线程下不可能有事件插进来。
+         */
+        const buffer = []
+        let ended = false
+        let streaming = false
+        /** @type {Function|null} 帧写出器：写完 SSE 头才有通道，之前先进缓冲 */
+        let writer = null
+
+        /**
+         * @description 日志条目的唯一出口
+         * @param {Object} item 日志条目
+         * @returns {void}
+         */
+        const onItem = (item) => {
+            if (item.event === 'done' || item.event === 'abort' || item.event === 'error') {
+                ended = true
+            }
+            if (streaming && writer) {
+                writer(item)
+            } else {
+                buffer.push(item)
+            }
+        }
+
+        const {cancel, result} = entry.log.replayThenLive(lastSeq, onItem)
+
+        if (result.gap) {
+            cancel()
+            logger.info(`续接游标过期: messageCode=${messageCode}, lastSeq=${lastSeq}, oldest=${result.gap.oldest}`)
+            /** `statusCode` 在这里补而不是写进 `gapBody()`：日志模块不该知道 HTTP 状态码 */
+            return reply.code(410).send({...entry.log.gapBody(result.gap), statusCode: 410})
+        }
+
+        const stream = reply.raw
+        stream.writeHead(200, {
+            'Content-Type': 'text/event-stream; charset=utf-8',
+            Connection: 'keep-alive',
+            'Cache-Control': 'no-cache,no-transform',
+            'x-no-compression': 1,
+            /**
+             * 本轮已产出的最大号：游标超前（客户端其实已经收全）时它能直接判定"无需重放"，
+             * 不用等一个空流再自己猜。
+             */
+            'x-run-last-seq': String(entry.log.latest()),
+        })
+        const resumeChannel = createSseChannel(stream, {
+            pingIntervalMs: llm.config.stream?.pingIntervalMs,
+            onError: (e) => logger.warn(`续接写入失败（多半又断了）: ${String(e?.message || e).slice(0, 160)}`),
+        })
+
+        /** 重放保留原始号：走 `replay` 不走 `emit`（`emit` 会重新分配号，客户端游标就错位） */
+        writer = (item) => resumeChannel.replay(item)
+        for (const it of buffer) {
+            writer(it)
+        }
+        /** 缓冲倒空、通道就绪：从这里起新事件直接写，不再进缓冲 */
+        streaming = true
+
+        let timer = null
+        const stop = () => {
+            cancel()
+            resumeChannel.close()
+            if (timer) {
+                clearTimeout(timer)
+                timer = null
+            }
+            if (!stream.writableEnded) {
+                stream.end()
+            }
+        }
+        stream.on('close', stop)
+
+        if (ended || entry.finishedAt) {
+            /**
+             * 两种都直接收流：见终结帧 ⇒ 正常结束；该轮已结束却没见终结帧 ⇒
+             * **日志里没有就是没有**，不补造一帧 `abort`。编造事件就是伪造事实，
+             * 与回填那格修掉的"把推断当读数"是同一类错。
+             */
+            stop()
+        } else {
+            /**
+             * run 还在跑：留着直播（`onItem` 已切成直发），直到终结帧或下面这个保险。
+             * 定时器不是主路径——客户端在直播中再断开时我们不一定立刻察觉
+             * （`write` 要到失败才走 `onError`），没有它这条连接可能一直挂着。
+             */
+            const idleMs = Number(llm.config.stream?.resume?.ttlMs) || 120000
+            timer = setTimeout(() => {
+                logger.info(`续接流超时收尾: messageCode=${messageCode}, seq=${entry.log.latest()}, ended=${ended}`)
+                stop()
+            }, idleMs)
+            timer.unref?.()
+        }
+        logger.info(`续接开始: messageCode=${messageCode}, lastSeq=${lastSeq}, latest=${entry.log.latest()}, 补发=${buffer.length}, user=${request.userInfo.userCode}`)
+        return reply
+    })
+
 
     /**
      * 并发闸的读数（PR-0.4）。
@@ -197,6 +397,17 @@ export default async function (fastify, opts) {
              */
             archiving: archiveCount(),
             shutdown: shutdownStatus(),
+            /**
+             * PR-C 事件日志读数。内存涨了没人看得见的东西，必须在这里可见；
+             * dropped.* 三个数是续接失败的原因分类（过期 / 超条数 / 超字节）。
+             */
+            eventLog: {
+                ...eventLogStats(),
+                enabled: llm.config.stream?.resume?.enabled !== false,
+                ttlMs: llm.config.stream?.resume?.ttlMs,
+                maxRuns: llm.config.stream?.resume?.maxRuns,
+                maxTotalBytes: llm.config.stream?.resume?.maxTotalBytes,
+            },
         }
     })
 }

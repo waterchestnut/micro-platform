@@ -243,3 +243,122 @@ test('不变量 2：失败前已成功送达的号仍然连续（不是一失败
     assert.equal(ch.getSeq(), 2, '游标停在最后一个真正送达的号上')
     assert.equal(ch.close(), 2, 'close 回报的末号也必须是真的')
 })
+/* ============ PR-C：onEmit（事件日志的挂载点）与 replay（续接重放） ============ */
+
+test('onEmit 只在写成功时回调，且收到的是本帧的号/事件名/载荷', () => {
+    const frames = []
+    const seen = []
+    const sink = {write: (c) => frames.push(c)}
+    const ch = createSseChannel(sink, {
+        pingIntervalMs: 0,
+        now: () => 0,
+        onEmit: (seq, event, data) => seen.push({seq, event, data}),
+    })
+    ch.emit('你好', 'delta')
+    ch.emit('{"a":1}', 'meta')
+    assert.deepEqual(seen, [
+        {seq: 1, event: 'delta', data: '你好'},
+        {seq: 2, event: 'meta', data: '{"a":1}'},
+    ])
+})
+
+test('onEmit 缺省事件名与 emit 一致（都是 delta），日志里不能出现空事件名', () => {
+    const seen = []
+    const ch = createSseChannel({write() {}}, {pingIntervalMs: 0, now: () => 0, onEmit: (s, e) => seen.push(e)})
+    ch.emit('x')
+    assert.deepEqual(seen, ['delta'])
+})
+
+test('写失败的帧不进 onEmit —— 这是 §19 第 2 条与"日志里不可辨空洞"的分界线', () => {
+    const seen = []
+    let fail = false
+    const sink = {write(c) {
+        if (fail) {
+            throw new Error('EPIPE')
+        }
+        return c
+    }}
+    const ch = createSseChannel(sink, {
+        pingIntervalMs: 0,
+        now: () => 0,
+        onEmit: (seq) => seen.push(seq),
+    })
+    ch.emit('一', 'delta')
+    fail = true
+    ch.emit('二', 'delta')
+    assert.deepEqual(seen, [1], '失败那帧绝不能记进日志：记了就等于宣称送达')
+})
+
+test('onEmit 抛错不能打断流（日志是旁路观测，不是关键路径）', () => {
+    const frames = []
+    const errors = []
+    const ch = createSseChannel({write: (c) => frames.push(c)}, {
+        pingIntervalMs: 0,
+        now: () => 0,
+        onError: (e) => errors.push(e.message),
+        onEmit: () => {
+            throw new Error('日志炸了')
+        },
+    })
+    assert.doesNotThrow(() => ch.emit('x', 'delta'))
+    assert.equal(frames.length, 1, '帧必须已经写出去了')
+    assert.equal(errors[0], '日志炸了', '但错要能被看见')
+})
+
+test('心跳不触发 onEmit（不变量 4：注释帧不是业务事件）', () => {
+    const seen = []
+    const frames = []
+    const ch = createSseChannel({write: (c) => frames.push(c)}, {
+        pingIntervalMs: 0,
+        now: () => 0,
+        onEmit: (seq) => seen.push(seq),
+    })
+    ch.ping()
+    ch.ping()
+    assert.deepEqual(seen, [], '心跳一条都不能进日志，否则续接会把 ping 当成事件重放')
+    assert.equal(ch.getSeq(), 0)
+    assert.ok(frames.every(f => /^:ping/m.test(f)), '发出去的确实都是注释帧')
+})
+
+test('replay 保留原始 id，且**不推进**本通道游标（续接的号属于那一轮，不属于这个连接）', () => {
+    const frames = []
+    const ch = createSseChannel({write: (c) => frames.push(c)}, {pingIntervalMs: 0, now: () => 0})
+    assert.equal(ch.replay({seq: 17, event: 'segment_start', data: '{"seq":1}'}), true)
+    assert.equal(ch.replay({seq: 18, event: 'segment_end', data: '{"seq":1}'}), true)
+    assert.match(frames[0], /^id:17\nevent:segment_start\ndata:\{"seq":1\}/, JSON.stringify(frames[0]))
+    assert.equal(ch.getSeq(), 0, '重放不能把续接连接的游标当成新一轮计数')
+    /** 重放之后再发新事件，号仍从 1 起：两套号不能混（混了客户端下次带错的游标来） */
+    assert.equal(ch.emit('x', 'delta'), 1)
+})
+
+test('replay 拒绝没有号的条目（半套条目比不重放更危险）', () => {
+    const frames = []
+    const ch = createSseChannel({write: (c) => frames.push(c)}, {pingIntervalMs: 0, now: () => 0})
+    for (const bad of [{}, {event: 'delta', data: 'x'}, {seq: 0, data: 'x'}, {seq: -3, data: 'x'}]) {
+        assert.equal(ch.replay(bad), false, JSON.stringify(bad))
+    }
+    assert.deepEqual(frames, [])
+})
+
+test('replay 会刷新静默计时（重放期不该被心跳打断）', () => {
+    const frames = []
+    let clock = 0
+    /** 注入定时器实现：把回调抓在手里自己触发，否则这个判断根本测不到（`ping()` 本身是无条件的） */
+    let tick = null
+    const ch = createSseChannel({write: (c) => frames.push(c)}, {
+        pingIntervalMs: 8000,
+        now: () => clock,
+        setInterval: (fn) => {
+            tick = fn
+            return 1
+        },
+        clearInterval: () => {},
+    })
+    ch.replay({seq: 5, event: 'delta', data: 'a'})
+    clock = 7000
+    tick()
+    assert.ok(!frames.some(f => /:ping/.test(f)), `距上次写出 7s 时不该发心跳，实际帧 ${JSON.stringify(frames)}`)
+    clock = 16000
+    tick()
+    assert.ok(frames.some(f => /:ping/.test(f)), '静默够了就必须心跳：重放帧算"有输出"')
+})

@@ -31,14 +31,19 @@ import {
 /* ========================= 协议协商 ========================= */
 
 test('resolveProtocol：缺省走协议 1，不下发工具结果', () => {
-    assert.deepEqual(resolveProtocol({}), {protocol: 1, emitToolResults: false})
-    assert.deepEqual(resolveProtocol({protocol: 1}), {protocol: 1, emitToolResults: false})
+    assert.deepEqual(resolveProtocol({}), {protocol: 1, emitToolResults: false, emitSegments: false})
+    assert.deepEqual(resolveProtocol({protocol: 1}), {protocol: 1, emitToolResults: false, emitSegments: false})
 })
 
 test('resolveProtocol：协议 2 默认下发工具结果，字符串数字也认', () => {
-    assert.deepEqual(resolveProtocol({protocol: 2}), {protocol: 2, emitToolResults: true})
-    assert.deepEqual(resolveProtocol({protocol: '2'}), {protocol: 2, emitToolResults: true})
-    assert.deepEqual(resolveProtocol({protocol: 3}), {protocol: 2, emitToolResults: true}, '高于 2 的按 2 处理')
+    assert.deepEqual(resolveProtocol({protocol: 2}), {protocol: 2, emitToolResults: true, emitSegments: false})
+    assert.deepEqual(resolveProtocol({protocol: '2'}), {protocol: 2, emitToolResults: true, emitSegments: false})
+    /**
+     * 旧断言写的是"高于 2 的按 2 处理"——那是协议 3 还不存在时的契约。
+     * 现在 3 是真实档位（段事件），更高请求值收敛到已实现的最高档，不静默退回 1。
+     */
+    assert.deepEqual(resolveProtocol({protocol: 3}), {protocol: 3, emitToolResults: true, emitSegments: true})
+    assert.deepEqual(resolveProtocol({protocol: 7}), {protocol: 3, emitToolResults: true, emitSegments: true})
 })
 
 test('resolveProtocol：协议 1 可用 streamToolResults 单独开启', () => {

@@ -53,7 +53,12 @@ export const chatStreamBodySchema = {
         description: '本轮工具迭代上限；缺省取全局配置 limits.maxIterations（6）。打满时会自动补一次无工具收尾调用',
     },
     streamToolResults: {type: ['boolean', 'number'], description: '协议 1 客户端单独开启 tool_result；协议 2 默认下发'},
-                protocol: {type: 'number', enum: [1, 2], description: 'SSE 事件协议版本；2 表示按事件名分派并附带 meta/tool_result，缺省按 1 兼容旧客户端'},
+                protocol: {
+                    type: 'number',
+                    enum: [1, 2, 3],
+                    description: 'SSE 事件协议版本；2=按事件名分派并附带 meta/tool_result，'
+                        + '3=在 2 之上追加段边界事件 segment_start/segment_end（正文仍走 delta），缺省按 1 兼容旧客户端',
+                },
                 llmParams: {
                     type: 'object',
                     properties: {
@@ -89,4 +94,36 @@ export const chatStreamBodySchema = {
             required: ['options']
         },
     ]
+}
+/**
+ * `/core/chat/stream/resume` 的请求体（PR-C）。
+ *
+ * 为什么 `messageCode` 必填而文档 §8.1 只写 `{lastSeq}`：那一行假设浏览器原生重连会带
+ * `Last-Event-ID` 头。真实四端用的是 POST 体（EventSource 的自动重连会**重发整个 query**，
+ * 那是"再问一次"不是"续上"，正是 §2E 要避免的行为），所以续接必须显式指出续哪一轮。
+ * 头仍作为兜底读一次，两者都给时以体为准。
+ */
+export const chatResumeBodySchema = {
+    type: 'object',
+    properties: {
+        messageCode: {
+            type: 'string',
+            description: '要续接的那一轮（= `meta` 帧里的 messageCode）',
+            minLength: 1,
+            maxLength: 128,
+        },
+        /**
+         * 客户端**已经收到并解析完整**的最后一个事件号。
+         * 必须整数且 >= 0：负数会被 `since()` 当成 0 而重放全部，等于一次免费的流量放大。
+         */
+        lastSeq: {type: 'integer', minimum: 0, description: '已收完整帧的最大 id；不带 Last-Event-ID 时必填'},
+        conversationCode: {
+            type: 'string',
+            description: '会话标识（可选，仅用于校验 messageCode 归属一致）',
+            maxLength: 128,
+            pattern: '^[0-9a-zA-Z_-]+$',
+        },
+    },
+    required: ['messageCode'],
+    additionalProperties: false,
 }

@@ -175,14 +175,19 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     let messages = []
 
     /*协议 2 的客户端按事件名分派，因此默认下发工具结果，且 reset 不再携带兼容哨兵*/
-    const {protocol: clientProtocol, emitToolResults} = resolveProtocol(options)
+    const {protocol: clientProtocol, emitToolResults, emitSegments} = resolveProtocol(options)
     let ragSources = []
     const toolCallTrace = []
 
     const emitMeta = (meta) => {
-        if (clientProtocol === 2 && options.streamCallback) {
+        /**
+         * `>= 2` 而不是 `=== 2`：协议 3 是在 2 之上追加，不是替换。
+         * `protocol: clientProtocol` 而不是字面量 2：写死会让协议 3 的流一边发段事件、一边自报 2，
+         * 前端按 meta.protocol 选渲染分支就永远选不到 3。两处都是 dev 逐帧数出来的，不是推出来的。
+         */
+        if (clientProtocol >= 2 && options.streamCallback) {
             /** meta 里带 traceId（值就是 messageCode）：前端报错卡片可以显示"反馈请附这串号" */
-            options.streamCallback(JSON.stringify({type: 'meta', messageCode, traceId: trace.traceId, conversationCode, protocol: 2, ...meta}), 'meta')
+            options.streamCallback(JSON.stringify({type: 'meta', messageCode, traceId: trace.traceId, conversationCode, protocol: clientProtocol, ...meta}), 'meta')
         }
     }
 
@@ -488,6 +493,20 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         textChars: config.limits?.segmentTextChars,
         maxSegments: config.limits?.segmentsMaxCount,
         totalChars: config.limits?.segmentsTotalChars,
+        /**
+         * 协议 3：段的边界下发给客户端。start/end 刻意成对出现在**封段时刻**而非开段时刻——
+         * 一轮最终是 tool-round / skill-reload / finalize / answer，在开段那一刻不可知，
+         * 那时发 start 就只能猜 kind/title，前端会拿到一张标题与结尾度量不符的卡（源仓 D63 ① 禁止的事）。
+         */
+        events: emitSegments,
+        onEvent: (event, payload) => {
+            try {
+                options.streamCallback(JSON.stringify(payload), event)
+            } catch (e) {
+                /** 下发失败不能把整轮打挂：段的权威副本仍在 extInfo.segments 里 */
+                tlog.warn(`段事件下发失败（不影响落库）: ${event} ${e.message}`)
+            }
+        },
     })
     /** 每轮的起始时刻，用于段耗时 */
     let roundStartedAt = Date.now()
@@ -857,7 +876,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         contextBudget: contextUsage?.budget,
     })
 
-    if (clientProtocol === 2 && ragSources.length && options.streamCallback) {
+    /** 同上：协议 3 不能丢掉 sources（理由见 meta 那处注释） */
+    if (clientProtocol >= 2 && ragSources.length && options.streamCallback) {
         options.streamCallback(JSON.stringify({sources: ragSources}), 'sources')
     }
 
