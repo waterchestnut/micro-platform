@@ -4,7 +4,7 @@ import {validateChannels} from '../../../conf/llmChannel.js'
 import {chatStreamBodySchema, chatResumeBodySchema} from '../../../schemas/chatStreamSchema.js'
 import {auditBody} from '../../../tools/schemaAudit.js'
 import {admitRun, releaseRun, snapshot, archiveCount, detachArchive, attachEventLog, finishEventLog, getEventLogEntry, eventLogStats} from '../../../services/core/session/runRegistry.js'
-import {createRunEventLog} from '../../../services/core/session/runEventLog.js'
+import {createRunEventLog, DEFAULT_SNAPSHOT_URL} from '../../../services/core/session/runEventLog.js'
 import {socketCloseAbortDecision} from '../../../services/core/session/shutdownPolicy.js'
 import {isClosing, shutdownStatus} from '../../../services/core/session/shutdownState.js'
 
@@ -70,6 +70,12 @@ export default async function (fastify, opts) {
 
         const controller = new AbortController()
         const {signal} = controller
+        /**
+         * 通道句柄提前声明成 `let`：断开监听器要引用它，而监听器注册在通道创建之前。
+         * 用 `const` 就地声明的话监听器里访问它就是 TDZ——同步代码踩不到，
+         * 但"客户端在 writeHead 之后立刻断开"这种时序真会踩，而且是 ReferenceError。
+         */
+        let channel = null
         request.raw.socket.on('close', () => {
             /**
              * 断开要不要打断这一轮，判据在 `shutdownPolicy.socketCloseAbortDecision`：
@@ -90,6 +96,17 @@ export default async function (fastify, opts) {
                 + `closing=${isClosing()}, 决策=${callSite.reason}`)
             if (callSite.abort) {
                 controller.abort()
+            }
+            /**
+             * 连接没了但**这一轮还活着**的两种情况都要转脱离态：
+             * `client-disconnect`（停在下一个安全边界，之前还在产出）与
+             * `shutdown-draining`（发版拆连接但不打断在途 run，会一路跑到完成）。
+             * `orderly-close` 是响应正常写完，不需要也轮不到。
+             */
+            if (callSite.reason === 'client-disconnect' || callSite.reason === 'shutdown-draining') {
+                const seqAt = channel?.detach()
+                logger.info(`SSE 转入脱离态: messageCode=${messageCodeForGate}, 已记到 seq=${seqAt ?? '-'}, `
+                    + `此后帧只入日志不写 socket（续接由 /stream/resume 负责）`)
             }
         })
 
@@ -120,6 +137,7 @@ export default async function (fastify, opts) {
                 maxEvents: resumeCfg.maxEvents,
                 maxBytes: resumeCfg.maxBytes,
                 messageCode: messageCodeForGate,
+                conversationCode: request.reqParams?.conversationCode,
             })
             : null
         if (eventLog) {
@@ -130,7 +148,7 @@ export default async function (fastify, opts) {
                 conversationCode: request.reqParams?.conversationCode,
             })
         }
-        const channel = createSseChannel(stream, {
+        channel = createSseChannel(stream, {
             pingIntervalMs: llm.config.stream?.pingIntervalMs,
             onError: (e) => logger.warn(`SSE 写入失败（多半是客户端断开）: ${String(e?.message || e).slice(0, 160)}`),
             /** 入日志失败绝不打断流：丢了记录只是让续接报 gap，抛出去就是把一轮正常回答弄死 */
@@ -231,7 +249,17 @@ export default async function (fastify, opts) {
                 code: 'EVENT_LOG_UNAVAILABLE',
                 msg: '本轮事件日志不可用（已结束并过期、或该轮在别的副本上）',
                 messageCode,
-                snapshotUrl: `/core/message/detail?messageCode=${messageCode}`,
+                /**
+                 * 原来这里写的是 `/core/message/detail?messageCode=…`，而 `/core/message` 下
+                 * 只注册了 `list` 与 `feedback`——**契约里指路的 URL 也是契约**，前端照着走会撞空。
+                 * 这个分支里 `entry` 正是 null（正因如此才 404），所以没有 conversationCode 可给。
+                 */
+                snapshotUrl: DEFAULT_SNAPSHOT_URL,
+                snapshotRequest: {
+                    method: 'POST',
+                    url: DEFAULT_SNAPSHOT_URL,
+                    body: {filter: {messageCode}},
+                },
                 /** 必须显式写：不写 `preSerialization` 会补 `statusCode:200`，响应体就与 HTTP 状态不一致 */
                 statusCode: 404,
             })

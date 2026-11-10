@@ -6,7 +6,7 @@
  * 就会**跳过事件**或**把心跳当事件重放**，而那类 bug 在线上表现为"续接后少一段回答"，极难归因。
  * 所以这里用假 sink + 注入时钟，不需要真连接也不需要真定时器。
  */
-import {test} from 'node:test'
+import {test, describe} from 'node:test'
 import * as assert from 'node:assert'
 import {createSseChannel, DEFAULT_PING_INTERVAL_MS} from '../../tools/sseChannel.js'
 
@@ -362,3 +362,114 @@ test('replay 会刷新静默计时（重放期不该被心跳打断）', () => {
     tick()
     assert.ok(frames.some(f => /:ping/.test(f)), '静默够了就必须心跳：重放帧算"有输出"')
 })
+
+/* ============ PR-C 第二刀：detach（断开之后仍然记号、仍然入日志） ============ */
+
+describe('detach：连接没了，但这一轮还在产出', () => {
+    test('脱离后 emit 不再写 socket，但号继续递增、onEmit 仍然收到', () => {
+        const frames = []
+        const seen = []
+        const ch = createSseChannel({write: (c) => frames.push(c)}, {
+            pingIntervalMs: 0,
+            now: () => 0,
+            onEmit: (seq, event, data) => seen.push({seq, event, data}),
+        })
+        ch.emit('a', 'delta')
+        assert.equal(ch.getSeq(), 1)
+        ch.detach()
+        assert.equal(ch.isDetached(), true, '状态要能被读出来（runStats 与测试都靠它）')
+        assert.equal(ch.emit('b', 'delta'), 2, '号必须继续落下，否则断开后的内容进不了日志')
+        assert.equal(ch.emit('c', 'done'), 3)
+        assert.equal(frames.length, 1, '脱离后一帧都不该再写')
+        assert.deepEqual(seen.map(s => s.seq), [1, 2, 3], '日志要拿到断开之后的帧')
+        assert.deepEqual(seen.map(s => s.event), ['delta', 'delta', 'done'])
+    })
+
+    test('这是 dev 读数的直接对面：断开前收到 1..6 时，7 以后仍要可续', () => {
+        /**
+         * 复现 B 组那个形状：前 6 帧送达，客户端消失，run 又产了 4 帧并收尾。
+         * 改造前那 4 帧**从未入日志**（写失败不占号），续接只能拿到一个终结帧；
+         * 现在它们都在日志里，`/resume {lastSeq:6}` 就该拿到 7..10。
+         */
+        const frames = []
+        const log = []
+        const ch = createSseChannel({
+            write: (c) => {
+                if (frames.length >= 6) {
+                    throw new Error('EPIPE')
+                }
+                frames.push(c)
+            },
+        }, {pingIntervalMs: 0, now: () => 0, onEmit: (seq, event, data) => log.push({seq, event, data})})
+        for (let i = 0; i < 6; i++) {
+            ch.emit(`x${i}`, 'delta')
+        }
+        ch.detach()
+        for (let i = 0; i < 3; i++) {
+            ch.emit(`after${i}`, 'delta')
+        }
+        ch.emit('done', 'done')
+        assert.deepEqual(log.map(l => l.seq), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], `日志缺号：${JSON.stringify(log.map(l => l.seq))}`)
+        assert.equal(log.filter(l => l.seq > 6).length, 4, '断开后产的 4 帧全部可续')
+        assert.equal(frames.length, 6, '写到 socket 的仍只有 6 帧：不谎称送达')
+    })
+
+    test('detach 幂等，且重复调用不吞号', () => {
+        const seen = []
+        const ch = createSseChannel({write: () => {}}, {pingIntervalMs: 0, now: () => 0, onEmit: (s) => seen.push(s)})
+        ch.emit('a')
+        assert.equal(ch.detach(), 1)
+        assert.equal(ch.detach(), 1, '第二次调用回报同一个游标，不推进')
+        ch.emit('b')
+        assert.deepEqual(seen, [1, 2])
+    })
+
+    test('脱离后 replay 直接失败（重放必须有活的连接做对象）', () => {
+        const ch = createSseChannel({write: () => {}}, {pingIntervalMs: 0, now: () => 0})
+        assert.equal(ch.replay({seq: 3, event: 'delta', data: 'x'}), true, '没脱离时正常')
+        ch.detach()
+        assert.equal(ch.replay({seq: 4, event: 'delta', data: 'x'}), false)
+        assert.equal(ch.getSeq(), 0, 'replay 不该推进游标，脱离后也一样')
+    })
+
+    test('脱离后心跳彻底停掉（既不写 socket 也不再计时）', () => {
+        const frames = []
+        let clock = 0
+        let tick = null
+        const ch = createSseChannel({write: (c) => frames.push(c)}, {
+            pingIntervalMs: 8000,
+            now: () => clock,
+            setInterval: (fn) => {
+                tick = fn
+                return 7
+            },
+            clearInterval: (id) => {
+                if (id === 7) {
+                    tick = null
+                }
+            },
+        })
+        ch.detach()
+        assert.equal(tick, null, '定时器要被摘掉：脱离后再心跳是纯浪费')
+        clock = 999999
+        assert.equal(ch.ping(), false, 'ping 在脱离态返回 false 且不写')
+        assert.deepEqual(frames, [])
+    })
+
+    test('onEmit 抛错时号仍然成立（日志坏了不能把这一轮判成没产出）', () => {
+        const errors = []
+        const ch = createSseChannel({write: () => {}}, {
+            pingIntervalMs: 0,
+            now: () => 0,
+            onError: (e) => errors.push(e.message),
+            onEmit: () => {
+                throw new Error('日志炸了')
+            },
+        })
+        ch.detach()
+        assert.equal(ch.emit('a', 'delta'), 1)
+        assert.equal(ch.emit('b', 'delta'), 2, '记账失败也要继续给号，续接会靠 gap 而不是静默缺内容')
+        assert.equal(errors.length, 2)
+    })
+})
+

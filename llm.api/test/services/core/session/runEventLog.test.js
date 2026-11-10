@@ -1,6 +1,6 @@
 import {test, describe} from 'node:test'
 import * as assert from 'node:assert'
-import {createRunEventLog, DEFAULT_MAX_EVENTS, DEFAULT_MAX_BYTES, GAP_CODE} from '../../../../services/core/session/runEventLog.js'
+import {createRunEventLog, DEFAULT_MAX_EVENTS, DEFAULT_MAX_BYTES, DEFAULT_SNAPSHOT_URL, GAP_CODE} from '../../../../services/core/session/runEventLog.js'
 
 /**
  * PR-C 事件日志：`/resume` 的数据源。
@@ -114,9 +114,17 @@ describe('不变量 2：不跳过任何保留事件 / 淘汰必须给 gap', () =
         assert.equal(body.code, GAP_CODE)
         assert.equal(body.since, 1)
         assert.equal(body.messageCode, 'mc-test')
-        assert.match(body.snapshotUrl, /messageCode=mc-test/, '默认要指回本轮快照')
+        /**
+         * 旧断言是 `snapshotUrl` 里必须带 `messageCode=…`——那默认值指向
+         * `/core/message/detail`，一个**没注册过的端点**。现在只指真实存在的 `/core/message/list`，
+         * 参数改由 `snapshotRequest.body.filter` 给（POST 端点光有 URL 前端仍然拼不出请求）。
+         */
+        assert.equal(body.snapshotUrl, DEFAULT_SNAPSHOT_URL)
+        assert.equal(body.snapshotRequest.method, 'POST')
+        assert.equal(body.snapshotRequest.body.filter.messageCode, 'mc-test')
         const custom = log.gapBody(log.since(1).gap, {snapshotUrl: 'https://x/y'})
-        assert.equal(custom.snapshotUrl, 'https://x/y')
+        assert.equal(custom.snapshotUrl, 'https://x/y', '调用方显式给的落点优先')
+        assert.equal(custom.snapshotRequest.url, DEFAULT_SNAPSHOT_URL, '请求形状仍是默认端点：两者不同时要让前端看得见')
         assert.equal(typeof body.msg, 'string')
         assert.match(body.msg, /快照重建/, '人要能看懂该怎么办')
     })

@@ -97,7 +97,9 @@ describe('入口闸门', () => {
         assert.equal(res.statusCode, 404, `实际 ${res.statusCode}: ${res.payload}`)
         const body = res.json()
         assert.equal(body.code, 'EVENT_LOG_UNAVAILABLE')
-        assert.match(body.snapshotUrl, /mc-never-existed/)
+        /** 旧断言要求 URL 里带 messageCode——那来自一个不存在的 `/core/message/detail` 端点，见下面的路由表守卫 */
+        assert.equal(body.snapshotUrl, '/core/message/list')
+        assert.equal(body.snapshotRequest.body.filter.messageCode, 'mc-never-existed')
         /**
          * 体里的 statusCode 必须与 HTTP 状态一致。`preSerialization` 会给没写 statusCode 的载荷
          * **补 200**（项目既有约定，`agentTask` 那些路由都显式写），dev 实测就抓到我这条 404 的
@@ -199,7 +201,8 @@ describe('gap：一等返回，不给半套事件', () => {
         assert.equal(body.since, 1)
         assert.ok(body.oldest > 1, `oldest 应已在淘汰线之后，实际 ${body.oldest}`)
         assert.equal(body.messageCode, 'mc-gap')
-        assert.match(body.snapshotUrl, /messageCode=mc-gap/, '必须给得出快照重建的去处')
+        assert.equal(body.snapshotUrl, '/core/message/list', '必须给得出**真实存在**的快照落点')
+        assert.equal(body.snapshotRequest.body.filter.messageCode, 'mc-gap')
         assert.equal(body.statusCode, 410, `gap 的响应体不能写着 200：${res.payload}`)
         assert.ok(!/正文片段/.test(JSON.stringify(body)), 'gap 响应里不能夹着任何正文')
     })
@@ -223,6 +226,79 @@ describe('gap：一等返回，不给半套事件', () => {
         })
         assert.equal(res.statusCode, 200, `实际 ${res.statusCode}: ${res.payload}`)
         assert.deepEqual([...res.payload.matchAll(/^id:(\d+)$/gm)].map(m => Number(m[1])), [7, 8, 9])
+    })
+})
+
+describe('快照路标必须真实存在（前端照着走不能撞 404）', () => {
+    /**
+     * 起因：`gapBody` 与 404 体的默认 `snapshotUrl` 我第一版写成 `/core/message/detail?messageCode=…`，
+     * 而 `/core/message` 下**只注册了 `list` 与 `feedback`**（`routes/core/message/root.js`）。
+     *
+     * 判据是"照着打一次会怎样"，不是"查路由表里有没有这个字符串"：
+     * 我先试的是 `app.hasRoute('POST/core/message/list')`，实测它对这个确实存在的路由返回 **false**
+     * （autoload 用 prefix 注册，id 形状与我猜的不同）——一个对正解也会说"没有"的判据不能用来断言存在。
+     * 所以这里直接按 `snapshotRequest` 原样发一次请求：只有真能工作的端点才不会走到
+     * `setNotFoundHandler` 那句"路由 … 不存在"。
+     * @param {Object} app fastify 实例
+     * @param {Object} req 要照做的请求形状
+     * @returns {Promise<Object>} 读数
+     */
+    async function follow(app, req) {
+        const res = await app.inject({
+            method: req.method,
+            url: req.url,
+            headers: {'user-info': ui(req.userCode || 'resume-owner')},
+            payload: req.body,
+        })
+        return {status: res.statusCode, head: res.payload.slice(0, 200), isUnknownRoute: /不存在/.test(res.payload) && res.statusCode === 404}
+    }
+
+    test('404 给的 snapshotRequest 照着打，不会撞"路由不存在"', async (t) => {
+        const app = await build(t)
+        resetForTest()
+        const res = await app.inject({
+            method: 'POST',
+            url: '/core/chat/stream/resume',
+            headers: {'user-info': ui('resume-owner')},
+            payload: {messageCode: 'mc-nope', lastSeq: 0},
+        })
+        const b = res.json()
+        assert.equal(b.snapshotUrl, '/core/message/list')
+        assert.equal(b.snapshotRequest.body.filter.messageCode, 'mc-nope')
+        const r = await follow(app, b.snapshotRequest)
+        assert.equal(r.isUnknownRoute, false, `快照路标指向一个不存在的端点：${JSON.stringify(r)}`)
+        /**
+         * 这里**不断言 status<500**：实测这条请求在本机测试环境返回 500
+         * `"Client must be connected before running operations"`——那是离线环境没连上 MongoDB，
+         * 不是契约错。把"能不能查到数据"写进断言就是把用例变成环境的奴隶（本仓已因这类断言返工多次）。
+         * 契约管得了的是两件事：这个路径**存在**（上面那条），以及我给前端的**请求形状不被 schema 拒**（400）。
+         */
+        assert.notEqual(r.status, 400, `snapshotRequest 的形状应当被消息列表接口接受，实际 ${r.status} ${r.head}`)
+    })
+
+    test('410 gap 的 snapshotRequest 同样照着打得通，且带上会话键', async (t) => {
+        const app = await build(t)
+        resetForTest()
+        const log = createRunEventLog({messageCode: 'mc-gap-route', conversationCode: 'conv-route', maxEvents: 2})
+        for (let i = 1; i <= 6; i++) {
+            log.record(i, 'delta', 'x')
+        }
+        attachEventLog('mc-gap-route', log, {userCode: 'resume-owner', conversationCode: 'conv-route'})
+        finishEventLog('mc-gap-route')
+        const res = await app.inject({
+            method: 'POST',
+            url: '/core/chat/stream/resume',
+            headers: {'user-info': ui('resume-owner')},
+            payload: {messageCode: 'mc-gap-route', lastSeq: 1},
+        })
+        assert.equal(res.statusCode, 410, res.payload)
+        const b = res.json()
+        assert.equal(b.snapshotUrl, '/core/message/list', 'gap 也要指真实存在的落点')
+        assert.equal(b.snapshotRequest.body.filter.conversationCode, 'conv-route',
+            '可见性按会话成员制收敛，缺 conversationCode 时快照可能一条也取不到')
+        assert.ok(!/message\/detail/.test(JSON.stringify(b)), '旧的那个不存在端点不该还残留在任何字段里')
+        const r = await follow(app, b.snapshotRequest)
+        assert.equal(r.isUnknownRoute, false, JSON.stringify(r))
     })
 })
 

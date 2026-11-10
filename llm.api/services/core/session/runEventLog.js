@@ -40,17 +40,25 @@ export const DEFAULT_MAX_BYTES = 2 * 1024 * 1024
 export const GAP_CODE = 'EVENT_BUFFER_EXPIRED'
 
 /**
+ * 快照重建的落点。取 `/core/message/list` 是因为 `/core/message` 下**只有 `list` 与 `feedback`**
+ * 两个端点（`routes/core/message/root.js`），而第一版的默认值 `/core/message/detail` 根本不存在。
+ */
+export const DEFAULT_SNAPSHOT_URL = '/core/message/list'
+
+/**
  * @description 建一轮的事件日志
  * @param {Object} [opts] 参数
  * @param {Number} [opts.maxEvents] 保留条数上限（超限丢最早若干条，并留下 gap 依据）
  * @param {Number} [opts.maxBytes] 保留字节上限（同上，但内存可算；0/负数取默认值）
  * @param {String} [opts.messageCode] 关联的 run（诊断用）
+ * @param {String} [opts.conversationCode] 所属会话（gap 的快照重建请求要带它才能命中可见性收敛）
  * @returns {Object} 日志句柄
  */
 export function createRunEventLog({
     maxEvents = DEFAULT_MAX_EVENTS,
     maxBytes = DEFAULT_MAX_BYTES,
     messageCode = '',
+    conversationCode = '',
 } = {}) {
     const cap = Number(maxEvents) > 0 ? Number(maxEvents) : DEFAULT_MAX_EVENTS
     const byteCap = Number(maxBytes) > 0 ? Number(maxBytes) : DEFAULT_MAX_BYTES
@@ -144,6 +152,13 @@ export function createRunEventLog({
      * @param {Object} [opt] 附加项
      * @param {String} [opt.snapshotUrl] 快照重建指引
      * @returns {Object} 响应体
+     *
+     * `snapshotUrl` 的默认值必须指向**真实存在的端点**：第一版我写的是
+     * `/core/message/detail?messageCode=...`，而 `/core/message` 下只有 `list` 与 `feedback`
+     * ——凭空造的路标交给前端，就是让下一次 gap 变成"前端照着做然后 404"。
+     * 现在指向 `/core/message/list` 并把 POST 的形状一起给出去（`snapshotRequest`），
+     * 因为它是 POST + filter，光有 URL 前端仍然拼不出请求。
+     * 这条由 `test/routes/chatResume.test.js` 的路由表守卫钉住。
      */
     function gapBody(gap, {snapshotUrl = ''} = {}) {
         return {
@@ -152,7 +167,12 @@ export function createRunEventLog({
             since: gap.since,
             oldest: gap.oldest,
             latest: gap.latest,
-            snapshotUrl: snapshotUrl || `/core/message/detail?messageCode=${messageCode}`,
+            snapshotUrl: snapshotUrl || DEFAULT_SNAPSHOT_URL,
+            snapshotRequest: {
+                method: 'POST',
+                url: DEFAULT_SNAPSHOT_URL,
+                body: {filter: {messageCode, ...(conversationCode ? {conversationCode} : {})}},
+            },
             messageCode,
         }
     }

@@ -50,8 +50,37 @@ export function createSseChannel(sink, opts = {}) {
     /** 业务事件游标：只数事件，心跳不数 */
     let seq = 0
     let open = true
+    /**
+     * **脱离态**：连接已经没了，但这一轮还在跑（客户端断开后停在边界、或发版期间不中断在途 run）。
+     *
+     * 不转脱离态的后果不是报错，而是**静默少内容**：写失败不占号（v1.31 的纪律），
+     * 于是断开之后那些帧既没送达也没入日志，`/resume` 只能拿到断开前那几帧
+     * （源仓 dev 实测：断开前 `1..6`，续接只回一个终结帧）。
+     * 进入脱离态后帧仍然编号、仍然交给 `onEmit`，只是不再写 socket。
+     *
+     * `id` 的语义因此分两段：连接活着时 = "已成功送达的序号"（v1.31 原样）；
+     * 脱离后 = "已记入本轮有序历史的序号"，**不声称送达过谁**，兑现对象是后来 `/resume` 的连接。
+     */
+    let detached = false
     let lastWriteAt = now()
     let timer = null
+
+    /**
+     * @description 进入脱离态：停心跳、后续帧只记账不写 socket（幂等）
+     * @returns {Number} 进入时的游标
+     */
+    const detach = () => {
+        if (detached) {
+            return seq
+        }
+        detached = true
+        open = false
+        if (timer) {
+            clearIntervalImpl(timer)
+            timer = null
+        }
+        return seq
+    }
 
     /**
      * @description 写一帧；写失败只回报不外抛
@@ -90,6 +119,17 @@ export function createSseChannel(sink, opts = {}) {
      * `id` 的语义因此必须是"**已成功送达的序号**"，不是"我们打算发到第几号"。
      */
     const emit = (data, event) => {
+        if (detached) {
+            /** 不碰 socket，但号照落、日志照记：否则断开之后那一轮就没有"后续"可续 */
+            seq += 1
+            const n = seq
+            try {
+                onEmit(n, event || 'delta', data)
+            } catch (e) {
+                onError(e)
+            }
+            return n
+        }
         if (!open) {
             return null
         }
@@ -113,7 +153,7 @@ export function createSseChannel(sink, opts = {}) {
      * @description 发一帧心跳注释（不带 id、不推进游标）
      * @returns {Boolean} 是否写入成功
      */
-    const ping = () => writeFrame(serializeSSEEvent({comment: 'ping'}))
+    const ping = () => (detached ? false : writeFrame(serializeSSEEvent({comment: 'ping'})))
 
     /**
      * @description 重放一条**别的通道产生的**帧：保留原始 `id`，不推进本通道游标
@@ -124,6 +164,10 @@ export function createSseChannel(sink, opts = {}) {
      * 换成新号客户端下次就带错游标（要么漏、要么无限重放）。
      */
     const replay = (item = {}) => {
+        /** 脱离态下重放没有对象：连接都没了，必须由调用方另起一个连接 */
+        if (detached) {
+            return false
+        }
         if (!(Number(item.seq) > 0)) {
             return false
         }
@@ -175,8 +219,10 @@ export function createSseChannel(sink, opts = {}) {
         emit,
         ping,
         replay,
+        detach,
         close,
         getSeq: () => seq,
         isOpen: () => open,
+        isDetached: () => detached,
     }
 }
