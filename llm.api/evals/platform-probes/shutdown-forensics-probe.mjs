@@ -199,6 +199,51 @@ if (!serving) {
     process.exit(2)
 }
 
+/**
+ * 在途时采样本进程的抢救表与闸计数。
+ * 为什么必须在**触发滚动之前**采：`archives` 只有 run 正在跑时才非空，
+ * 上一轮我等流跑完才去看，得到 `archiving=0`、`active=0`，
+ * **等于什么都没证明**（§25 v1.40）——而"闸关着时抢救表非空"正是 `runs`/`archives` 分表的全部意义。
+ *
+ * 端口写死 12008：那是**容器内** fastify 的监听端口（来自 /app/.env），
+ * 不是本探针进程的 env——上一版我误用过 `process.env.PORT`，那会取到我随手设的 12007。
+ * 走 127.0.0.1 只是为了定位到**具体那个 pod**（闸与抢救表都是单进程的），
+ * 身份头照给：`/runStats` 现在有身份校验了（v1.41），公网一侧另由网关拦 token
+ * （实测无凭据请求返回 `code:4002 token无效`）。
+ * @param {String} podName 目标 pod
+ * @returns {Object} 读数
+ */
+function sampleRunStats(podName) {
+    /**
+     * 必须带 user-info：`/runStats` 已补上身份校验（v1.41）。
+     * 上一版我能空着头调通，靠的是那条缺陷本身——**用缺陷当便利，缺陷修掉时工具就跟着红了**。
+     * 头值是 base64(JSON)，与 `plugins/init-params.js` 的解析口径一致。
+     */
+    const ui = Buffer.from(JSON.stringify({userCode: 'menglb', realName: 'shutdown-forensics'})).toString('base64')
+    const g = kc(['exec', podName, '--', 'sh', '-c',
+        `wget -q -O - --header='Content-Type: application/json' `
+        + `--header='user-info: ${ui}' --post-data='{}' `
+        + 'http://127.0.0.1:12008/core/chat/runStats'])
+    if (!g.ok) {
+        return {ok: false, err: String(g.out).slice(0, 140)}
+    }
+    try {
+        const j = JSON.parse(String(g.out).trim())
+        return {ok: true, ...(j.data || {})}
+    } catch (e) {
+        return {ok: false, err: `解析失败: ${String(g.out).slice(0, 120)}`}
+    }
+}
+
+const inFlight = sampleRunStats(serving.name)
+log('在途采样 runStats', {
+    pod: serving.name,
+    读数: {active: inFlight.active, archiving: inFlight.archiving, limit: inFlight.limit, gateEnabled: inFlight.gateEnabled, shutdown: inFlight.shutdown},
+    这条证明什么: inFlight.ok
+        ? `在途时 archiving=${inFlight.archiving}、active=${inFlight.active} ⇒ 抢救表独立于闸登记表（闸关着时后者恒空）`
+        : '采样失败：不能据此判断分表设计是否成立，必须重采',
+})
+
 tSignal = Date.now()
 const rr = kc(['rollout', 'restart', `deploy/${DEPLOY}`])
 log('已触发滚动', {ok: rr.ok, 定位到的服务pod: serving.name, 输出: String(rr.out).trim().slice(0, 100)})

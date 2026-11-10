@@ -30,6 +30,12 @@ export const CLOSE_ARCHIVE_RESERVE_MS = 5000
 /** 单条 run 主动落档的时限（毫秒）：一条卡住不能拖死其余所有条 */
 export const CLOSE_ARCHIVE_PER_RUN_TIMEOUT_MS = 1500
 /**
+ * 抢救置完停止位之后，**先等 run 自己收尾**多久（毫秒）。
+ * 必须小于 `CLOSE_ARCHIVE_PER_RUN_TIMEOUT_MS`，否则兜底动作会被外层超时切断，
+ * 结果两边都没落成——这是"预算互相吃掉"的老错，这里显式留出余量。
+ */
+export const CLOSE_ARCHIVE_WAIT_FOR_RUN_MS = 1000
+/**
  * 从 grace 里**留给关闭序列本身的余量**（毫秒）。
  * 为什么是 10s 而不是原来注释里的 5s：关闭序列要"先在途落档 → 关 mongo → 断两个 redis"，
  * 落档那步含真实写库；实测一次 abort 落档 + 账本 upsert 在几百毫秒级，但网络抖一下就没预算了。
