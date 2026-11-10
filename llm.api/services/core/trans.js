@@ -6,12 +6,41 @@
 
 import {OpenAI} from 'openai'
 import retSchema from '../../daos/retSchema.js'
+import {createTransClient} from './upstreamTransClient.js'
+import {withUpstreamRetry, parseRetryAfterMs} from './llmLoop.js'
+import {getBreaker, breakerKeyFor} from './upstreamBreaker.js'
 
 const tools = llm.tools
 const logger = llm.logger
 const config = llm.config
 /** 文本翻译：常规档够用（中转站通用族 Flash） */
 const llmConfig = config.models.relay_common_flash
+
+/**
+ * 翻译链路的上游客户端。
+ * 与源仓同一改动：模板里 3 处自建 `new OpenAI(...)` + 4 处直连 create 会绕过退避与熔断，
+ * 同一个中转出口在翻译挂掉时既不退避也不被熔断器记账。
+ * 口径与 chat 主循环一致（启用退避时 SDK 隐式重试设 0、同一个 Retry-After 解析、
+ * 熔断键取当次那一档的出口）；差别是**翻译不换档**——换档会改变译文风格。
+ * @param {Object} modelConfig 当次档位
+ * @returns {Object} 鸭子类型客户端
+ */
+function transClient(modelConfig) {
+    return createTransClient({
+        modelConfig,
+        makeRaw: (opts) => new OpenAI(opts),
+        retryCfg: config.upstreamRetry || {},
+        breaker: getBreaker({
+            cfg: config.upstreamBreaker || {},
+            /** 熔断是进程级的，事件走 llm.logger 而不是某一条请求的 trace */
+            log: (e) => logger.warn(`upstreamBreaker ${JSON.stringify(e)}`),
+        }),
+        keyOf: ({modelConfig: m}) => breakerKeyFor({baseURL: m.baseURL, modelKey: m.key}),
+        withUpstreamRetry,
+        parseRetryAfterMs,
+        log: (e) => logger.warn(`trans 上游退避 ${JSON.stringify(e)}`),
+    })
+}
 
 /**
  * @description 检测文本是否为非中文，若是则翻译为简体中文，返回整段翻译和逐句翻译
@@ -36,10 +65,7 @@ export async function nonChineseTrans(sourceText, options = {}) {
 
     const onlyFull = options.onlyFull
 
-    const openai = new OpenAI({
-        apiKey: llmConfig.apiKey,
-        baseURL: llmConfig.baseURL,
-    })
+    const openai = transClient(llmConfig)
 
     if (onlyFull) {
         const sysPrompt = `你是一个多语言翻译高手。请将用户提供的非中文原文翻译为简体中文。
@@ -116,10 +142,7 @@ export async function autoTrans(sourceText, options = {}) {
         return ''
     }
 
-    const openai = new OpenAI({
-        apiKey: llmConfig.apiKey,
-        baseURL: llmConfig.baseURL,
-    })
+    const openai = transClient(llmConfig)
     let ret = await openai.chat.completions.create(
         {
             model: llmConfig.model,
@@ -161,10 +184,7 @@ export async function pictureTrans(imgUrl, options = {}) {
 
     /** 图片 OCR + 翻译：视觉族 Pro（视觉模型里要认字，给足窗口） */
     let llmConfig = config.models.relay_qwen_vl_pro
-    const openai = new OpenAI({
-        apiKey: llmConfig.apiKey,
-        baseURL: llmConfig.baseURL,
-    })
+    const openai = transClient(llmConfig)
     const sysPrompt = `
         ## 定位
         - 角色：OCR+多语言翻译专家
