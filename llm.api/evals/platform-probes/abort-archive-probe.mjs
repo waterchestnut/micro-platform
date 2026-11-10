@@ -152,7 +152,7 @@ const u = (await db.collection('llmUsage').find({conversationCode}, {projection:
     promptTokens: 1, completionTokens: 1, estPromptTokens: 1, latencyMs: 1,
 }}).toArray())[0]
 const m = (await db.collection('message').find({conversationCode}, {projection: {
-    _id: 0, progress: 1, error: 1, 'extInfo.interruptedBy': 1,
+    _id: 0, progress: 1, error: 1, 'extInfo.interruptedBy': 1, 'extInfo.writtenBy': 1,
     answerLen: {$strLenCP: {$ifNull: ['$answer', '']}},
 }}).toArray())[0]
 const cps = await db.collection('sessionCheckpoint').find({conversationCode},
@@ -189,6 +189,21 @@ if (!m) {
     }
     if (来源 !== 'client-disconnect') {
         判.push(`⚠️ interruptedBy=${JSON.stringify(来源)}，期望 client-disconnect（原因必须另存一列，不能压进 progress）`)
+    }
+    /**
+     * writtenBy 断言。这里的判据必须容忍**版本边界**，否则会把历史数据读成失败：
+     * 该字段是 §25 v1.44 才加的，早于它落库的行本来就没有——那是一条**关于数据的事实**，
+     * 不是关于代码的缺陷。所以：有值就必须落在已知集合里；没值只报"早于上线"，不算 ❌。
+     * 这一条我自己犯过一次（给单流探针传 --count 那类"用今天的代码解释昨天的数据"）。
+     */
+    const WRITTEN_BY = ['normal', 'early-stop', 'rescue', 'error', 'backfill', 'unattributed']
+    const by = m.extInfo?.writtenBy ?? m['extInfo.writtenBy'] ?? null
+    if (by === null || by === undefined) {
+        判.push(`ℹ writtenBy 缺失（该行早于 v1.44 上线，属正常版本边界，不能读成缺陷）`)
+    } else if (!WRITTEN_BY.includes(by)) {
+        判.push(`❌ writtenBy=${JSON.stringify(by)} 不在已知来源集合里 ⇒ 有路径写入了没登记的来源`)
+    } else {
+        判.push(`✅ writtenBy=${by}（${by === 'unattributed' ? '来自我还没区分的那两处检查，符合设计' : '来源已归因'}）`)
     }
     if (m.progress === 'abort' && m.answerLen > 0 && 来源 === 'client-disconnect') {
         判.push(`✅ 断开被及时停止并带正文落档：${m.answerLen} 字、interruptedBy=${来源}`)
