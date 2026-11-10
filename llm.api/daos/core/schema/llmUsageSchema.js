@@ -81,6 +81,15 @@ const llmUsageSchema = new Schema({
      * ⇒ 规则：**估算归估算列，真值归真值列**；要合起来算成本时必须分开看。
      */
     estPromptTokens: {type: Number, default: 0, description: '在途刷新写入的估算 prompt token（非上游回传，仅用于给遗弃行一个量级）'},
+    /**
+     * 估算输出 token：本地 tokenizer 对已生成正文的计量。
+     *
+     * 为什么这一列必须存在：`completionTokens` 来自上游 usage 帧，而**被掐断的 run 永远收不到那一帧**。
+     * 2026-11-10 实测三条被切断的 run：真实分别生成了 10,772 / 1,986 / 1,934 字，账本里 `completionTokens` 合计 1
+     * ⇒ 成本报表对"发版与断开造成的损失"系统性低估，而那恰恰是最该被算出来的一部分。
+     * 归列规则与 `estPromptTokens` 同源：**估算归估算列，上游实测归实测列**，两边不许互相冒充。
+     */
+    estCompletionTokens: {type: Number, default: 0, description: '本地估算的输出 token（非上游回传；被掐断的 run 唯一的量级来源）'},
     fallbackFrom: {type: String, default: '', description: '换档前的档位 key（未换为空）'},
     fallbackTo: {type: String, default: '', description: '换档后的档位 key（未换为空）'},
     loopExit: {type: String, default: '', description: '主循环退出方式'},

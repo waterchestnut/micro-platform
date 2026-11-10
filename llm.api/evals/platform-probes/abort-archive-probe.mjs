@@ -52,68 +52,87 @@ function log(note, obj = {}) {
     }
 }
 
-const conversationCode = `aab-${Date.now()}`
+const conversationCode = val('conversation', '') || `aab-${Date.now()}`
+/**
+ * `--conversation=<已有的会话码>`：**不打模型、不产生任何花费**，只按同一套判据复查一条已存在的 run。
+ * 为什么要有这个档：上一版的判定读错了字段形状，而重跑一次验收要花一次真实生成——
+ * 复查一个"读法错误"不该花钱，更不该为此再造一条数据。
+ */
+const RECHECK = Boolean(val('conversation', ''))
 const QUERY = '请连续写一篇 12000 字以上的长文，主题是"按下停止键之后，那半截回答去了哪里"：'
     + '连接、生成、落档与审计。要求分八章，每章都要有具体场景与对话，不要调用工具，一次性写完。'
 
 let chars = 0
 let lastSeq = 0
 let sawTerminal = ''
-let clientOutcome = 'unknown'
+let clientOutcome = 'skipped(recheck)'
 const t0 = Date.now()
 const controller = new AbortController()
-const timer = setTimeout(() => {
-    log('掐断客户端', {abortAfterMs: ABORT_AFTER_MS, 已收字数: chars, 末帧seq: lastSeq})
-    controller.abort()
-}, ABORT_AFTER_MS)
+let timer = null
 
-log('开窗', {BASE, conversationCode, abortAfterMs: ABORT_AFTER_MS})
-try {
-    const r = await fetch(`${BASE}/core/chat/stream`, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json', Accept: 'text/event-stream', 'param-accessToken': TOKEN},
-        body: JSON.stringify({query: QUERY, conversationCode, options: {channel: 'xxzx_common', protocol: 2, cache: false}}),
-        signal: controller.signal,
-    })
-    const dec = new TextDecoder()
-    let buf = ''
-    for await (const cv of r.body) {
-        buf += dec.decode(cv, {stream: true})
-        let k
-        while ((k = buf.indexOf('\n\n')) >= 0) {
-            const f = buf.slice(0, k)
-            buf = buf.slice(k + 2)
-            const t = f.trim()
-            if (!t || t.startsWith(':')) {
-                continue
-            }
-            const seq = Number((/^id:(\d+)/m.exec(t)?.[1]) || 0)
-            if (seq > lastSeq) {
-                lastSeq = seq
-            }
-            const ev = /event:(\S+)/.exec(t)?.[1] || 'delta'
-            const raw = (/data:([\s\S]+)/.exec(t)?.[1] || '').replace(/\n/g, '')
-            if (ev === 'delta') {
-                try {
-                    chars += (JSON.parse(raw)?.content || '').length
-                } catch (e) { /* 忽略 */ }
-            } else if (ev === 'done' || ev === 'abort' || ev === 'error') {
-                sawTerminal = ev
+/**
+ * @description 打一条流并在指定时刻掐断客户端
+ * @returns {Promise<void>}
+ */
+async function runStream() {
+    timer = setTimeout(() => {
+        log('掐断客户端', {abortAfterMs: ABORT_AFTER_MS, 已收字数: chars, 末帧seq: lastSeq})
+        controller.abort()
+    }, ABORT_AFTER_MS)
+    try {
+        const r = await fetch(`${BASE}/core/chat/stream`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', Accept: 'text/event-stream', 'param-accessToken': TOKEN},
+            body: JSON.stringify({query: QUERY, conversationCode, options: {channel: 'xxzx_common', protocol: 2, cache: false}}),
+            signal: controller.signal,
+        })
+        const dec = new TextDecoder()
+        let buf = ''
+        for await (const cv of r.body) {
+            buf += dec.decode(cv, {stream: true})
+            let k
+            while ((k = buf.indexOf('\n\n')) >= 0) {
+                const f = buf.slice(0, k)
+                buf = buf.slice(k + 2)
+                const t = f.trim()
+                if (!t || t.startsWith(':')) {
+                    continue
+                }
+                const seq = Number((/^id:(\d+)/m.exec(t)?.[1]) || 0)
+                if (seq > lastSeq) {
+                    lastSeq = seq
+                }
+                const ev = /event:(\S+)/.exec(t)?.[1] || 'delta'
+                const raw = (/data:([\s\S]+)/.exec(t)?.[1] || '').replace(/\n/g, '')
+                if (ev === 'delta') {
+                    try {
+                        chars += (JSON.parse(raw)?.content || '').length
+                    } catch (e) { /* 忽略 */ }
+                } else if (ev === 'done' || ev === 'abort' || ev === 'error') {
+                    sawTerminal = ev
+                }
             }
         }
+        clientOutcome = sawTerminal || 'closed-without-terminal-event'
+    } catch (e) {
+        clientOutcome = 'aborted-by-client'
+        if (!/abort/i.test(String(e?.name || '') + String(e?.message || ''))) {
+            clientOutcome = `exception:${String(e?.message || e).slice(0, 60)}`
+        }
+    } finally {
+        clearTimeout(timer)
     }
-    clientOutcome = sawTerminal || 'closed-without-terminal-event'
-} catch (e) {
-    clientOutcome = 'aborted-by-client'
-    if (!/abort/i.test(String(e?.name || '') + String(e?.message || ''))) {
-        clientOutcome = `exception:${String(e?.message || e).slice(0, 60)}`
-    }
-} finally {
-    clearTimeout(timer)
+}
+
+log(RECHECK ? '复查模式（不产生任何调用）' : '开窗', {BASE, conversationCode, abortAfterMs: ABORT_AFTER_MS})
+if (!RECHECK) {
+    await runStream()
 }
 /**
  * 断开之后**还要观察多久服务端才停**：靠"客户端已断之后是否还收到新帧"来判不成立（客户端已经不读了），
- * 所以这里改用账本的终态时间：`updateTime - abort 时刻` 就是服务端继续花的力气。
+ * 所以改用账本的终态时间：`updateTime − 掐断时刻` 就是服务端继续花的力气。
+ * **复查模式（RECHECK）下这个量没有意义**：本地时钟是"现在"，不是当时的掐断点，
+ * 报 0 会被读成"立刻就停了" ⇒ 必须显式置 null，而不是留一个看起来正常的数。
  */
 const clientStoppedAt = Date.now()
 log('客户端侧结束', {结果: clientOutcome, 收到字数: chars, 末帧seq: lastSeq, 墙钟ms: clientStoppedAt - t0})
@@ -141,23 +160,41 @@ const cps = await db.collection('sessionCheckpoint').find({conversationCode},
 await client.close()
 
 const 继续花了多久 = u?.updateTime ? Math.max(0, Date.parse(u.updateTime.toISOString?.() || 0) - clientStoppedAt) : null
-const 判定 = []
+/**
+ * 投影 `'extInfo.interruptedBy': 1` 返回的是**嵌套**形状 `{extInfo:{interruptedBy:...}}`，
+ * 不是扁平键。上一版直接读 `m['extInfo.interruptedBy']` ⇒ 恒 undefined ⇒
+ * 探针在**同一份输出里**一边打印出 `"extInfo":{"interruptedBy":"client-disconnect"}`、
+ * 一边判定"interruptedBy=undefined"。
+ * 规则：**读数与判定矛盾时，先信读数、再查判定**；判定读不到数据不等于数据不存在。
+ * @param {Object} m 档案行
+ * @returns {String|null} 打断来源
+ */
+function interruptedOf(m) {
+    if (!m) {
+        return null
+    }
+    return m.extInfo?.interruptedBy ?? m['extInfo.interruptedBy'] ?? null
+}
+
+const 判 = []
 if (!m) {
-    判定.push('❌ 档案无行 ⇒ "断开即丢"未修复')
+    判.push('❌ 档案无行 ⇒ "断开即丢"未修复')
 } else {
+    const 来源 = interruptedOf(m)
     if (m.progress !== 'abort') {
-        判定.push(`❌ 档案 progress=${m.progress}，应为 abort（把不完整说成 ${m.progress} 是骗人）`)
+        判.push(`❌ 档案 progress=${m.progress}，应为 abort（把不完整说成 ${m.progress} 是骗人）`)
     }
     if (!(m.answerLen > 0)) {
-        判定.push('❌ 档案正文 0 字 ⇒ 早停时没把已生成的内容并进去（drain 早退的返回值没被并入 answerContent）')
+        判.push('❌ 档案正文 0 字 ⇒ 早停时没把已生成的内容并进去（drain 早退的返回值没被并入 answerContent）')
     }
-    if (m['extInfo.interruptedBy'] !== 'client-disconnect') {
-        判定.push(`⚠️ interruptedBy=${JSON.stringify(m['extInfo.interruptedBy'])}，期望 client-disconnect（原因必须另存一列，不能压进 progress）`)
+    if (来源 !== 'client-disconnect') {
+        判.push(`⚠️ interruptedBy=${JSON.stringify(来源)}，期望 client-disconnect（原因必须另存一列，不能压进 progress）`)
     }
-    if (m.progress === 'abort' && m.answerLen > 0 && m['extInfo.interruptedBy'] === 'client-disconnect') {
-        判定.push(`✅ 断开被及时停止并带正文落档：${m.answerLen} 字、interruptedBy=${m['extInfo.interruptedBy']}`)
+    if (m.progress === 'abort' && m.answerLen > 0 && 来源 === 'client-disconnect') {
+        判.push(`✅ 断开被及时停止并带正文落档：${m.answerLen} 字、interruptedBy=${来源}`)
     }
 }
+const 判定 = 判
 if (!u) {
     判定.push('❌ 账本无行（`llmUsageLive` 被关了？那这条验收本身就查不出来）')
 } else if (u.progress === 'processing') {
