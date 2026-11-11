@@ -98,6 +98,27 @@ export default {
         /** 心跳静默多久算遗弃：必须 ≥ 最长 run 墙钟的 3 倍，否则一次长生成会被判死并补 abort */
         backfillOlderThanMs: Number(process.env['cron_backfillOlderThanMs']) || 600000,
         backfillLimit: Number(process.env['cron_backfillLimit']) || 200,
+        /**
+         * agentTask 中断恢复（`tasks/agentTaskRecover.js`）。
+         *
+         * **模板这边默认不注册**（`recoverEnabled === 'true'`），与本文件里 retentionEnabled /
+         * backfillEnabled 同一惯例：新任务默认不改变运行行为。源仓 dev 是默认开的，那边有实测依据
+         * （consumer 停摆、重投只堆积）——模板继承那个默认等于替每个部署方做决定。
+         *
+         * `recoverMode` 留空串表示"没配"，默认值归 `services/agent/recoverPolicy.js` 所有；
+         * 配置层不许提前代入默认值，否则启动日志会把"没人配过"说成"按配置生效"。
+         *
+         * `recoverWindowMs`（滞留多久以内还值得救）为什么必须有：源仓 2026-11-11 实测滞留候选 5211 条、
+         * 批次上限 10、按 `updateTime` 升序取前 N ⇒ 队首被永不收敛的陈旧行占死，新滞后的任务根本进不了本轮；
+         * 而只把它们排除掉又会让队首换成半年前的任务被真重跑。判据与默认值出处见 recoverPolicy 文件头。
+         */
+        recoverEnabled: process.env['cron_recoverEnabled'] === 'true',
+        recoverPattern: process.env['cron_recoverPattern'] || '*/10 * * * *',
+        recoverMode: process.env['cron_recoverMode'] || '',
+        recoverBatch: Number(process.env['cron_recoverBatch']) || 10,
+        recoverStuckMs: Number(process.env['cron_recoverStuckMs']) || 30 * 60 * 1000,
+        recoverWindowMs: process.env['cron_recoverWindowMs'] || '',
+        recoverMaxTimes: Number(process.env['cron_recoverMaxTimes']) || 2,
         /** 显式锁时区，避免不同机器时区不一致导致错时 */
         timezone: process.env['cron_timezone'] || 'Asia/Shanghai',
     },
@@ -129,6 +150,14 @@ export default {
     agentTask: {
         /** 最大传送数据：256M */
         maxMessageLength: 256 * 1024 * 1024,
+        /**
+         * 执行认领（lease）的时长。两条约束一起决定它：
+         * ① 必须**大于单个任务的最长正常执行时间**，否则跑到一半租约到期，保护形同虚设；
+         * ② 必须**不超过恢复滞留阈值的一半**（`leaseSafety` 会算，启动时不满足就打告警），
+         *    否则"还在正常执行"的任务会被恢复轮当成可救。
+         * 续期由 `execAgentTask` 按四分之一个租约的节奏自动 extend，所以它不需要等于最坏时长。
+         */
+        execLeaseMs: Number(process.env['agentTask_execLeaseMs']) || 15 * 60 * 1000,
     },
     /**
      * 分层长期记忆（memory-plan PR-4~8/11/12 迁移）。

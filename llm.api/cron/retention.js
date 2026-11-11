@@ -22,6 +22,7 @@ const cronConfig = llm.config.cron || {}
 import {CronJob} from 'cron'
 import {runRetention} from '../tasks/retention.js'
 import {runBackfill} from '../tasks/abandonedBackfill.js'
+import {runAgentTaskRecover} from '../tasks/agentTaskRecover.js'
 import {createDrainController, resolveDrainBudget} from '../daos/core/policy/drainPolicy.js'
 
 /** 定时进程不能被一次任务异常带走：记日志继续等下一个周期（参照 callin 的兜底写法） */
@@ -113,6 +114,41 @@ if (cronConfig.backfillEnabled) {
         + `写档=${cronConfig.backfillWrite ? 'ON' : 'OFF(只出计划)'} nextDate=${String(backfillJob.nextDate?.() ?? '-')}`)
 } else {
     logger.info('cron/abandonedBackfill 未启用（需 cron_backfillEnabled=true；写库另需 cron_backfillWrite=true）')
+}
+
+/**
+ * agentTask 中断恢复：执行器进程重启会蒸发内存里的在途流水线，任务 handleStatus 永驻 0。
+ * **默认不注册**（要 `cron_recoverEnabled=true`）：这个任务会真去重执行任务（direct）或重投队列，
+ * 副作用比清理类任务大，交给部署方显式决定。
+ * 风险边界（判据在 `services/agent/recoverPolicy.js` 与 `execClaim.js`）：
+ * 恢复只看"有没有人持有这条任务的执行认领"——有人在跑就整条跳过；
+ * 但两种恢复模式**都区分不了**"流水线蒸发"与"消费者只是排得慢"，
+ * 所以开启前要先确认自己的消费者状况。
+ */
+if (cronConfig.recoverEnabled) {
+    const recoverPattern = cronConfig.recoverPattern || '*/10 * * * *'
+    const recoverJob = new CronJob(recoverPattern, () => runGuarded('agentTaskRecover', async () => {
+        jobs.recover = jobs.recover || {executing: false}
+        if (jobs.recover.executing) {
+            logger.info('agentTaskRecover-任务仍在执行，跳过本次触发')
+            return
+        }
+        jobs.recover.executing = true
+        try {
+            const ret = await runAgentTaskRecover({})
+            if (ret) {
+                logger.info(`agentTaskRecover 完成: 重排 ${ret} 条`)
+            }
+        } catch (e) {
+            logger.error(`agentTaskRecover 任务异常: ${e.stack || e.message}`)
+        } finally {
+            jobs.recover.executing = false
+        }
+    }), null, true, cronConfig.timezone || 'Asia/Shanghai')
+    registeredJobs.push(recoverJob)
+    logger.info(`cron/agentTaskRecover 已注册 pattern=${recoverPattern} nextDate=${String(recoverJob.nextDate?.() ?? '-')}`)
+} else {
+    logger.info('cron/agentTaskRecover 未启用（需 cron_recoverEnabled=true）')
 }
 
 /**

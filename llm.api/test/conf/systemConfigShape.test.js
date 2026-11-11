@@ -112,3 +112,26 @@ describe('upstreamBreaker 配置块', () => {
         assert.equal(Number.isNaN(c.upstreamBreaker.failureThreshold), true, 'parseInt 出 NaN 是预期，归一层负责退回默认')
     })
 })
+
+describe('cron 的 agentTask 恢复参数（模板默认不注册，但配置面要看得见每一个键）', () => {
+    test('生效值与判据来源：默认 direct、默认不注册、窗口与阈值不成空区间', async () => {
+        const c = await loadConfig({})
+        const {resolveRecoverMode, resolveRecoverWindow, buildRecoverFilter} = await import('../../services/agent/recoverPolicy.js')
+        assert.equal(c.cron.recoverMode, '', '未配时必须是空串，不能由配置层提前代入默认值')
+        const eff = resolveRecoverMode({raw: c.cron.recoverMode})
+        assert.equal(eff.mode, 'direct')
+        assert.equal(eff.applied, false, '生效值来自默认，必须标出来')
+        assert.equal(c.cron.recoverEnabled, false, '模板惯例：默认不注册（与 retentionEnabled/backfillEnabled 同例）')
+        const win = resolveRecoverWindow({raw: c.cron.recoverWindowMs, stuckMs: c.cron.recoverStuckMs})
+        assert.equal(win.applied, false)
+        const f = buildRecoverFilter({stuckMs: c.cron.recoverStuckMs, windowMs: win.windowMs})
+        assert.ok(f.updateTime.$gte.getTime() < f.updateTime.$lt.getTime(), '窗口区间为空 ⇒ 恢复天生空转')
+        assert.ok(f.agentType.$nin.length > 0, '派发型必须在取数时就排除（源仓实测：否则新任务永远进不了本轮）')
+        /** 执行租约与滞留阈值是一对：租约过长会让恢复把在跑的任务判成可救 */
+        const {leaseSafety, DEFAULT_LEASE_MS} = await import('../../services/agent/execClaim.js')
+        const lease = Number(c.agentTask.execLeaseMs)
+        assert.ok(Number.isInteger(lease), 'redlock 要求时长是整数毫秒，非整数会直接抛错')
+        const safe = leaseSafety({leaseMs: lease || DEFAULT_LEASE_MS, stuckMs: c.cron.recoverStuckMs})
+        assert.equal(safe.ok, true, `出厂配置不安全：${safe.reason}`)
+    })
+})
