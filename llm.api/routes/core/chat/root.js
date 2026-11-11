@@ -4,12 +4,101 @@ import {validateChannels} from '../../../conf/llmChannel.js'
 import {chatStreamBodySchema, chatResumeBodySchema} from '../../../schemas/chatStreamSchema.js'
 import {auditBody} from '../../../tools/schemaAudit.js'
 import {admitRun, releaseRun, snapshot, archiveCount, detachArchive, attachEventLog, finishEventLog, getEventLogEntry, eventLogStats} from '../../../services/core/session/runRegistry.js'
-import {createRunEventLog, DEFAULT_SNAPSHOT_URL} from '../../../services/core/session/runEventLog.js'
+import {createRunEventLog, DEFAULT_SNAPSHOT_URL, gapBodyOf} from '../../../services/core/session/runEventLog.js'
+import {createRunEventMirror, readRunEventLog, defaultGetClient} from '../../../services/core/session/runEventLogStore.js'
+import messageDac from '../../../daos/core/dac/messageDac.js'
 import {socketCloseAbortDecision} from '../../../services/core/session/shutdownPolicy.js'
 import {isClosing, shutdownStatus} from '../../../services/core/session/shutdownState.js'
 
 const logger = llm.logger
 const tools = llm.tools
+
+/**
+ * @description 本副本没有这轮日志时，改从 Redis 镜像续接（跨副本 `/resume`）
+ * @param {Object} p 参数
+ * @param {String} p.messageCode 本轮标识
+ * @param {Number} p.lastSeq 客户端游标
+ * @param {Object} p.request fastify 请求
+ * @param {Object} p.reply fastify 响应
+ * @returns {Promise<Object|null>} 已处理返回 reply；镜像里没有这轮则返回 null（由调用方回不可用）
+ *
+ * 四条口径：
+ * 1. **归属仍然要判**：镜像条目里没有 userCode，所以查 message 档案（`operator.userCode`，
+ *    与 `feedback()` 同一口径）。**查不到档案就拒绝**——"验不了归属"不等于"归属没问题"，
+ *    放行等于把别人的回答流交给任意拿到 messageCode 的人。
+ * 2. **gap 与本地路径同一个形状**（都出自 `gapBodyOf`），前端只需一套分支。
+ * 3. **没有直播**：本机连接不在，镜像只是历史。响应头 `x-run-final` 如实说明这轮结没结束，
+ *    没结束就让客户端稍后再来，而不是在这里开一个轮询循环。
+ * 4. 关着心跳（`pingIntervalMs: 0`）：这里写完就收，不会静默等人。
+ */
+async function resumeFromMirror({messageCode, lastSeq, request, reply}) {
+    const cfg = llm.config.stream?.resume?.redis || {}
+    if (cfg.enabled !== true) {
+        return null
+    }
+    const r = await readRunEventLog({getClient: defaultGetClient, messageCode, lastSeq, cfg})
+    if (!r.found) {
+        /** 没键 / 读不了 / 没客户端：都交回调用方给统一的"不可用"码，别让原因散落在四个响应里 */
+        return null
+    }
+
+    let owner = ''
+    let conversationCode = ''
+    try {
+        const doc = await messageDac.getByCode(messageCode)
+        owner = doc?.operator?.userCode || ''
+        conversationCode = doc?.conversationCode || ''
+    } catch (e) {
+        logger.warn(`跨副本续接查档案失败: messageCode=${messageCode}, ${String(e?.message || e).slice(0, 140)}`)
+    }
+    if (!owner) {
+        return reply.code(404).send({
+            code: 'EVENT_LOG_UNAVAILABLE',
+            msg: '镜像存在但无法核验归属（档案尚未落库），不予续接',
+            reason: 'mirror-no-archive',
+            messageCode,
+            snapshotUrl: DEFAULT_SNAPSHOT_URL,
+            snapshotRequest: {method: 'POST', url: DEFAULT_SNAPSHOT_URL, body: {filter: {messageCode}}},
+            statusCode: 404,
+        })
+    }
+    if (owner !== request.userInfo.userCode) {
+        logger.warn(`跨副本续接越权拒绝: messageCode=${messageCode}, 归属=${owner}, 请求=${request.userInfo.userCode}`)
+        const err = new Error('无权续接该消息的流')
+        err.statusCode = 403
+        throw err
+    }
+
+    if (r.gap) {
+        return reply.code(410).send({...gapBodyOf({messageCode, gap: r.gap, conversationCode, source: 'redis'}), statusCode: 410})
+    }
+
+    const stream = reply.raw
+    stream.writeHead(200, {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        Connection: 'keep-alive',
+        'Cache-Control': 'no-cache,no-transform',
+        'x-no-compression': 1,
+        'x-run-last-seq': String(r.latest ?? 0),
+        /** 这轮在别的副本上结没结束：让客户端知道要不要稍后再来取尾巴 */
+        'x-run-final': r.final ? '1' : '0',
+        'x-run-source': 'redis',
+    })
+    const channel = createSseChannel(stream, {
+        pingIntervalMs: 0,
+        onError: (e) => logger.warn(`跨副本续接写入失败: ${String(e?.message || e).slice(0, 160)}`),
+    })
+    for (const it of r.events) {
+        channel.replay(it)
+    }
+    logger.info(`跨副本续接: messageCode=${messageCode}, lastSeq=${lastSeq}, 补发=${r.events.length}, `
+        + `final=${r.final ? r.final.outcome : '-'}, user=${request.userInfo.userCode}`)
+    channel.close()
+    if (!stream.writableEnded) {
+        stream.end()
+    }
+    return reply
+}
 
 export default async function (fastify, opts) {
 
@@ -148,13 +237,30 @@ export default async function (fastify, opts) {
                 conversationCode: request.reqParams?.conversationCode,
             })
         }
+        /**
+         * Redis 镜像（跨副本续接的数据面）。**只在开了的时候才存在**，默认关（理由见 conf 那段注释）。
+         * 它是旁路：写失败只计数，永远不影响这一轮回答。
+         */
+        const mirror = resumeCfg.redis?.enabled
+            ? createRunEventMirror({
+                getClient: defaultGetClient,
+                messageCode: messageCodeForGate,
+                cfg: resumeCfg.redis,
+            })
+            : null
         channel = createSseChannel(stream, {
             pingIntervalMs: llm.config.stream?.pingIntervalMs,
             onError: (e) => logger.warn(`SSE 写入失败（多半是客户端断开）: ${String(e?.message || e).slice(0, 160)}`),
             /** 入日志失败绝不打断流：丢了记录只是让续接报 gap，抛出去就是把一轮正常回答弄死 */
-            onEmit: (seq, event, data) => eventLog?.record(seq, event, data),
+            onEmit: (seq, event, data) => {
+                eventLog?.record(seq, event, data)
+                /** 同步返回：镜像自己攒批，这里不能 await 一次 Redis 往返 */
+                mirror?.onEvent(seq, event, data)
+            },
         })
         let aborted = false
+        /** 异常路径也要如实进镜像的终结标记（否则跨副本读到 error 收尾会被当成正常完成） */
+        let errored = false
         try {
             const ret = await execChat(request.userInfo, request.reqParams.query, request.reqParams.conversationCode, {
                 /**
@@ -173,6 +279,7 @@ export default async function (fastify, opts) {
             channel.emit(aborted ? 'aborted' : 'done', aborted ? 'abort' : 'done')
         } catch (err) {
             console.error(err);
+            errored = true
             channel.emit(err.message || '处理出错，请稍等再试', 'error')
         } finally {
             /**
@@ -195,10 +302,24 @@ export default async function (fastify, opts) {
             }
         }
         /** 两侧的键都写上：reqId 接 HTTP 层日志，traceId（=messageCode）接 run 层日志与账本 */
-        logger.info(`SSE 结束: reqId=${request.id}, seq=${channel.close()}, aborted=${aborted}`)
+        const finalSeq = channel.close()
+        logger.info(`SSE 结束: reqId=${request.id}, seq=${finalSeq}, aborted=${aborted}`)
         stream.end()
         /** 反了会让"最后一帧已写出但没记录"，续接就少尾巴一帧 */
         eventLog?.close()
+        if (mirror) {
+            /**
+             * 没有终结标记，另一副本读到"连续但没结束"的镜像时就无法区分
+             * "这轮还在跑"与"镜像没写完就断了"——那种含糊会被读成成功。
+             * 这里 await 是安全的：响应已经 flush 完，等的只是一次 Redis 往返，不是用户看到的时间。
+             */
+            const mirrorRet = await mirror.finish({
+                finalSeq: Math.max(finalSeq, eventLog?.latest() || 0),
+                outcome: errored ? 'error' : (aborted ? 'abort' : 'done'),
+            })
+            logger.info(`事件镜像收尾: messageCode=${messageCodeForGate}, 写出=${mirrorRet.written}, `
+                + `失败=${mirrorRet.failed}, 键=${mirrorRet.key}`)
+        }
         return reply
     })
 
@@ -244,6 +365,14 @@ export default async function (fastify, opts) {
 
         const entry = getEventLogEntry(messageCode)
         if (!entry) {
+            /**
+             * 本副本没有 ⇒ 先试 Redis 镜像（这轮可能在别的副本上跑的）。
+             * 顺序不能反：先查镜像会绕开本机日志的归属记录，而本机日志才是权威。
+             */
+            const remote = await resumeFromMirror({messageCode, lastSeq, request, reply})
+            if (remote) {
+                return remote
+            }
             /** 未知/已过期/不在本副本：给可判别的码，前端与探针都能区分"这轮不存在"和"这轮在别的 pod 上" */
             return reply.code(404).send({
                 code: 'EVENT_LOG_UNAVAILABLE',
@@ -435,6 +564,18 @@ export default async function (fastify, opts) {
                 ttlMs: llm.config.stream?.resume?.ttlMs,
                 maxRuns: llm.config.stream?.resume?.maxRuns,
                 maxTotalBytes: llm.config.stream?.resume?.maxTotalBytes,
+                /**
+                 * Redis 承载的开关与容量。镜像静默失败时聊天看起来一切正常，
+                 * 只有这里能看出"跨副本续接现在到底有没有数据面"。
+                 */
+                redis: {
+                    enabled: llm.config.stream?.resume?.redis?.enabled === true,
+                    maxEvents: llm.config.stream?.resume?.redis?.maxEvents,
+                    ttlSec: llm.config.stream?.resume?.redis?.ttlSec,
+                    flushEvery: llm.config.stream?.resume?.redis?.flushEvery,
+                    flushMs: llm.config.stream?.resume?.redis?.flushMs,
+                    keyPrefix: llm.config.stream?.resume?.redis?.keyPrefix,
+                },
             },
         }
     })

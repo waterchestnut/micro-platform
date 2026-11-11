@@ -272,6 +272,25 @@ export default {
             ttlMs: parseInt(process.env['streamResume_ttlMs'] || '120000'),
             maxRuns: parseInt(process.env['streamResume_maxRuns'] || '200'),
             maxTotalBytes: parseInt(process.env['streamResume_maxTotalBytes'] || `${32 * 1024 * 1024}`),
+            /**
+             * Redis 承载（跨副本续接）。**默认关**，这不是胆怯而是纪律：
+             * 打开它等于在聊天关键路径上加一批 Redis 写，而"该给 prod 开多大容量"必须由
+             * dev 的实测（往返次数、延迟、键内存占用）来定，不能由 dev 的数字直接拍给 prod
+             * ——这与 `upstreamBreaker` 那次的做法一致。要在 dev 打开需设
+             * `streamResume_redis_enabled=true`，然后按实测（往返次数、延迟、键内存）再决定 prod。
+             */
+            redis: {
+                enabled: process.env['streamResume_redis_enabled'] === 'true',
+                /** 单轮在 Stream 里保留的条目数（MAXLEN ~），与进程内 maxEvents 同量级 */
+                maxEvents: parseInt(process.env['streamResume_redis_maxEvents'] || '2000'),
+                /** 键的存活秒数：与进程内 ttlMs 同源含义，redis 侧只能按秒 */
+                ttlSec: parseInt(process.env['streamResume_redis_ttlSec'] || '120'),
+                /** 攒多少条发一次管道：省的是往返，不是条数 */
+                flushEvery: parseInt(process.env['streamResume_redis_flushEvery'] || '25'),
+                /** 攒不满也最多等这么多毫秒（0 = 只靠 flushEvery 与收尾） */
+                flushMs: parseInt(process.env['streamResume_redis_flushMs'] || '200'),
+                keyPrefix: process.env['streamResume_redis_keyPrefix'] || 'llmrun:events',
+            },
         },
     },
     /**

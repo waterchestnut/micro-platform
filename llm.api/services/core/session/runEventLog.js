@@ -46,6 +46,35 @@ export const GAP_CODE = 'EVENT_BUFFER_EXPIRED'
 export const DEFAULT_SNAPSHOT_URL = '/core/message/list'
 
 /**
+ * @description gap 响应体的唯一构造处（进程内日志与 Redis 镜像共用同一个形状）
+ * @param {Object} p 参数
+ * @param {String} p.messageCode 本轮标识
+ * @param {Object} p.gap `{since, oldest, latest}`
+ * @param {String} [p.conversationCode] 会话标识
+ * @param {String} [p.source] 记录来源（local/redis），排障时区分"本机丢了"与"跨副本读到截断"
+ * @returns {Object} 响应体
+ */
+export function gapBodyOf({messageCode, gap, conversationCode = '', source = 'local'}) {
+    return {
+        code: GAP_CODE,
+        msg: `事件缓冲已过期：游标 ${gap.since} 之后的事件无法保证连续`
+            + `（最早保留 ${gap.oldest}${gap.missingFrom ? `，缺失自 ${gap.missingFrom}` : ''}），请走快照重建`,
+        since: gap.since,
+        oldest: gap.oldest,
+        latest: gap.latest ?? null,
+        missingFrom: gap.missingFrom ?? null,
+        source,
+        snapshotUrl: DEFAULT_SNAPSHOT_URL,
+        snapshotRequest: {
+            method: 'POST',
+            url: DEFAULT_SNAPSHOT_URL,
+            body: {filter: {messageCode, ...(conversationCode ? {conversationCode} : {})}},
+        },
+        messageCode,
+    }
+}
+
+/**
  * @description 建一轮的事件日志
  * @param {Object} [opts] 参数
  * @param {Number} [opts.maxEvents] 保留条数上限（超限丢最早若干条，并留下 gap 依据）
@@ -161,21 +190,15 @@ export function createRunEventLog({
      * 这条由 `test/routes/chatResume.test.js` 的路由表守卫钉住。
      */
     function gapBody(gap, {snapshotUrl = ''} = {}) {
-        return {
-            code: GAP_CODE,
-            msg: `事件缓冲已过期：游标 ${gap.since} 之后的事件无法保证连续（最早保留 ${gap.oldest}），请走快照重建`,
-            since: gap.since,
-            oldest: gap.oldest,
-            latest: gap.latest,
-            snapshotUrl: snapshotUrl || DEFAULT_SNAPSHOT_URL,
-            snapshotRequest: {
-                method: 'POST',
-                url: DEFAULT_SNAPSHOT_URL,
-                body: {filter: {messageCode, ...(conversationCode ? {conversationCode} : {})}},
-            },
-            messageCode,
-        }
+        /**
+         * 统一走 `gapBodyOf`：进程内日志与 Redis 镜像必须是**同一个形状**，
+         * 否则前端要为两种续接来源写两套分支，而这两套分支迟早不一致。
+         * 调用方显式给了 snapshotUrl 时才覆盖（保留旧能力）。
+         */
+        const body = gapBodyOf({messageCode, gap, conversationCode})
+        return snapshotUrl ? {...body, snapshotUrl} : body
     }
+
 
     /**
      * @description 订阅新事件（用于"补发完接着直播"）

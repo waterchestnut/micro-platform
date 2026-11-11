@@ -137,6 +137,14 @@ describe('PERSIST_VIA（档案来源标记）', () => {
      * 源仓连续三轮验收（v1.40 的 0 字 abort、v1.43 的"档案比 abort 事件晚 1 秒"）
      * 都因为缺这个标记而无法归因，只能再花一次长流去猜。
      */
+    test('三个 abort 站点各有各的标签，`unattributed` 只留给确实没带来源的', () => {
+        assert.equal(PERSIST_VIA.LOOP_ENTRY, 'loop-entry')
+        assert.equal(PERSIST_VIA.LOOP_EXIT, 'loop-exit')
+        assert.equal(PERSIST_VIA.FINALIZE_INTERRUPTED, 'finalize-interrupted')
+        assert.notEqual(PERSIST_VIA.LOOP_ENTRY, PERSIST_VIA.UNATTRIBUTED, '站点标签不许就是兜底值')
+        assert.notEqual(PERSIST_VIA.LOOP_EXIT, PERSIST_VIA.UNATTRIBUTED, '同上')
+    })
+
     test('取值互不相同，且没有一个是看起来合理的假来源', () => {
         const vs = Object.values(PERSIST_VIA)
         assert.equal(new Set(vs).size, vs.length, `取值必须互不相同：${vs.join(',')}`)
