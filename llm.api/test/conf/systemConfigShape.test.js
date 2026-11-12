@@ -135,3 +135,44 @@ describe('cron 的 agentTask 恢复参数（模板默认不注册，但配置面
         assert.equal(safe.ok, true, `出厂配置不安全：${safe.reason}`)
     })
 })
+
+describe('limits 的两个 trace 预算（PR-H 搬运：配置默认必须等于函数默认）', () => {
+    test('limits.toolArgsChars 存在且与 clipTraceArgs 的默认同数（H1）', async () => {
+        const {DEFAULT_TRACE_ARGS_CHARS} = await import('../../services/core/llmLoop.js')
+        const c = await loadConfig()
+        /**
+         * 这条断言要防的不是"键不存在"，而是**两个默认值各写一份然后漂移**：
+         * 配置里 4000、函数签名里 3000，那么"没配 env"与"配了 4000"就不是同一条路径，
+         * 而读代码的人（包括我）会以为自己在调同一个尺度。`llmUsageLive` 那次是括号错位，
+         * 这次同类风险是数值错位——两种都只会让预算静默失效。
+         */
+        assert.equal(typeof c.limits?.toolArgsChars, 'number', 'config.limits.toolArgsChars 不在 ⇒ 读方拿到 undefined')
+        assert.equal(Number.isNaN(c.limits.toolArgsChars), false, 'parseInt 出 NaN 说明 env 名写错了')
+        assert.equal(c.limits.toolArgsChars, DEFAULT_TRACE_ARGS_CHARS, '配置默认与函数默认不一致 ⇒ "没配 env"走的不是同一条路径')
+
+        const on = await loadConfig({limits_toolArgsChars: '800'})
+        assert.equal(on.limits.toolArgsChars, 800, 'env 没有通路到配置对象')
+        /** env 传垃圾值时归函数那边管（回落到默认），配置层不该把它变成 NaN 再往下漏 */
+        const bad = await loadConfig({limits_toolArgsChars: 'abc'})
+        assert.equal(Number.isNaN(bad.limits.toolArgsChars), true,
+            'NaN 是预期：clipTraceArgs 会把不可用预算回落到默认值，这条由 llmTraceArgs.test.js 钉')
+    })
+
+    test('limits.toolResultTraceChars 存在、默认与函数默认同数（H3）', async () => {
+        const {DEFAULT_TRACE_RESULT_CHARS, clipTraceResult} = await import('../../services/core/llmLoop.js')
+        const c = await loadConfig()
+        assert.equal(typeof c.limits?.toolResultTraceChars, 'number', 'config.limits.toolResultTraceChars 不在 ⇒ 读方拿到 undefined')
+        /**
+         * 这一键此前只存在于函数签名的默认参数里，两处调用点都不传 ⇒ 源仓实测 24/148 条真实调用
+         * 被它削过（停在 4014 = 4000 + 14 字符标注），而运维没有任何入口。搬进来时两边都留着 4000：
+         * 行为不变，只是变得可配。**"能配"不等于"已生效"**——把开关摊出来不等于去扳它。
+         */
+        assert.equal(c.limits.toolResultTraceChars, DEFAULT_TRACE_RESULT_CHARS, '配置默认与函数默认不一致 ⇒ "没配 env" 走的不是同一条路径')
+
+        const on = await loadConfig({limits_toolResultTraceChars: '12000'})
+        assert.equal(on.limits.toolResultTraceChars, 12000, 'env 没有通路到配置对象')
+        /** 真正会用到这个数的两条调用点在 llmChat.js，这里只保证配置面有值可传 */
+        assert.equal(clipTraceResult('z'.repeat(50), 10).length, 24, 'limit 生效（截到 10 + 14 字符标注）')
+        assert.equal(clipTraceResult('z'.repeat(50)).length, 50, '不传 limit 时走函数默认，不该被配置面意外改变现状')
+    })
+})
