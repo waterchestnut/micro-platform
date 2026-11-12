@@ -55,7 +55,7 @@ import {
     buildAssistantToolCallMessage,
     classifyToolCalls,
     buildToolNameIndex,
-    clipTraceResult,
+    buildToolCallTraceEntry,
     drainAssistantStream,
     iterationDecision,
     loopExitReason,
@@ -1135,7 +1135,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                          */
                         if (isOverflowTool(toolName)) {
                             messages.push(toolResult)
-                            toolCallTrace.push({id: toolResult.tool_call_id, name: toolName, result: clipTraceResult(toolResult.content, resultCap), ...clipTraceArgs(argsById[toolResult.tool_call_id], argsCap)})
+                            toolCallTrace.push(buildToolCallTraceEntry(toolResult.tool_call_id, toolName, toolResult.content, {argsById, argsCap, resultCap}))
                             continue
                         }
                         /**
@@ -1161,7 +1161,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                             tlog.info(`工具结果已裁剪 ${toolName || '-'}: ${cut.originalTokens} → ${cut.keptTokens} tokens`)
                         }
                         messages.push(cut.message)
-                        toolCallTrace.push({id: toolResult.tool_call_id, name: toolName, result: clipTraceResult(toolResult.content, resultCap), ...clipTraceArgs(argsById[toolResult.tool_call_id], argsCap)})
+                        toolCallTrace.push(buildToolCallTraceEntry(toolResult.tool_call_id, toolName, toolResult.content, {argsById, argsCap, resultCap}))
 
                         /*协议 1 的旧客户端会把 data.content 无条件拼进答案，因此仅在协议 2 或显式开启时下发*/
                         if (emitToolResults && options.streamCallback) {

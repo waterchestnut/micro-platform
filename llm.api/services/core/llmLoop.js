@@ -737,6 +737,34 @@ export function clipTraceResult(content, limit = DEFAULT_TRACE_RESULT_CHARS) {
     return s.length > limit ? s.slice(0, limit) + '...[truncated]' : s
 }
 
+/**
+ * @description 组装一条工具调用 trace（**两处出口共用一个构造器**）
+ * @param {String} toolCallId 工具调用 id（也是留档 ref 的来源）
+ * @param {String|null} toolName 工具名（反查不到时是 null）
+ * @param {*} content 工具返回原文
+ * @param {Object} [opts] 预算与反查表
+ * @param {Object} [opts.argsById] `buildToolArgsIndex` 的产物
+ * @param {Number} [opts.argsCap] 入参预算（`limits.toolArgsChars`）
+ * @param {Number} [opts.resultCap] 结果预算（`limits.toolResultTraceChars`）
+ * @returns {{id: String, name: String|null, result: String, args: String, argsChars: Number, argsTruncated: Boolean}} 一条 trace
+ *
+ * 为什么必须有这个函数：H1 之后这条记录是**前端能不能说真话的字段来源**，
+ * 而它原先在 `llmChat.js` 里被内联写了**两遍**（溢出工具分支与通用分支各一份）。
+ * 两遍意味着"改一处忘另一处"是可能的，而这类漂移在测试里不会响——
+ * 底座现网就出现了一条形如 `{id,name,result}`（三键）的记录，与这两处代码应当产出的形状矛盾；
+ * 把形状收到一个构造器里，并让它可被直接穷举测，是**把"我以为它不可能"变成"它被测过"**。
+ * 字段顺序刻意与原内联写法一致，不制造任何跨仓契约变化。
+ */
+export function buildToolCallTraceEntry(toolCallId, toolName, content, opts = {}) {
+    const {argsById = {}, argsCap, resultCap} = opts
+    return {
+        id: toolCallId,
+        name: toolName,
+        result: clipTraceResult(content, resultCap),
+        ...clipTraceArgs(argsById[toolCallId], argsCap),
+    }
+}
+
 /* ---------- 断开阶段策略（D3/D4；供 PR-C 使用，本刀只定义不接线） ---------- */
 
 export const RUN_PHASES = ['generating', 'tool_executing', 'awaiting_input', 'idle']
@@ -1092,6 +1120,7 @@ export default {
     DEFAULT_TRACE_ARGS_CHARS,
     clipTraceResult,
     clipTraceArgs,
+    buildToolCallTraceEntry,
     drainAssistantStream,
     iterationDecision,
     loopExitReason,

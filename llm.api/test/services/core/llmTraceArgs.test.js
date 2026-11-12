@@ -13,9 +13,11 @@
  */
 import {test, describe} from 'node:test'
 import * as assert from 'node:assert'
+import fs from 'node:fs'
 import {
     buildToolNameIndex,
     buildToolArgsIndex,
+    buildToolCallTraceEntry,
     clipTraceArgs,
     clipTraceResult,
     DEFAULT_TRACE_ARGS_CHARS,
@@ -140,5 +142,76 @@ describe('视图必须把 args 三字段原样带到前端（"不用改视图"�
         const v = toMessageView(doc)
         assert.equal(v.process.toolCalls[0].args, '{"q":"x"}')
         assert.equal(v.process.toolCalls[0].argsChars, 9)
+    })
+})
+
+/**
+ * 这一组是给"底座现网出现了一条只有 {id,name,result} 三键的记录"准备的取证。
+ * 如果构造器本身永远给六键，那么那条记录就不是这段代码写的；
+ * 判不到这一点，就说明形状仍然散在调用方手里——所以先把它收进函数，再在这里钉死。
+ */
+describe('buildToolCallTraceEntry：trace 形状的唯一来源（两处出口共用）', () => {
+    test('六键顺序固定，入参反查落空也照样给全三个入参字段', () => {
+        const e = buildToolCallTraceEntry('c1', 'search_web', '结果正文', {argsById: {}})
+        assert.deepEqual(Object.keys(e), ['id', 'name', 'result', 'args', 'argsChars', 'argsTruncated'])
+        assert.equal(e.args, '', '索引里没有这条 id：正文是空串，但键必须在')
+        assert.equal(e.argsChars, 0)
+        assert.equal(e.argsTruncated, false)
+    })
+
+    test('name 反查不到时给 null 而不是省略（前端按名字分组，缺名字要看得见）', () => {
+        const e = buildToolCallTraceEntry('c2', null, 'x', {argsById: {c2: '{"q":"y"}'}})
+        assert.equal(e.name, null)
+        assert.equal(e.args, '{"q":"y"}')
+        assert.equal(e.argsChars, 9)
+    })
+
+    test('两个预算各自独立：结果被截不改变 argsChars 的真实长度', () => {
+        const rawArgs = `{"url":"${'u'.repeat(30)}"}`
+        const e = buildToolCallTraceEntry('c3', 'get_website', 'z'.repeat(60), {
+            argsById: {c3: rawArgs}, argsCap: 20, resultCap: 10,
+        })
+        assert.equal(e.result, `${'z'.repeat(10)}...[truncated]`)
+        assert.equal(e.args.length, 20, '入参按自己的预算截')
+        assert.equal(e.argsChars, rawArgs.length, '原长不许被截断后的长度污染')
+        assert.equal(e.argsChars, 40)
+        assert.equal(e.argsTruncated, true)
+    })
+
+    test('不传 opts 也不炸：漏配预算时走各自默认值', () => {
+        const e = buildToolCallTraceEntry('c4', 'x', 'abc')
+        assert.equal(e.result, 'abc')
+        assert.equal(e.args, '')
+        assert.equal(e.argsChars, 0)
+    })
+
+    test('非字符串结果按序列化进 trace（保持 clipTraceResult 的既有形状）', () => {
+        const e = buildToolCallTraceEntry('c5', 'x', {a: 1}, {argsById: {}})
+        assert.equal(e.result, '{"a":1}')
+    })
+
+    test('null 结果仍是那枚已知怪癖 ""（不是新行为，但形状来源换人后必须仍然一致）', () => {
+        const e = buildToolCallTraceEntry('c6', 'x', null, {argsById: {}})
+        assert.equal(e.result, '""')
+    })
+})
+
+describe('llmChat 不许再自己内联拼这条 trace（源码级防漂移）', () => {
+    const src = fs.readFileSync(new URL('../../../services/core/llmChat.js', import.meta.url), 'utf8').replace(/\r/g, '')
+
+    test('两处出口都在，且都走同一个构造器', () => {
+        const pushes = src.split('\n').filter((l) => l.includes('toolCallTrace.push('))
+        assert.equal(pushes.length, 2, `出口数量变了：${pushes.length}`)
+        assert.ok(pushes.every((l) => l.includes('buildToolCallTraceEntry(')),
+            `仍有出口在自己拼字段：${pushes.map((l) => l.trim().slice(0, 70)).join(' | ')}`)
+    })
+
+    test('旧的"手拼展开"形状在 llmChat 里必须归零', () => {
+        /**
+         * 这个形状一旦回来，等于"两处各写一份"回来了：键的存在性与顺序会开始各自漂移，
+         * 而现网那种"三键记录"就再也说不清是谁写的。
+         */
+        const inline = src.split('\n').filter((l) => /\.\.\.clipTraceArgs\(argsById\[/.test(l))
+        assert.deepEqual(inline, [], `llmChat 里又出现内联展开：${inline.map((l) => l.trim().slice(0, 60)).join(' | ')}`)
     })
 })

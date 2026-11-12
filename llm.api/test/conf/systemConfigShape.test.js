@@ -171,7 +171,7 @@ describe('limits 的两个 trace 预算（PR-H 搬运：配置默认必须等于
 
         const on = await loadConfig({limits_toolResultTraceChars: '12000'})
         assert.equal(on.limits.toolResultTraceChars, 12000, 'env 没有通路到配置对象')
-        /** 真正会用到这个数的两条调用点在 llmChat.js，这里只保证配置面有值可传 */
+        /** 用到这个数的是 `llmLoop.js:buildToolCallTraceEntry`（两处 trace 出口共用它），这里只保证配置面有值可传 */
         assert.equal(clipTraceResult('z'.repeat(50), 10).length, 24, 'limit 生效（截到 10 + 14 字符标注）')
         assert.equal(clipTraceResult('z'.repeat(50)).length, 50, '不传 limit 时走函数默认，不该被配置面意外改变现状')
     })
