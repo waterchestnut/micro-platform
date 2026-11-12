@@ -22,7 +22,7 @@ export async function postCoreLiteratureCheck(
 
 /** 本地文件解读 本地文件上传后进行文献解读 POST /core/literature/local-file */
 export async function postCoreLiteratureLocalFile(
-  body: RESOURCEAPI.FileInfo,
+  body: NonNullable<RESOURCEAPI.fullDefinitionModels['FileInfo']>,
   options?: { [key: string]: any },
 ) {
   return request<any>('/core/literature/local-file', {
