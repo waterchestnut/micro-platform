@@ -51,6 +51,21 @@ export async function getInitialState(): Promise<{
 }
 
 // ProLayout 支持的api https://procomponents.ant.design/components/layout
+/**
+ * 门户包装跳转（主应用 wujie 嵌入场景）：
+ * 主应用 URL /sub/pdfviewer?pdfviewer=/viewer/:resCode —— sync 模式下 query 透传进子应用，
+ * 首帧前把内部路由切到目标页，避免 callin 等宿主"新窗口打开独立阅读器"在门户环境脱离主应用壳。
+ */
+export function render(oldRender: () => void) {
+  if (isEmbedded()) {
+    const jump = new URLSearchParams(window.location.search).get('pdfviewer')
+    if (jump && /^\/(viewer|history|home)/.test(jump) && window.location.pathname !== jump) {
+      history.replace(jump)
+    }
+  }
+  oldRender()
+}
+
 export const layout: RunTimeLayoutConfig = ({initialState, setInitialState}) => {
   return {
     actionsRender: () => (isEmbedded() ? [] : [<SelectLang key="SelectLang"/>]),
