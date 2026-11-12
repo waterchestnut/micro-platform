@@ -4,7 +4,7 @@ import type {ThoughtChainItemType} from '@ant-design/x';
 import {useState} from 'react';
 import type {ReactNode} from 'react';
 import type {ToolResultPage, ToolResultRun} from '@/chatProviders/toolResult';
-import {runToolResultFetch, toolResultIntent, toolResultNextAction, toolResultRunNote, toolResultDisplay, toolResultsDefaultOpen, PREVIEW_CHARS} from '@/chatProviders/toolResult';
+import {runToolResultFetch, toolResultIntent, toolResultNextAction, toolResultRunNote, toolResultDisplay, toolResultsDefaultOpen, shouldAutoExpandAfterFetch, PREVIEW_CHARS} from '@/chatProviders/toolResult';
 import {
   ApartmentOutlined,
   CheckCircleOutlined,
@@ -115,6 +115,14 @@ const ToolCallResult = ({call, process, load}: {
     setRun(r);
     setFetched(r.text);
     setNote(toolResultRunNote(r));
+    /**
+     * P4：取回**完整**了就直接展开，别让用户点第二次才看到自己刚要的东西（现网点验量到的两步）。
+     * `partial`/`stopped`/`failed` 一律不自动展开——把半截自动铺满屏幕，
+     * 比"少点一次"更接近这轮工作一直在消灭的那类谎。判据在 `toolResult.ts`，这里只做映射。
+     */
+    if (shouldAutoExpandAfterFetch(r)) {
+      setExpanded(true);
+    }
     setPhase('done');
   };
 

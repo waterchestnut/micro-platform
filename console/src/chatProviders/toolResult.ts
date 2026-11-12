@@ -401,6 +401,27 @@ return donePARTIAL;
 }
 
 /**
+ * @description 取回完成后要不要自动展开全文（审计 P4 的判据，放在纯模块里）
+ * @param {ToolResultRun} run 取回结果
+ * @returns {Boolean} true = 展开
+ *
+ * 现网点验（cw2pc）量到的现象：点 `取回全文` 拿到 30949 字之后，面板仍停在 600 字预览，
+ * 旁边挂着 `展开全部（30949 字）`——**用户要点第二次才看到自己刚要的东西**。
+ * dev 上行为一致，所以这不是母本与模板的漂移，而是两边共有的设计选择。
+ *
+ * 判据只有一种情况为真：`outcome === 'complete'`。
+ * - `partial`（达到单次翻页上限）**不自动展开**：半截全文自动铺满屏幕，
+ *   比"要多点一次"更接近这轮工作一直在消灭的那类谎——把不完整当完整；
+ * - `stopped` / `failed` 同理不展开；
+ * - 畸形入参不展开也不抛。
+ *
+ * 展开之后仍然保留 `收起` 入口：自动展开是替用户省一次点击，不是替他做决定。
+ */
+export function shouldAutoExpandAfterFetch(run?: ToolResultRun | null): boolean {
+  return !!run && run.outcome === 'complete';
+}
+
+/**
  * @description 取回之后该怎么说（出口不同，话就不同）
  * @param {ToolResultRun} run 取回结果
  * @returns {String} 一行说明；空串表示不必说

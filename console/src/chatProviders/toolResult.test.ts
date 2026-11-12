@@ -9,6 +9,7 @@ import {
   toolResultIntent,
   toolResultNextAction,
   toolResultRunNote,
+  shouldAutoExpandAfterFetch,
   PREVIEW_CHARS,
   prettyToolResultText,
   toolResultDisplay,
@@ -567,5 +568,40 @@ describe('toolResultsDefaultOpen：少一次点击，但不换成一屏长文', 
     for (const n of [4, 6, 11]) {
       expect(toolResultsDefaultOpen(mk(n)).length).toBeGreaterThanOrEqual(1);
     }
+  });
+});
+
+describe('P4：取回完成后自动展开，但只对完整', () => {
+  /**
+   * 现网量到的现象（cw2pc，2026-11-12）：点 `取回全文` 拿到 30949 字之后，
+   * 面板仍停在 600 字预览，用户必须再点一次 `展开全部` 才看到自己刚要的东西。
+   * dev 行为一致 ⇒ 这是两边共有的设计选择，不是母本与模板的漂移。
+   */
+  const base = {text: 'x'.repeat(5000), pages: 2, remaining: 0, stored: true, availableChars: 5000, nextOffset: 5000, error: ''};
+
+  test('complete ⇒ 展开（省掉那第二次点击）', () => {
+    expect(shouldAutoExpandAfterFetch({...base, outcome: 'complete'})).toBe(true);
+  });
+
+  test('partial ⇒ 不展开：半截自动铺满屏幕比少点一次更坏', () => {
+    /** 达到单次翻页上限时 remaining>0，此时自动展开会把"不完整"显示得像"完整" */
+    expect(shouldAutoExpandAfterFetch({...base, outcome: 'partial', remaining: 12000, error: 'max-pages'})).toBe(false);
+  });
+
+  test('stopped / failed ⇒ 不展开，且原因由 note 说，不由展开掩盖', () => {
+    expect(shouldAutoExpandAfterFetch({...base, outcome: 'stopped', remaining: 800})).toBe(false);
+    expect(shouldAutoExpandAfterFetch({...base, outcome: 'failed', text: '', error: 'network'})).toBe(false);
+  });
+
+  test('畸形入参不抛也不展开（undefined/null/空对象/未知 outcome）', () => {
+    for (const bad of [undefined, null, {}, {outcome: ''}, {outcome: 'COMPLETE'}, {outcome: 1}]) {
+      expect(() => shouldAutoExpandAfterFetch(bad as any)).not.toThrow();
+      expect(shouldAutoExpandAfterFetch(bad as any)).toBe(false);
+    }
+  });
+
+  test('展开与否只看 outcome，不看字数（长文本 partial 也不自动铺）', () => {
+    expect(shouldAutoExpandAfterFetch({...base, outcome: 'partial', text: 'y'.repeat(200000)})).toBe(false);
+    expect(shouldAutoExpandAfterFetch({...base, outcome: 'complete', text: '短'})).toBe(true);
   });
 });
