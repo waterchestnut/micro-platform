@@ -7,8 +7,10 @@ import {
   PAGE_SIZE,
   runToolResultFetch,
   toolResultIntent,
+  toolResultNextAction,
   toolResultRunNote,
   type ToolResultPage,
+  type ToolResultRun,
 } from './toolResult';
 
 /**
@@ -226,7 +228,14 @@ describe('runToolResultFetch：四个终止条件都得走到', () => {
 });
 
 describe('toolResultRunNote：出口不同，话必须不同', () => {
-  const base = { pages: 1, remaining: 0, error: '', stored: true, availableChars: 100 };
+  /**
+   * 公共形状按 `Omit<ToolResultRun, 'outcome' | 'text'>` 给全（含续取游标 nextOffset），
+   * 于是下面每条调用**不再需要 `as any`**。原先那些 cast 把"字段不全"这件事从类型检查里
+   * 藏掉了：jest 用 esbuild 转换、根本不看类型，所以 8 条用例全绿而 tsc 里它们是错的。
+   */
+  const base: Omit<ToolResultRun, 'outcome' | 'text'> = {
+    pages: 1, remaining: 0, error: '', stored: true, availableChars: 100, nextOffset: 100,
+  };
   test('取全了且留档完整 ⇒ 也要报已取回字数', () => {
     /**
      * 这条断言原先期望空串，等于把"沉默"当成设计定下来。
@@ -235,7 +244,7 @@ describe('toolResultRunNote：出口不同，话必须不同', () => {
      * "取到了"和"点了没反应"在界面上同形。所以 complete 必须说一句可核对的事实——已取回多少字；
      * 仍然不允许说"内容完整/正确"这类我们无法证明的话。
      */
-    expect(toolResultRunNote({ ...base, outcome: 'complete', text: 'x'.repeat(100) } as any)).toBe('已取回 100 字');
+    expect(toolResultRunNote({...base, outcome: 'complete', text: 'x'.repeat(100)})).toBe('已取回 100 字');
   });
   test('取全了但 stored=false ⇒ 仍然要说尾部不存在', () => {
     const s = toolResultRunNote({
@@ -243,7 +252,7 @@ describe('toolResultRunNote：出口不同，话必须不同', () => {
       outcome: 'complete',
       text: 'y'.repeat(20),
       stored: false,
-    } as any);
+    });
     expect(s).toContain('已取回 20 字');
     expect(s).toContain('尾部不存在');
   });
@@ -253,23 +262,25 @@ describe('toolResultRunNote：出口不同，话必须不同', () => {
       outcome: 'partial',
       text: 'z'.repeat(40000),
       remaining: 1234,
-    } as any);
+      error: 'max-pages',
+      nextOffset: 40000,
+    });
     expect(s).toContain('还有 1234 字未取回');
     expect(s).toContain('40000');
   });
   test('no-progress 与一般失败的说法不同', () => {
     expect(
-      toolResultRunNote({ ...base, outcome: 'failed', text: '', error: 'no-progress' } as any),
+      toolResultRunNote({...base, outcome: 'failed', text: '', error: 'no-progress'}),
     ).toContain('空正文');
     expect(
-      toolResultRunNote({ ...base, outcome: 'failed', text: '', error: 'boom' } as any),
+      toolResultRunNote({...base, outcome: 'failed', text: '', error: 'boom'}),
     ).toContain('boom');
   });
   test('stopped ⇒ 有字就说有多少字，没字就不吭声', () => {
-    expect(toolResultRunNote({ ...base, outcome: 'stopped', text: 'abc' } as any)).toBe(
+    expect(toolResultRunNote({...base, outcome: 'stopped', text: 'abc'})).toBe(
       '已停止，取回 3 字',
     );
-    expect(toolResultRunNote({ ...base, outcome: 'stopped', text: '' } as any)).toBe('');
+    expect(toolResultRunNote({...base, outcome: 'stopped', text: ''})).toBe('');
   });
   test('缺对象不抛', () => {
     expect(toolResultRunNote(undefined as any)).toBe('');
@@ -277,19 +288,19 @@ describe('toolResultRunNote：出口不同，话必须不同', () => {
 });
 describe('H2d：取回成功也要有话可说（现网点验发现的沉默缺陷）', () => {
   test('complete + stored=true 报已取回字数，且不评价内容', () => {
-    const n = toolResultRunNote({outcome: 'complete', text: 'x'.repeat(6554), pages: 2, remaining: 0, error: '', stored: true, availableChars: 6554});
+    const n = toolResultRunNote({outcome: 'complete', text: 'x'.repeat(6554), pages: 2, remaining: 0, error: '', stored: true, availableChars: 6554, nextOffset: 6554});
     expect(n).toBe('已取回 6554 字');
     /** 面板会二次截断显示，沉默时用户无法区分"取到了"和"点了没反应" */
     expect(n.indexOf('完整')).toBe(-1);
     expect(n.indexOf('正确')).toBe(-1);
   });
   test('complete + stored=false 仍要说明尾部不存在', () => {
-    const n = toolResultRunNote({outcome: 'complete', text: 'y'.repeat(1200), pages: 1, remaining: 0, error: '', stored: false, availableChars: 1200});
+    const n = toolResultRunNote({outcome: 'complete', text: 'y'.repeat(1200), pages: 1, remaining: 0, error: '', stored: false, availableChars: 1200, nextOffset: 1200});
     expect(n.startsWith('已取回 1200 字')).toBe(true);
     expect(n.indexOf('尾部不存在') > 0).toBe(true);
   });
   test('partial 必须带剩余字数，complete 之外不许合并说法', () => {
-    const n = toolResultRunNote({outcome: 'partial', text: 'z'.repeat(40000), pages: 10, remaining: 1234, error: 'max-pages', stored: true, availableChars: 41234});
+    const n = toolResultRunNote({outcome: 'partial', text: 'z'.repeat(40000), pages: 10, remaining: 1234, error: 'max-pages', stored: true, availableChars: 41234, nextOffset: 40000});
     expect(n.indexOf('还有 1234 字未取回') > 0).toBe(true);
   });
 });
@@ -338,15 +349,97 @@ describe('H2d 缓存：取回过的东西不该每次切会话重打一遍', () 
     expect(n).toBeGreaterThan(1);
   });
 
-  test('partial 也缓存，但保留 remaining（复用缓存不许把"取了一部分"说成取完）', async () => {
+  test('partial 不再"命中即返回"：第二次必须从断点续取（措辞叫用户再点，就得真能再点）', async () => {
+    const seen: number[] = [];
     let calls = 0;
-    const load = async () => { calls++; return page({truncatedMore: true, remaining: 1234, end: 3, content: 'z'.repeat(3)}); };
+    const load = async (body: any) => {
+      calls += 1;
+      seen.push(body.offset);
+      return page({content: 'z'.repeat(3), offset: body.offset, end: body.offset + 3, truncatedMore: true, remaining: 1234});
+    };
     const a = await runToolResultFetch({load, messageCode: 'mp', ref: 'rp', maxPages: 1});
     const b = await runToolResultFetch({load, messageCode: 'mp', ref: 'rp', maxPages: 1});
     expect(a.outcome).toBe('partial');
+    /** 断点由服务端的 end 给，不是自己按 content.length 累加 */
+    expect(a.nextOffset).toBe(3);
     expect(b.outcome).toBe('partial');
+    /** 改判前这条是 1（第二次命中缓存原样返回），而界面上还写着"可再次点击继续" */
+    expect(calls).toBe(2);
+    expect(seen).toEqual([0, 3]);
+    /** 续取是累计，不是把同一页拼两遍 */
+    expect(b.text).toBe('z'.repeat(6));
     expect(b.remaining).toBe(1234);
-    expect(calls).toBe(1);
     expect(toolResultRunNote(b).indexOf('还有 1234 字未取回') > 0).toBe(true);
+  });
+
+  test('续取到完 ⇒ complete，正文不重复（partial 的缓存只当断点，不当答案）', async () => {
+    const seen: number[] = [];
+    const load = async (body: any) => {
+      seen.push(body.offset);
+      return body.offset === 0
+        ? page({content: 'aaaa', offset: 0, end: 4, truncatedMore: true, remaining: 2})
+        : page({content: 'bb', offset: 4, end: 6, truncatedMore: false, remaining: 0});
+    };
+    const a = await runToolResultFetch({load, messageCode: 'mr', ref: 'rr', maxPages: 1});
+    const b = await runToolResultFetch({load, messageCode: 'mr', ref: 'rr', maxPages: 1});
+    expect(a.outcome).toBe('partial');
+    expect(b.outcome).toBe('complete');
+    expect(b.text).toBe('aaaabb');
+    expect(seen).toEqual([0, 4]);
+  });
+});
+
+describe('toolResultNextAction：说的话与给的入口必须同批存在', () => {
+  /**
+   * @description 造一个取回结果
+   * @param {Object} o 覆盖字段
+   * @returns {ToolResultRun} 结果
+   */
+  const mk = (o: Partial<ToolResultRun>): ToolResultRun => ({
+    outcome: 'complete', text: 'x', pages: 1, remaining: 0, error: '', stored: true, availableChars: 1, nextOffset: 1, ...o,
+  });
+
+  test('没点过 ⇒ 给"取回全文"', () => {
+    expect(toolResultNextAction(null)).toEqual({show: true, label: '取回全文'});
+  });
+
+  test('complete ⇒ 不再留按钮：留着的按钮只会返回缓存，等于一个死入口', () => {
+    expect(toolResultNextAction(mk({outcome: 'complete'})).show).toBe(false);
+  });
+
+  test('partial ⇒ 必须留按钮，并把剩余量写进标签', () => {
+    const a = toolResultNextAction(mk({outcome: 'partial', remaining: 33214, text: 'x'.repeat(40000), error: 'max-pages'}));
+    expect(a.show).toBe(true);
+    expect(a.label).toBe('继续取回（还剩 33214 字）');
+  });
+
+  test('partial 但 remaining 未知 ⇒ 仍给按钮，只是不在标签里编数字', () => {
+    expect(toolResultNextAction(mk({outcome: 'partial', remaining: 0, error: 'max-pages'})).label).toBe('继续取回');
+  });
+
+  test('failed 与 stopped ⇒ 给重试入口（这两种都不进缓存，点了是真取）', () => {
+    expect(toolResultNextAction(mk({outcome: 'failed', error: 'no-progress'})).label).toBe('重新取回');
+    expect(toolResultNextAction(mk({outcome: 'stopped', error: 'stopped'})).label).toBe('继续取回');
+  });
+
+  test('不变量：note 里叫用户"再点"的每一句，action 都必须给按钮', () => {
+    const runs: ToolResultRun[] = [
+      mk({outcome: 'partial', remaining: 1234, error: 'max-pages', text: 'z'.repeat(40000)}),
+      mk({outcome: 'partial', remaining: 0, error: 'max-pages', text: 'z'.repeat(40000)}),
+      mk({outcome: 'complete', text: 'x'.repeat(6554), pages: 2, remaining: 0, error: ''}),
+      mk({outcome: 'complete', text: 'y'.repeat(1200), pages: 1, remaining: 0, error: '', stored: false, availableChars: 1200}),
+      mk({outcome: 'failed', error: 'no-progress', remaining: 5}),
+      mk({outcome: 'stopped', error: 'stopped', remaining: 5}),
+    ];
+    let 命中再点句子的条数 = 0;
+    for (const run of runs) {
+      const note = toolResultRunNote(run);
+      if (/可再次点击继续/.test(note)) {
+        命中再点句子的条数 += 1;
+        expect(toolResultNextAction(run).show).toBe(true);
+      }
+    }
+    /** 条件断言必须证明它真的跑到过，否则这条用例会空过 */
+    expect(命中再点句子的条数).toBeGreaterThan(0);
   });
 });

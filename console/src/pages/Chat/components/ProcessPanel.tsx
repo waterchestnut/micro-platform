@@ -3,8 +3,8 @@ import {Sources, ThoughtChain} from '@ant-design/x';
 import type {ThoughtChainItemType} from '@ant-design/x';
 import {useState} from 'react';
 import type {ReactNode} from 'react';
-import type {ToolResultPage} from '@/chatProviders/toolResult';
-import {runToolResultFetch, toolResultIntent, toolResultRunNote} from '@/chatProviders/toolResult';
+import type {ToolResultPage, ToolResultRun} from '@/chatProviders/toolResult';
+import {runToolResultFetch, toolResultIntent, toolResultNextAction, toolResultRunNote} from '@/chatProviders/toolResult';
 import {
   ApartmentOutlined,
   CheckCircleOutlined,
@@ -97,6 +97,9 @@ const ToolCallResult = ({call, process, load}: {
   const [phase, setPhase] = useState<'idle' | 'loading' | 'done'>('idle');
   const [fetched, setFetched] = useState('');
   const [note, setNote] = useState('');
+  /** 上一次的取回结果：按钮给不给、叫什么，全由 `toolResultNextAction` 依它决定 */
+  const [run, setRun] = useState<ToolResultRun | null>(null);
+  const action = toolResultNextAction(run);
   const canFetch = intent.ok && !!load;
 
   const doFetch = async () => {
@@ -106,13 +109,14 @@ const ToolCallResult = ({call, process, load}: {
     setPhase('loading');
     /** 本仓的 ChatToolCall 只有 id；tool_call_id 的别名只在量级条目那边匹配，不要在这里假设它存在 */
     const ref = call.id || '';
-    const run = await runToolResultFetch({load: (b) => load(b), messageCode: '', ref, pageSize: 0});
+    const r = await runToolResultFetch({load: (b) => load(b), messageCode: '', ref, pageSize: 0});
     /**
      * `messageCode` 由注入方闭包，这里留空串是**故意的**：面板不知道也不该知道它。
      * `pageSize: 0` 走纯模块里的默认值——默认值只有一份，不在界面里再抄一个 4000。
      */
-    setFetched(run.text);
-    setNote(toolResultRunNote(run));
+    setRun(r);
+    setFetched(r.text);
+    setNote(toolResultRunNote(r));
     setPhase('done');
   };
 
@@ -124,7 +128,7 @@ const ToolCallResult = ({call, process, load}: {
       {intent.note ? (
         <Text type="secondary" style={{fontSize: 12}}>{intent.note}</Text>
       ) : null}
-      {canFetch && phase !== 'done' ? (
+      {canFetch && action.show ? (
         <div>
           {phase === 'loading' ? (
             <Space size={6}>
@@ -133,7 +137,7 @@ const ToolCallResult = ({call, process, load}: {
             </Space>
           ) : (
             <Button size="small" type="link" style={{padding: 0}} onClick={doFetch}>
-              取回全文
+              {action.label}
             </Button>
           )}
         </div>

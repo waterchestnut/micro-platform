@@ -117,7 +117,35 @@ export type ToolResultRun = {
   /** 服务端给的留档事实（用来把"取回到的"与"全文"分开说） */
   stored: boolean | null;
   availableChars: number | null;
+  /**
+   * 下一次该从哪个字符位续取（服务端 `end` 给的权威游标）。
+   * 加这个字段的原因是**一句必须兑现的话**：`toolResultRunNote` 对 partial 说"可再次点击继续"，
+   * 而没有续取游标时，第二次点击只会命中缓存原样返回——那句话就成了界面承诺不存在的动作。
+   */
+  nextOffset: number;
 };
+
+/** 取回之后下一步该给什么动作 */
+export type ToolResultAction = {show: boolean; label: string};
+
+/**
+ * @description 由取回结果决定"还要不要给按钮、按钮叫什么"
+ * @param {ToolResultRun|null} run 上一次取回结果（null 表示还没点过）
+ * @returns {ToolResultAction} 动作
+ *
+ * 判据与文案放这里而不是放组件里，是因为它和 `toolResultRunNote` 说的是**同一件事的两面**：
+ * 话里叫用户再点，这里就必须真给一个能点的入口；话里说取完了，这里就不该留按钮。
+ */
+export function toolResultNextAction(run: ToolResultRun | null): ToolResultAction {
+  if (!run) return {show: true, label: '取回全文'};
+  if (run.outcome === 'partial') {
+    return {show: true, label: run.remaining > 0 ? `继续取回（还剩 ${run.remaining} 字）` : '继续取回'};
+  }
+  /** stopped 与 failed 都不进缓存，所以再点是真的再取一次，不是装样子 */
+  if (run.outcome === 'stopped') return {show: true, label: '继续取回'};
+  if (run.outcome === 'failed') return {show: true, label: '重新取回'};
+  return {show: false, label: ''};
+}
 
 /**
  * @description 分页取回全文（循环判据全在这里，IO 由 `load` 注入）
@@ -149,24 +177,35 @@ export async function runToolResultFetch(p: {
   const maxPages = Number(p.maxPages) > 0 ? Number(p.maxPages) : MAX_PAGES;
   const cacheKey = `${p.messageCode || ''}|${p.ref || ''}`;
   const cached = TOOL_RESULT_CACHE.get(cacheKey);
-  /** 只复用成功过的（complete/partial）；failed 与 stopped 不缓存，否则一次抖动或一次主动停止会被永久记住 */
-  if (cached && (cached.outcome === 'complete' || cached.outcome === 'partial')) {
+  /**
+   * complete ⇒ 复用缓存：全文已经在手上，再点一次就是白打接口（H2d 加缓存就是为了这件事）。
+   */
+  if (cached && cached.outcome === 'complete') {
     return {...cached, pages: 0};
   }
-  let offset = 0;
-  let text = '';
+  /**
+   * partial ⇒ **从断点续取，而不是返回缓存**。这是对 H2d 的一处改判：
+   * 那版把 partial 也"命中即返回"，于是第二次点击一个新字都不取，
+   * 而同一屏上 `toolResultRunNote` 还写着"可再次点击继续"——界面承诺了一个不会发生的动作。
+   * 现在 partial 的缓存只剩一个意义：已经取回的那部分正文与它的服务端游标；
+   * 续取时既不重放已取页，也不把正文拼两遍。
+   */
+  const resume = cached && cached.outcome === 'partial' ? cached : null;
+  let offset = resume ? resume.nextOffset : 0;
+  let text = resume ? resume.text : '';
   let pages = 0;
-  let remaining = 0;
-  let stored: boolean | null = null;
-  let availableChars: number | null = null;
+  let remaining = resume ? resume.remaining : 0;
+  let stored: boolean | null = resume ? resume.stored : null;
+  let availableChars: number | null = resume ? resume.availableChars : null;
   const base: ToolResultRun = {
     outcome: 'failed',
-    text: '',
-    pages: 0,
-    remaining: 0,
+    text,
+    pages,
+    remaining,
     error: '',
-    stored: null,
-    availableChars: null,
+    stored,
+    availableChars,
+    nextOffset: offset,
   };
   for (let i = 0; i < maxPages; i++) {
     if (p.shouldStop && p.shouldStop()) {
@@ -178,6 +217,8 @@ export async function runToolResultFetch(p: {
         remaining,
         stored,
         availableChars,
+        /** 续取游标必须现场取：base 是在循环外建的，沿用它会指到已拼进正文的位置之前 ⇒ 续取会重复拼接 */
+        nextOffset: offset,
         error: 'stopped',
       };
     }
@@ -193,6 +234,7 @@ export async function runToolResultFetch(p: {
         remaining,
         stored,
         availableChars,
+        nextOffset: offset,
         error: String((e && e.message) || e || 'load failed'),
       };
     }
@@ -205,6 +247,7 @@ export async function runToolResultFetch(p: {
         remaining,
         stored,
         availableChars,
+        nextOffset: offset,
         error: 'bad-response',
       };
     }
@@ -222,6 +265,7 @@ export async function runToolResultFetch(p: {
         remaining,
         stored,
         availableChars,
+        nextOffset: offset,
         error: page.truncatedMore ? 'no-progress' : 'empty',
       };
     }
@@ -229,12 +273,17 @@ export async function runToolResultFetch(p: {
     /** 游标以服务端给的 end 为准：自己算 `offset + content.length` 会在多字节/换行处理差异上走偏 */
     offset = Number(page.end) > offset ? Number(page.end) : offset + page.content.length;
     if (!page.truncatedMore) {
-      const doneCOMPLETE = {...base, outcome: 'complete' as const, text, pages, remaining: 0, error: '', stored, availableChars};
+      const doneCOMPLETE = {...base, outcome: 'complete' as const, text, pages, remaining: 0, error: '', stored, availableChars, nextOffset: offset};
 TOOL_RESULT_CACHE.set(cacheKey, doneCOMPLETE);
 return doneCOMPLETE;
     }
   }
-  const donePARTIAL = {...base, outcome: 'partial' as const, text, pages, remaining: remaining, error: 'max-pages', stored, availableChars};
+  /**
+   * partial 的正文是"已取回的累计"（续取时从缓存的 text 起步），`nextOffset` 是服务端的游标；
+   * 缓存写回后下一次点击就从这里继续，`toolResultRunNote` 那句"可再次点击继续"从此有对应动作
+   * （`toolResultNextAction` 给按钮）。
+   */
+  const donePARTIAL = {...base, outcome: 'partial' as const, text, pages, remaining: remaining, error: 'max-pages', stored, availableChars, nextOffset: offset};
 TOOL_RESULT_CACHE.set(cacheKey, donePARTIAL);
 return donePARTIAL;
 }
