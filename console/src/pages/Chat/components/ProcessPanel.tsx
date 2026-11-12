@@ -20,6 +20,7 @@ import {
   toolArgsView,
   droppedSegmentsText,
   modelCallNote,
+  modelCallPlacement,
   segmentCategory,
   segmentTimelineView,
 } from '@/chatProviders/segments';
@@ -219,18 +220,32 @@ const ProcessPanel = ({process, toolCalls, sources, fromCache, segments, toolRes
     });
   }
 
+  /**
+   * B2 那句话挂在哪里由 `modelCallPlacement` 决定（判据在纯模块里，穷举测）。
+   * 这里曾经把它写在 `if (calls.length)` 里面 ⇒ 零工具的重试轮**永远不会说**，
+   * 而"上游被多调了几次"正是那种没有工具可解释、最需要说出来的情形。
+   */
+  const mc = modelCallNote(process);
+  const mcAt = modelCallPlacement(process, calls.length);
+  if (mcAt === 'standalone') {
+    items.push({
+      key: 'model-calls',
+      title: mc,
+      icon: <ThunderboltOutlined/>,
+      status: 'success' as ThoughtChainItemType['status'],
+      collapsible: false,
+    });
+  }
+
   if (calls.length) {
     items.push({
       key: 'tools',
       title: `调用工具 ${calls.length} 次`,
       description: (() => {
-        /**
-         * 面板轮次照旧；模型调用数只在**与轮次不等时**加一句（相等就是重复，见 `modelCallNote`）。
-         */
+        /** 面板轮次照旧；模型调用数只在**与轮次不等时**加一句（相等就是重复，见 `modelCallNote`） */
         const parts: string[] = [];
         if (process?.iterationCount && process.iterationCount > 1) parts.push(`模型往返 ${process.iterationCount} 轮`);
-        const mc = modelCallNote(process);
-        if (mc) parts.push(mc);
+        if (mcAt === 'tools') parts.push(mc);
         return parts.length ? parts.join(' · ') : undefined;
       })(),
       icon: <ThunderboltOutlined/>,

@@ -4,6 +4,7 @@ import {
   toolArgsView,
   droppedSegmentsText,
   modelCallNote,
+  modelCallPlacement,
   applySegmentStart,
   applySegmentEnd,
   fromHistorySegments,
@@ -536,5 +537,49 @@ describe('modelCallNote：相等就是重复，所以默认不说', () => {
   test('字符串数字接受（后端偶尔下发文本数字），但仍要满足"不等才说"', () => {
     expect(modelCallNote({iterationCount: 5, usage: {modelCalls: '6', hasUsage: true}})).toBe('上游模型实际调用 6 次');
     expect(modelCallNote({iterationCount: 6, usage: {modelCalls: '6', hasUsage: true}})).toBe('');
+  });
+});
+
+describe('modelCallPlacement：挂在哪儿，和说不说，是两件事', () => {
+  /**
+   * 这组用例的存在理由是一个**已经上线过的缺陷**：
+   * 那句话当时只挂在"调用工具 N 次"条目里，于是零工具的重试轮永远不说，
+   * 而 dev 里 `modelCalls=3 / iterationCount=1` 的 3 行恰恰全是零工具轮。
+   * 内容判据（modelCallNote）没错，错的是把它 gate 在一个不相干的条件上。
+   */
+  const retryShape = {iterationCount: 1, usage: {modelCalls: 3, hasUsage: true}};
+
+  test('要说的话存在 + 零工具 ⇒ 单列一条（这就是修掉的那个沉默）', () => {
+    expect(modelCallPlacement(retryShape, 0)).toBe('standalone');
+    /** 反面对照：这次修复之前，这个形状在界面上什么都不说 */
+    expect(modelCallPlacement(retryShape, 0)).not.toBe('');
+  });
+
+  test('要说的话存在 + 有工具 ⇒ 挂在工具条目里，不另起一条（避免同一句说两遍）', () => {
+    expect(modelCallPlacement(retryShape, 2)).toBe('tools');
+  });
+
+  test('相等 ⇒ 哪儿都不挂（重复不是信息）', () => {
+    expect(modelCallPlacement({iterationCount: 3, usage: {modelCalls: 3, hasUsage: true}}, 0)).toBe('');
+    expect(modelCallPlacement({iterationCount: 3, usage: {modelCalls: 3, hasUsage: true}}, 4)).toBe('');
+  });
+
+  test('没有用量记录 ⇒ 哪儿都不挂，不许编', () => {
+    expect(modelCallPlacement({iterationCount: 2, usage: {modelCalls: 0, hasUsage: false}}, 0)).toBe('');
+    expect(modelCallPlacement({iterationCount: 2}, 3)).toBe('');
+  });
+
+  test('工具数是脏值时按"零工具"处理（undefined/NaN/字符串都不许抛）', () => {
+    for (const bad of [undefined, null, NaN, 'x', {}]) {
+      expect(() => modelCallPlacement(retryShape, bad as any)).not.toThrow();
+      expect(modelCallPlacement(retryShape, bad as any)).toBe('standalone');
+    }
+  });
+
+  test('脏 process 不抛且选择不挂（组件里直接调用它，判据必须自己站住）', () => {
+    for (const bad of [undefined, null, {}, {iterationCount: 'a', usage: {modelCalls: 'b'}}]) {
+      expect(() => modelCallPlacement(bad as any, 1)).not.toThrow();
+      expect(modelCallPlacement(bad as any, 1)).toBe('');
+    }
   });
 });

@@ -351,6 +351,25 @@ export function modelCallNote(process: any): string {
 }
 
 /**
+ * @description 这句"上游实际调用次数"该挂在哪儿（B2 的**位置**判据，与 `modelCallNote` 的**内容**判据分开）
+ * @param {any} process 视图的 `process` 字段
+ * @param {Number} toolCallCount 本轮工具调用条数
+ * @returns {String} 'tools' = 挂在工具条目上；'standalone' = 自己单列一条；'' = 不显示
+ *
+ * 为什么必须有这条判据：2026-11-12 的现网点验发现 B2 上线后**对它自己的动机人群一个字都没说**——
+ * 那句话当时只挂在"调用工具 N 次"这个条目里，而触发它的重试场景恰恰通常没有工具调用
+ * （dev 那 3 行 `modelCalls=3 / iterationCount=1` 全是零工具轮）。
+ * 内容判据是对的，**接线把它 gate 在了一个不相干的条件上**。
+ *
+ * 两种挂法不能同时出：有工具时挂在工具条目里（同一行讲完"几轮 + 实际几次"），
+ * 没工具时单列一条；否则要么重复、要么干脆没有。
+ */
+export function modelCallPlacement(process: any, toolCallCount: number): string {
+  if (!modelCallNote(process)) return '';
+  return Number(toolCallCount) > 0 ? 'tools' : 'standalone';
+}
+
+/**
  * @description 工具**入参**该怎么说（PR-H H1/H2 的判据都在这里，不在组件里）
  * @param {any} call 工具调用记录（流式累积或历史 `process.toolCalls[]` 的形状）
  * @returns {{recorded: boolean, preview: string, note: string}} recorded=服务端有没有记这个维度
