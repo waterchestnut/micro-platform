@@ -103,6 +103,89 @@ export function toolResultIntent(call: any, toolResults?: any[]): ToolResultInte
   return { ok: true, reason: 'ok', note: '' };
 }
 
+/**
+ * 面板一次显示多少字符。**五端共享这一个常量**：原先每端各自写着 `RESULT_PREVIEW = 600`，
+ * 于是"取回全文"这件事在界面侧被二次截断、而截断值没有任何一处是权威的
+ * （2026-11-12 审计的 P0：结论句说 73,214 字，屏幕上只有 612 字符）。
+ */
+export const PREVIEW_CHARS = 600;
+
+/** 全文视图的动作（展开 / 收起） */
+export type ToolResultViewAction = {show: boolean; label: string};
+
+/** 全文视图的结果 */
+export type ToolResultDisplay = {
+  /** 现在该渲染的文本（已按需截断并带标记） */
+  text: string;
+  /** 手上正文的**真实**字符数（不是美化后的长度） */
+  sourceChars: number;
+  /** 实际显示出来的原文字符数 */
+  shownChars: number;
+  /** 是否仍在截断状态 */
+  truncated: boolean;
+  /** 该说的一句量级说明；空串表示不用说 */
+  note: string;
+  /** 展开/收起入口 */
+  expand: ToolResultViewAction;
+};
+
+/**
+ * @description 把 JSON 文本美化，失败原样返回（纯函数，不抛）
+ * @param {String} raw 原文
+ * @returns {String} 结果
+ */
+export function prettyToolResultText(raw: string): string {
+  if (!raw) return '';
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2);
+  } catch (e) {
+    return raw;
+  }
+}
+
+/**
+ * @description 决定工具结果正文怎么显示、还剩多少、给不给展开入口
+ * @param {Object} p 参数
+ * @param {String} [p.held] 服务端给的预览（`process.toolCalls[].result`）
+ * @param {String} [p.fetched] 已经取回/缓存住的正文（比 held 长时以它为准）
+ * @param {Boolean} [p.expanded] 用户是否已选择展开
+ * @param {Number} [p.previewChars] 覆盖默认预算（测试与特殊布局用）
+ * @returns {ToolResultDisplay} 显示结果
+ *
+ * 三件事必须在这里定，不让组件自己拼：
+ * 1. **数字用原文长度，不用美化后的长度**。原先组件先 `JSON.stringify(..., null, 2)` 再数长度，
+ *    于是"共 73340 字"与真实 73,214 字差了 126 个美化空白——界面报了一个不存在的字数。
+ * 2. 显示与"还有多少没显示"必须同时给，否则"取回全文"变成"取回后仍然看不全"（审计 P0）。
+ * 3. 展开入口由这里给，**界面不承诺没有入口的动作**（H2b 那条纪律在这继续适用）。
+ */
+export function toolResultDisplay(p: {
+  held?: string;
+  fetched?: string;
+  expanded?: boolean;
+  previewChars?: number;
+} = {}): ToolResultDisplay {
+  const fetchedText = typeof p.fetched === 'string' ? p.fetched : '';
+  const heldText = typeof p.held === 'string' ? p.held : '';
+  /** 取回过的以取回为准；没取回过用服务端预览 */
+  const source = fetchedText.length >= heldText.length ? fetchedText : heldText;
+  const cap = Number(p.previewChars) > 0 ? Number(p.previewChars) : PREVIEW_CHARS;
+  const expanded = !!p.expanded;
+  const needsCut = source.length > cap;
+  const shown = expanded || !needsCut ? source : source.slice(0, cap);
+  const text = prettyToolResultText(shown);
+  const truncated = needsCut && !expanded;
+  return {
+    text,
+    sourceChars: source.length,
+    shownChars: shown.length,
+    truncated,
+    note: truncated ? `已显示前 ${shown.length} 字，共 ${source.length} 字` : '',
+    expand: needsCut
+      ? {show: true, label: expanded ? '收起' : `展开全部（${source.length} 字）`}
+      : {show: false, label: ''},
+  };
+}
+
 /** 取回的结果出口 */
 export type ToolResultOutcome = 'complete' | 'partial' | 'stopped' | 'failed';
 

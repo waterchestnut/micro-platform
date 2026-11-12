@@ -4,7 +4,7 @@ import type {ThoughtChainItemType} from '@ant-design/x';
 import {useState} from 'react';
 import type {ReactNode} from 'react';
 import type {ToolResultPage, ToolResultRun} from '@/chatProviders/toolResult';
-import {runToolResultFetch, toolResultIntent, toolResultNextAction, toolResultRunNote} from '@/chatProviders/toolResult';
+import {runToolResultFetch, toolResultIntent, toolResultNextAction, toolResultRunNote, toolResultDisplay, PREVIEW_CHARS} from '@/chatProviders/toolResult';
 import {
   ApartmentOutlined,
   CheckCircleOutlined,
@@ -25,21 +25,14 @@ import {
 
 const {Text} = Typography;
 
-/** 工具结果原文可能很长，面板内先截断，展开再由用户决定 */
-const RESULT_PREVIEW = 600;
-
+/**
+ * 段正文等长文本的面内截断。**预算用模块里的那一个常量**，
+ * 不在这里再写一遍 600——两处各写一份、只改一边，是这个项目反复出现的失败形状
+ * （审计 P0 的直接原因之一就是"取回预算"与"显示预算"从来没人对齐）。
+ */
 function truncate(text?: string) {
   if (!text) return '';
-  return text.length > RESULT_PREVIEW ? `${text.slice(0, RESULT_PREVIEW)}…（共 ${text.length} 字）` : text;
-}
-
-function tryPretty(text?: string) {
-  if (!text) return '';
-  try {
-    return JSON.stringify(JSON.parse(text), null, 2);
-  } catch {
-    return text;
-  }
+  return text.length > PREVIEW_CHARS ? `${text.slice(0, PREVIEW_CHARS)}…（共 ${text.length} 字）` : text;
 }
 
 export type ProcessPanelProps = {
@@ -97,9 +90,12 @@ const ToolCallResult = ({call, process, load}: {
   const [phase, setPhase] = useState<'idle' | 'loading' | 'done'>('idle');
   const [fetched, setFetched] = useState('');
   const [note, setNote] = useState('');
-  /** 上一次的取回结果：按钮给不给、叫什么，全由 `toolResultNextAction` 依它决定 */
+  /** 用户是否选择看全文（默认仍是截断，但**截断必须配一个能展开的入口**） */
+  const [expanded, setExpanded] = useState(false);
+  /** 上一次取回结果：按钮给不给、叫什么，由 `toolResultNextAction` 决定 */
   const [run, setRun] = useState<ToolResultRun | null>(null);
   const action = toolResultNextAction(run);
+  const display = toolResultDisplay({held: call?.result || '', fetched, expanded});
   const canFetch = intent.ok && !!load;
 
   const doFetch = async () => {
@@ -123,8 +119,19 @@ const ToolCallResult = ({call, process, load}: {
   return (
     <Flex vertical gap={4}>
       <pre style={{whiteSpace: 'pre-wrap', margin: 0, fontSize: 12, maxHeight: 260, overflow: 'auto'}}>
-        {truncate(tryPretty(phase === 'done' && fetched ? fetched : call.result)) || '（无返回内容）'}
+        {display.text || '（无返回内容）'}
       </pre>
+      {/* 量级说明与展开入口是一对：说了"只显示前 X 字"就必须给看见其余的入口（审计 P0） */}
+      {display.note ? (
+        <Text type="secondary" style={{fontSize: 12}}>{display.note}</Text>
+      ) : null}
+      {display.expand.show ? (
+        <div>
+          <Button size="small" type="link" style={{padding: 0}} onClick={() => setExpanded(!expanded)}>
+            {display.expand.label}
+          </Button>
+        </div>
+      ) : null}
       {intent.note ? (
         <Text type="secondary" style={{fontSize: 12}}>{intent.note}</Text>
       ) : null}

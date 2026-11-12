@@ -9,6 +9,9 @@ import {
   toolResultIntent,
   toolResultNextAction,
   toolResultRunNote,
+  PREVIEW_CHARS,
+  prettyToolResultText,
+  toolResultDisplay,
   type ToolResultPage,
   type ToolResultRun,
 } from './toolResult';
@@ -441,5 +444,73 @@ describe('toolResultNextAction：说的话与给的入口必须同批存在', ()
     }
     /** 条件断言必须证明它真的跑到过，否则这条用例会空过 */
     expect(命中再点句子的条数).toBeGreaterThan(0);
+  });
+});
+
+describe('toolResultDisplay：全文要真能看见，字数要真的是原文长度', () => {
+  test('预算内原样给：不说量级、不给展开', () => {
+    const d = toolResultDisplay({ held: '短正文' });
+    expect(d.truncated).toBe(false);
+    expect(d.note).toBe('');
+    expect(d.expand.show).toBe(false);
+    expect(d.sourceChars).toBe(3);
+  });
+
+  test('超预算 ⇒ 截断并说明"前 X 字共 N 字"，同时给出展开入口', () => {
+    const held = 'x'.repeat(1000);
+    const d = toolResultDisplay({ held });
+    expect(d.truncated).toBe(true);
+    expect(d.shownChars).toBe(PREVIEW_CHARS);
+    expect(d.text.length).toBe(PREVIEW_CHARS);
+    expect(d.note).toBe(`已显示前 ${PREVIEW_CHARS} 字，共 1000 字`);
+    expect(d.expand.label).toBe('展开全部（1000 字）');
+  });
+
+  test('展开后显示全文，按钮变"收起"，不再说还剩多少', () => {
+    const held = 'y'.repeat(1000);
+    const d = toolResultDisplay({ held, expanded: true });
+    expect(d.truncated).toBe(false);
+    expect(d.note).toBe('');
+    expect(d.shownChars).toBe(1000);
+    expect(d.expand.label).toBe('收起');
+  });
+
+  test('取回过的正文优先于服务端预览（这才是"取回全文"该看到的东西）', () => {
+    const d = toolResultDisplay({ held: 'ab', fetched: 'z'.repeat(700) });
+    expect(d.sourceChars).toBe(700);
+    expect(d.truncated).toBe(true);
+  });
+
+  test('取回结果反而更短时回落到预览，不用空串冒充', () => {
+    const d = toolResultDisplay({ held: 'h'.repeat(50), fetched: 'x' });
+    expect(d.sourceChars).toBe(50);
+  });
+
+  test('两个都空不抛，text 是空串', () => {
+    const d = toolResultDisplay({});
+    expect(d.text).toBe('');
+    expect(d.expand.show).toBe(false);
+  });
+
+  test('非 JSON 原样显示（美化失败不许吞正文）', () => {
+    expect(toolResultDisplay({ held: 'plain 正文 with spaces' }).text).toBe('plain 正文 with spaces');
+    expect(prettyToolResultText('')).toBe('');
+  });
+
+  test('JSON 会被美化，但**报给用户的字数必须是原文长度**（"共 73340 字"那个假数字的根因）', () => {
+    const raw2 = '{"a":"x","b":[1,2]}';
+    const d = toolResultDisplay({ held: raw2 });
+    expect(d.text.length).toBeGreaterThan(raw2.length);
+    expect(d.sourceChars).toBe(raw2.length);
+    expect(d.note).toBe('');
+  });
+
+  test('previewChars 可覆盖；0 与负数回落到默认', () => {
+    const long = 'z'.repeat(1000);
+    expect(toolResultDisplay({ held: long, previewChars: 10 }).shownChars).toBe(10);
+    expect(toolResultDisplay({ held: long, previewChars: 0 }).shownChars).toBe(PREVIEW_CHARS);
+    expect(toolResultDisplay({ held: long, previewChars: -5 }).shownChars).toBe(PREVIEW_CHARS);
+    /** 短文本本来就不该被"显示 600 字"：shownChars 是 min(原文, 预算) */
+    expect(toolResultDisplay({ held: 'z'.repeat(100) }).shownChars).toBe(100);
   });
 });
