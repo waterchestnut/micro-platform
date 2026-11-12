@@ -666,13 +666,73 @@ export function buildToolNameIndex(toolCalls = []) {
 
 /* ---------- trace 快照截断（对应 llmChat.js:42-45） ---------- */
 
+
+
+/**
+ * @description 按 tool_call_id 反查工具的**入参**（与 `buildToolNameIndex` 成对）
+ * @param {Object[]} toolCalls 已 prune 的调用
+ * @returns {Object} id -> arguments（OpenAI 形态是 JSON 字符串，原样给，不在此解析）
+ *
+ * 为什么不复用 `buildToolNameIndex` 一次返回两个索引：那个函数已有调用方与既有测试口径，
+ * 改它的返回形状会让"名字索引"这个语义变成要靠上下文才知道的东西。多一个 6 行的纯函数，
+ * 换来两个索引各自可以被单独钉住。
+ */
+export function buildToolArgsIndex(toolCalls = []) {
+    const byId = {}
+    for (const tc of toolCalls) {
+        if (tc?.id) {
+            byId[tc.id] = tc.function?.arguments
+        }
+    }
+    return byId
+}
+
+
+
+/** 入参进 trace 的默认字符预算（与 `clipTraceResult` 的 4000 同量级） */
+export const DEFAULT_TRACE_ARGS_CHARS = 4000
+
+/**
+ * @description 工具入参进 trace 的快照：正文 + **原文长度 + 是否截断**三个字段分开给
+ * @param {*} args 工具入参（字符串或对象）
+ * @param {Number} [limit] 字符上限
+ * @returns {{args: String, argsChars: Number, argsTruncated: Boolean}} 快照
+ *
+ * 为什么不像 `clipTraceResult` 那样把 `...[truncated]` 拼进字符串：那样读者**无从知道原文多长**，
+ * "截断了"与"截了多少"被压成一个尾巴。这里 `argsChars` 永远是未截断的真实字符数，
+ * `argsTruncated` 只说有没有裁，两者不互相污染（与 PR-B 段账本 `metrics.chars` 同一口径）。
+ *
+ * `argsChars: 0` 是有用事实（模型确实传了空参数），与"这一行没有该字段"（存量行未记录）不同——
+ * 后者必须渲染成"未记录"，不能显示空参数冒充"模型没传参"。
+ */
+export function clipTraceArgs(args, limit = DEFAULT_TRACE_ARGS_CHARS) {
+    const raw = typeof args === 'string' ? args
+        : (args === null || args === undefined ? '' : JSON.stringify(args))
+    const cap = Number(limit) > 0 ? Number(limit) : DEFAULT_TRACE_ARGS_CHARS
+    const truncated = raw.length > cap
+    return {
+        args: truncated ? raw.slice(0, cap) : raw,
+        argsChars: raw.length,
+        argsTruncated: truncated,
+    }
+}
+
+/**
+ * 工具结果进 trace 的默认字符预算。
+ * **它此前是硬编码在函数签名里的**（`limit = 4000`，两处调用点都不传），
+ * 而实测 `finish` 口径 148 条调用记录里有 24 条正好停在 4014（4000 + 14 字符标注）
+ * ⇒ 这不是"没触发过的预算"，是**在生产上真的在削数据、却调不动的那个值**。
+ * 现在它只是兜底默认，真正的预算来自 `limits.toolResultTraceChars`。
+ */
+export const DEFAULT_TRACE_RESULT_CHARS = 4000
+
 /**
  * @description 工具结果进 trace 的截断快照
  * @param {*} content 工具返回内容
  * @param {Number} [limit] 字符上限
  * @returns {String} 截断后的字符串
  */
-export function clipTraceResult(content, limit = 4000) {
+export function clipTraceResult(content, limit = DEFAULT_TRACE_RESULT_CHARS) {
     const s = typeof content === 'string' ? content : JSON.stringify(content ?? '')
     return s.length > limit ? s.slice(0, limit) + '...[truncated]' : s
 }
@@ -1027,7 +1087,11 @@ export default {
     buildAssistantToolCallMessage,
     classifyToolCalls,
     buildToolNameIndex,
+    buildToolArgsIndex,
+    DEFAULT_TRACE_RESULT_CHARS,
+    DEFAULT_TRACE_ARGS_CHARS,
     clipTraceResult,
+    clipTraceArgs,
     drainAssistantStream,
     iterationDecision,
     loopExitReason,

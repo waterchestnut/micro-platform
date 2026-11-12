@@ -238,6 +238,19 @@ export default {
         toolResultTokens: parseInt(process.env['limits_toolResultTokens'] || 1200),
         toolResultHeadChars: parseInt(process.env['limits_toolResultHeadChars'] || 900),
         toolResultTailChars: parseInt(process.env['limits_toolResultTailChars'] || 300),
+        /**
+         * 工具**入参**进档案/下发的字符预算（与源仓 llm.api 同步）。
+         * 2026-11-12 现网复跑读数：dev 151 条调用记录里仅 3 条带 args 键（2.0%），
+         * argsChars 观测值 2/52/53，入参被裁 0 次 ⇒ **这条预算目前不是约束项**，
+         * 默认值维持 4000 是"照结果预览尺度对齐"，不是照入参数据定的。
+         */
+        toolArgsChars: parseInt(process.env['limits_toolArgsChars'] || 4000),
+        /**
+         * 工具**结果**进 trace（历史视图里那份预览）的字符预算。
+         * 默认值与源仓改造前的硬编码逐字相同 ⇒ 同步本身不改行为，只是把"调不动"变成"可配"；
+         * 现网实测有 24/148 条调用记录正好停在 4014（4000 + 14 字符标注），所以真正在削数据的是这一条。
+         */
+        toolResultTraceChars: parseInt(process.env['limits_toolResultTraceChars'] || 4000),
         overflowStoreChars: parseInt(process.env['limits_overflowStoreChars'] || 200000),
         /** answerCache 单频道最多保留多少条，超出由压实任务删除最旧的 */
         answerCacheMaxPerChannel: parseInt(process.env['limits_answerCacheMaxPerChannel'] || 5000),

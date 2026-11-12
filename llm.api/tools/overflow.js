@@ -90,7 +90,74 @@ export function findOverflow(list, ref) {
     if (!Array.isArray(list) || !ref) {
         return null
     }
-    return list.find(x => x && (x.ref === ref || x.tool_call_id === ref)) || null
+    /** ref 的取法只有一份（resolveToolRef）：两处各认一次就会在一处漏掉老形状 */
+    return list.find((x) => resolveToolRef(x) === ref) || null
+}
+
+/** 找不到留档时的说明：三种真实原因都要说出来，不能只说"不存在" */
+export const TOOL_RESULT_UNARCHIVED = '找不到该标识的留档内容。留档只在"结果被裁剪过"时产生：'
+    + '未裁剪的结果全文本来就在 process.toolCalls[].result 里，不需要再取。'
+    + '换 ref 或换一轮提问都不会有结果——这一轮确实没有留下这份正文。'
+
+/**
+ * @description 把留档里的 ref 归一（老形状只有 tool_call_id）
+ * @param {Object} entry 一条留档
+ * @returns {String|null} ref
+ */
+export function resolveToolRef(entry) {
+    if (!entry || typeof entry !== 'object') {
+        return null
+    }
+    return entry.ref ?? entry.tool_call_id ?? null
+}
+
+/**
+ * @description 组装"按 ref 取工具结果全文"的响应（纯函数，不碰 dac）
+ * @param {Object} params 入参
+ * @param {Object|null} params.entry `extInfo.toolOverflows` 里命中的条目
+ * @param {String} params.ref 请求的标识
+ * @param {Number} [params.offset] 起始字符
+ * @param {Number} [params.limit] 长度（上限同模型侧 `OVERFLOW_MAX_LIMIT`）
+ * @returns {{ok: Boolean, statusCode?: Number, error?: String, data?: Object}} 结果
+ *
+ * 四条边界都有对应现实，不是防御性凑数：
+ * - **条目不存在** ⇒ 404 + 常量 `TOOL_RESULT_UNARCHIVED`：绝大多数情况是"这条结果根本没被裁剪过"，
+ *   说成"记录不存在"会让人以为数据丢了；
+ * - **超出留档上限**（`stored:false`，即原文长过 `limits.overflowStoreChars`）⇒ 尾部**任何地方都不存在**，
+ *   这时必须明说"能取回的只有前 availableChars 字"，而不是静默给一段看起来完整的正文；
+ * - **offset 越过留档长度** ⇒ 空正文 + `remaining:0`，仍然 200：翻页到尽头是正常终止，不是错误；
+ * - **limit 与模型侧共用 `sliceOverflow`** ⇒ 一份切分逻辑，两处消费方（前端与模型）不会漂成两套翻页语义。
+ *   `source:'archive'` 是刻意的：取回的是**档案副本**，可能与当时流里的全文不同源。
+ */
+export function buildToolResultPayload(params = {}) {
+    const {entry, ref, offset, limit} = params
+    if (!entry) {
+        return {ok: false, statusCode: 404, error: TOOL_RESULT_UNARCHIVED}
+    }
+    const content = typeof entry.content === 'string' ? entry.content : ''
+    const slice = sliceOverflow({content, offset, limit})
+    const stored = entry.stored === false ? false : (entry.stored === true ? true : null)
+    return {
+        ok: true,
+        data: {
+            ref: resolveToolRef(entry) ?? (ref || null),
+            tool: entry.tool || null,
+            /** 原文真实字符数（裁剪前） */
+            chars: Number.isFinite(entry.chars) ? entry.chars : content.length,
+            stored,
+            /** 留档里实际存了多少字：stored=false 时这是唯一可取的范围 */
+            availableChars: content.length,
+            content: slice.text,
+            offset: slice.offset,
+            end: slice.end,
+            remaining: slice.remaining,
+            truncatedMore: slice.truncatedMore,
+            source: 'archive',
+            note: stored === false
+                ? '该结果超出留档上限，尾部未留存：可取回的范围止于留档边界'
+                : '取回的是档案副本，可能与当时流式下发的正文不同源',
+        },
+    }
 }
 
 /**

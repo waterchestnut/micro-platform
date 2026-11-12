@@ -5,7 +5,7 @@
  */
 
 import {OpenAI} from 'openai'
-import {withUpstreamRetry, parseRetryAfterMs} from './llmLoop.js'
+import {withUpstreamRetry, parseRetryAfterMs, buildToolArgsIndex, clipTraceArgs} from './llmLoop.js'
 import {getBreaker, breakerKeyFor} from './upstreamBreaker.js'
 import retSchema from '../../daos/retSchema.js'
 import conversationDac from '../../daos/core/dac/conversationDac.js'
@@ -776,7 +776,14 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             contextUsage,
             sources: ragSources,
             /** 含 result：已在 trace 侧截到 4000 字符，历史回放的 ProcessPanel 靠它显示返回内容 */
-            toolCalls: toolCallTrace.map(t => ({id: t.id, name: t.name, result: t.result})),
+            toolCalls: toolCallTrace.map(t => ({
+                id: t.id,
+                name: t.name,
+                result: t.result,
+                args: t.args,
+                argsChars: t.argsChars,
+                argsTruncated: t.argsTruncated,
+            })),
             /** 全文留档到上限，超出部分只留量级说明，避免 message 文档无限膨胀 */
             toolOverflows: toolOverflows.map(o => ({
                 ref: o.ref,
@@ -1112,6 +1119,10 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
 
                     /*工具结果只带 tool_call_id，前端无法据此显示调用了哪个工具，这里补上名称*/
                     const nameById = buildToolNameIndex(toolCalls)
+                    /** 入参与名字同批反查（两处 trace 写入点都要带，漏一处就是有的调用看得见参数有的看不见） */
+                    const argsById = buildToolArgsIndex(toolCalls)
+                    const argsCap = config.limits?.toolArgsChars
+                    const resultCap = config.limits?.toolResultTraceChars
 
                     // 将工具调用结果添加到消息历史中
                     for (const toolResult of toolResults) {
@@ -1124,7 +1135,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                          */
                         if (isOverflowTool(toolName)) {
                             messages.push(toolResult)
-                            toolCallTrace.push({id: toolResult.tool_call_id, name: toolName, result: clipTraceResult(toolResult.content)})
+                            toolCallTrace.push({id: toolResult.tool_call_id, name: toolName, result: clipTraceResult(toolResult.content, resultCap), ...clipTraceArgs(argsById[toolResult.tool_call_id], argsCap)})
                             continue
                         }
                         /**
@@ -1150,15 +1161,24 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                             tlog.info(`工具结果已裁剪 ${toolName || '-'}: ${cut.originalTokens} → ${cut.keptTokens} tokens`)
                         }
                         messages.push(cut.message)
-                        toolCallTrace.push({id: toolResult.tool_call_id, name: toolName, result: clipTraceResult(toolResult.content)})
+                        toolCallTrace.push({id: toolResult.tool_call_id, name: toolName, result: clipTraceResult(toolResult.content, resultCap), ...clipTraceArgs(argsById[toolResult.tool_call_id], argsCap)})
 
                         /*协议 1 的旧客户端会把 data.content 无条件拼进答案，因此仅在协议 2 或显式开启时下发*/
                         if (emitToolResults && options.streamCallback) {
+                            /**
+                             * 入参一并下发。理由很具体：只落库不下发的话，同一轮里
+                             * "实时看不到参数、刷新后看得到"会变成用户以为的 bug（前端会去找一个不存在的差异）。
+                             * `argsChars`/`argsTruncated` 同时给出，前端不必猜正文是不是被裁过。
+                             */
+                            const argsSnapshot = clipTraceArgs(argsById[toolResult.tool_call_id], argsCap)
                             options.streamCallback(JSON.stringify({
                                 role: 'tool',
                                 content: toolResult.content,
                                 tool_call_id: toolResult.tool_call_id,
                                 tool: toolName,
+                                args: argsSnapshot.args,
+                                argsChars: argsSnapshot.argsChars,
+                                argsTruncated: argsSnapshot.argsTruncated,
                                 messageCode
                             }), 'tool_result')
                         }
