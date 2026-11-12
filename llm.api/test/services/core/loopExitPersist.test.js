@@ -1,7 +1,7 @@
 import {test, describe} from 'node:test'
 import * as assert from 'node:assert'
 import fs from 'node:fs'
-import {exitReasonForPersist, loopExitReason} from '../../../services/core/llmLoop.js'
+import {exitReasonForPersist, loopExitReason, exhaustedFallback} from '../../../services/core/llmLoop.js'
 import {PERSIST_VIA} from '../../../services/core/session/shutdownPolicy.js'
 
 /**
@@ -12,6 +12,28 @@ import {PERSIST_VIA} from '../../../services/core/session/shutdownPolicy.js'
  * 于是"这轮为什么没答完"又回到只能靠日志猜。而 `llmLoop` 里那句注释当时还写着
  * **"理论上不可达"**：读数到场，注释就得改。
  */
+
+/**
+ * `fb.progress` 这类**属性表达式进度**能不能不带 `interruptedBy`，唯一的合法理由是"它取不到 abort"。
+ * 这句话必须是跑出来的值域，不能是我读 `llmLoop` 注释读出来的结论——
+ * 上一版守卫就是因为式子匹配不上 `fb.progress`（里面有个点号）而**巧合地**全绿，
+ * 那属于把盲区伪装成覆盖。所以这里把 `loopExit` 的真实字母表（含 `aborted:*` 各形态）
+ * 连同正文/分段的空与非空一起枚举，取它可能落下的全部 progress。
+ */
+const FB_PROGRESS_DOMAIN = (() => {
+    const exits = ['break', 'continue', 'exhausted', 'unknown', '', 'aborted:error', 'aborted:unattributed', 'aborted:loop-exit', 'aborted:shutdown:process-lost', undefined]
+    const seen = new Set()
+    for (const loopExit of exits) {
+        for (const answerContent of ['', '有正文']) {
+            for (const answerList of [[], ['一段'], [null, '', undefined]]) {
+                seen.add(exhaustedFallback({loopExit, answerContent, answerList}).progress)
+            }
+        }
+    }
+    return [...seen].sort()
+})()
+/** 允许因"值域不含 abort"而豁免来源的属性表达式（必须逐项被真正用到，不许有死项） */
+const NEVER_ABORT_PROGRESS_ARGS = ['fb.progress']
 
 describe('exitReasonForPersist：只有 abort 才允许被补', () => {
     test('非 abort 落库一律原样返回（包括它本来就带 unknown）', () => {
@@ -127,13 +149,81 @@ describe('落库点的接线（llmChat 离线跑不起来，所以守形状）',
     test('每个 abort 落库点都必须说明"是谁打断的"（interruptedBy 不许漏）', () => {
         /**
          * 这条正是底座原来缺的东西：RESCUE 与 EARLY_STOP 站点只带了 via，
-         * 于是 `extInfo.interruptedBy` 落成默认值 `unspecified`——而"用户按停止"与"发版切连接"
-         * 恰恰是这一列要分的两件事。**只能靠人工对比发现的不变量等于没有不变量。**
+         * 于是 `extInfo.interruptedBy` 落成默认值——而"用户按停止"与"发版切连接"
+         * 恰恰是这一列要分的两件事。**只能靠人工对比发现的不变量，等于没有不变量。**
+         *
+         * 2026-11-12 连着补两次，第二次的理由更要紧：
+         * ① 只匹配字面量 `persistTurn('abort'` 会漏掉**变量进度**的站点（`errProgress`）；
+         * ② 补成 `[A-Za-z_$][\w$]*\s*,` 之后仍然漏——`persistTurn(fb.progress, …)` 里有个点号，
+         *   式子匹配不上，于是"它没带来源"看起来是绿的，其实**从没进过断言**。
+         *   巧合正确比错误更糟：盲区藏在我声称已经补强的那条用例里。
+         * 现在按进度实参的**形态**分三类各自处置：字面 'abort'、裸标识符、属性表达式；
+         * 属性表达式只能凭"值域不含 abort"豁免，且豁免表不许留死项。
          */
-        const calls = lines().filter(l => /persistTurn\(\s*'abort'/.test(l) && !/^\s*(\*|\/\/)/.test(l))
-        const naked = calls.filter(l => !/interruptedBy/.test(l))
-        assert.deepEqual(naked, [], `这些 abort 落库点没写打断来源：${JSON.stringify(naked.map(s => s.trim().slice(0, 80)))}`)
-        assert.ok(calls.length >= 5, `abort 落库点应不少于 5 个，实际 ${calls.length}`)
+        const argOf = (l) => (/persistTurn\(\s*([^,)]+)/.exec(l) || [])[1]?.trim() || ''
+        const calls = lines().filter((l) => /persistTurn\(/.test(l) && !/^\s*(\*|\/\/)/.test(l))
+        assert.ok(calls.length >= 7, `persistTurn 站点应不少于 7 处，实际 ${calls.length}：接线可能整体丢了`)
+
+        const literal = calls.filter((l) => argOf(l) === "'abort'")
+        const bare = calls.filter((l) => {
+            const a = argOf(l)
+            return a && !/^'/.test(a) && !/[.[]/.test(a)
+        })
+        const dotted = calls.filter((l) => /[.[]/.test(argOf(l)))
+        /** 三类必须真的把全部站点分完：新出现的写法（三元、函数调用）不能悄悄落到任何一类之外 */
+        assert.equal(literal.length + bare.length + dotted.length, calls.length,
+            `站点分类没覆盖全部：${JSON.stringify(calls.filter((l) => ![...literal, ...bare, ...dotted].includes(l)).map((l) => argOf(l)))}`)
+
+        assert.ok(literal.length >= 5, `字面 'abort' 站点应不少于 5 处，实际 ${literal.length}`)
+        assert.ok(bare.some((l) => /errProgress/.test(l)),
+            '参数化进度（errProgress）的站点必须被本条覆盖，否则又退回只匹配字面量的假绿')
+        const naked = [...literal, ...bare].filter((l) => !/interruptedBy/.test(l))
+        assert.deepEqual(naked, [], `这些 abort 落库点没写打断来源：${JSON.stringify(naked.map((s) => s.trim().slice(0, 80)))}`)
+
+        /** 属性表达式：要么自带来源，要么凭值域证明豁免，且豁免项必须真被用到 */
+        const usedExemptions = []
+        for (const l of dotted) {
+            const a = argOf(l)
+            if (/interruptedBy/.test(l)) continue
+            assert.ok(NEVER_ABORT_PROGRESS_ARGS.includes(a),
+                `${a} 既没写打断来源，也不在"值域不含 abort"的豁免表里（见下一条用例）`)
+            assert.ok(!FB_PROGRESS_DOMAIN.includes('abort'),
+                `${a} 想靠值域豁免，但 exhaustedFallback 的 progress 值域里有 abort：${JSON.stringify(FB_PROGRESS_DOMAIN)}`)
+            usedExemptions.push(a)
+        }
+        const dead = NEVER_ABORT_PROGRESS_ARGS.filter((a) => !usedExemptions.includes(a))
+        assert.deepEqual(dead, [], `豁免表里有死项（站点其实已经没了，或已经自带来源）：${JSON.stringify(dead)}`)
+    })
+
+    test('豁免的地基：exhaustedFallback 在任何 loopExit 形态下都落不出 abort', () => {
+        /**
+         * 上一条用例允许属性表达式进度不带来源，靠的是这条。
+         * 值域写成字面量数组会被"改函数返回值但不改这里"绕过，所以两头都钉：
+         * 跑出来的值域 = 期望值域，且不含 abort。
+         */
+        assert.deepEqual(FB_PROGRESS_DOMAIN, ['error', 'finish'],
+            `progress 值域变了：${JSON.stringify(FB_PROGRESS_DOMAIN)}；若真出现 abort，`
+            + '就得把 fb.progress 那个站点从豁免表移走并让它自带来源')
+        assert.ok(!FB_PROGRESS_DOMAIN.includes('abort'), '空答案/到顶兜底都不该记 abort，abort 只该由中断路径写下')
+        /** 顺带钉住"空答案绝不记 finish"这条既有口径（值域里有 error 就是它在起作用） */
+        assert.equal(exhaustedFallback({loopExit: 'exhausted', answerContent: '', answerList: []}).progress, 'error')
+    })
+
+    test('中断来源不许有静默兜底，也不许忽略站点显式传值', () => {
+        /**
+         * 底座原来有两个方向的问题，各来自一次跨仓对照：
+         * ① 源仓的默认值是写死的 'unspecified' ⇒ 站点漏接线时缺陷变成"看起来正常的数据"；
+         * ② 底座的默认值只调 `interruptReason()`，从不读 `extra.interruptedBy`
+         *   ⇒ 五个站点传进来的来源**全是死参数**（今天没错纯属巧合：算的是同一个函数）。
+         * 现在两边同形：站点显式值优先，缺省时现场计算；这个用例把"两者都必须存在"钉住。
+         */
+        const codeLines = lines().filter(l => l.includes('unspecified') && !/^\s*(\*|\/\/)/.test(l.trim()))
+        assert.deepEqual(codeLines, [],
+            `来源不该有写死的标签值，却出现在：${JSON.stringify(codeLines.map(l => l.trim().slice(0, 70)))}`)
+        const defaults = lines().filter(l => /interruptedBy:\s*progress === 'abort'/.test(l))
+        assert.equal(defaults.length, 1, `默认分支应恰好一处，实际 ${defaults.length}`)
+        assert.ok(defaults[0].includes('extra.interruptedBy ||'), '站点显式传值必须优先，不能被默认覆盖')
+        assert.ok(defaults[0].includes('interruptReason()'), '缺省时必须现场计算，不写死标签')
     })
     test('cancelled 段只在唯一落库点封，且必须排在段列表被读走之前', () => {
         /**

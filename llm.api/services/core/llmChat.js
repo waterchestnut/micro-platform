@@ -754,8 +754,14 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
              * 打断来源单独一列。`progress:'abort'` 必须同时表达"用户按停止"与"发版切连接"两件事，
              * 而这两件事在运维上是完全不同的问题（前者正常、后者是我们的损失）——
              * 压进一个字段就等于把 P-10 重新变回查不出来。
+             *
+             * 与源仓对齐的一处修正（2026-11-12）：这里原来**只**调 `interruptReason()`，
+             * 于是五个站点显式传进来的 `extra.interruptedBy` 全是死参数——
+             * 今天不出错纯属巧合（各站点算的是同一个函数、RESCUE 发生在 closing 期内）。
+             * 现在站点显式传值优先，缺省时才现场计算：既保留特殊来源的能力，
+             * 也不会有"忘了接线就落成标签"的静默出口（源仓那种 `unspecified` 默认值在这里从来不该存在）。
              */
-            interruptedBy: progress === 'abort' ? interruptReason() : null,
+            interruptedBy: progress === 'abort' ? (extra.interruptedBy || interruptReason()) : null,
             /**
              * 这条档由哪条路径写下（取值见 PERSIST_VIA）。
              * 与 interruptedBy 是两个问题：后者是"为什么被打断"，前者是"谁把这段字写下来的"。
@@ -1334,7 +1340,12 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         const errProgress = turnErr.kind === 'abort' ? 'abort' : 'error'
         if (!persisted) {
             try {
-                await persistTurn(errProgress, `${turnErr.kind}:${turnErr.message}`, {via: PERSIST_VIA.ERROR})
+                /**
+                 * 错误路径同样要说明"是谁打断的"（与源仓 `232d1ca` 对齐）：客户端掐流会让 SDK 抛错走到这里，
+                 * 以前这条只带 `via`，来源要靠默认值——默认值一旦是写死的标签就会静默少算
+                 * （见上面 `interruptedBy` 的注释）。
+                 */
+                await persistTurn(errProgress, `${turnErr.kind}:${turnErr.message}`, {via: PERSIST_VIA.ERROR, ...(errProgress === 'abort' ? {interruptedBy: interruptReason()} : {})})
             } catch (e2) {
                 /** 落库也失败时绝不掩盖原始异常：两份错误各留一次日志 */
                 tlog.error(`异常路径落库失败: ${String(e2?.message || e2).slice(0, 200)}`)
