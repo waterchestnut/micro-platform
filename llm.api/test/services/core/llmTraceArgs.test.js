@@ -18,6 +18,7 @@ import {
     buildToolNameIndex,
     buildToolArgsIndex,
     buildToolCallTraceEntry,
+    findTraceShapeGaps,
     clipTraceArgs,
     clipTraceResult,
     DEFAULT_TRACE_ARGS_CHARS,
@@ -213,5 +214,63 @@ describe('llmChat 不许再自己内联拼这条 trace（源码级防漂移）',
          */
         const inline = src.split('\n').filter((l) => /\.\.\.clipTraceArgs\(argsById\[/.test(l))
         assert.deepEqual(inline, [], `llmChat 里又出现内联展开：${inline.map((l) => l.trim().slice(0, 60)).join(' | ')}`)
+    })
+
+    test('探测器必须真的接在落库口上（写了函数不调用是这类改动最常见的失败形状）', () => {
+        const lines = src.split('\n')
+        const calls = lines.filter((l) => l.includes('findTraceShapeGaps('))
+        assert.equal(calls.length, 1, `调用次数=${calls.length}，期望 1（在 saveMessage 里）`)
+
+        /** 只报标识符与计数：这一条不允许把正文带进日志，所以要盖住整条告警语句，而不只是首行 */
+        const at = lines.findIndex((l) => l.includes('trace 形状缺入参声明'))
+        assert.ok(at > 0, '缺声明的告警语句必须在场')
+        const stmt = lines.slice(at - 1, at + 3).join('\n')
+        assert.ok(stmt.includes('messageCode') && stmt.includes('writtenBy'), '告警要能归因到写入路径')
+        assert.equal(/answer|toolResult\.content|\.query|inputs\b/.test(stmt), false,
+            '告警不得携带正文（与全文外泄边界同一条纪律）')
+    })
+})
+
+describe('findTraceShapeGaps：只认"有没有可核对的入参声明"', () => {
+    test('六键条目不算缺口', () => {
+        const t = buildToolCallTraceEntry('a1', 'search_web', '正文', {argsById: {a1: '{"q":"x"}'}})
+        assert.deepEqual(findTraceShapeGaps([t]), [])
+    })
+
+    test('三键形状（cw2pc 那条异常的样子）被报出来，并带上 id', () => {
+        assert.deepEqual(findTraceShapeGaps([{id: 'a2', name: 'search_web', result: 'r'}]), ['a2'])
+    })
+
+    test('argsChars 是 undefined 也算缺口——键名存在但值不可用，BSON 落库后与"没写过"无法区分', () => {
+        assert.deepEqual(findTraceShapeGaps([{id: 'a3', argsChars: undefined}]), ['a3'])
+    })
+
+    test('字符串数字与 NaN 都不接受（声明必须是可核对的数）', () => {
+        assert.deepEqual(findTraceShapeGaps([{id: 'b', argsChars: '12'}]), ['b'])
+        assert.deepEqual(findTraceShapeGaps([{id: 'c', argsChars: NaN}]), ['c'])
+    })
+
+    test('0 是合法声明（模型确实传了空参数），不许被当成缺口', () => {
+        assert.deepEqual(findTraceShapeGaps([{id: 'd', argsChars: 0}]), [])
+    })
+
+    test('只报缺的那几条，顺序保持', () => {
+        const list = [
+            {id: 'ok1', argsChars: 48},
+            {id: 'gap1'},
+            {id: 'ok2', argsChars: 0},
+            {id: 'gap2', argsChars: null},
+        ]
+        assert.deepEqual(findTraceShapeGaps(list), ['gap1', 'gap2'])
+    })
+
+    test('老形状条目可用 tool_call_id 归因（两处 id 键名都认，与 resolveToolRef 同一口径）', () => {
+        assert.deepEqual(findTraceShapeGaps([{tool_call_id: 'legacy1'}]), ['legacy1'])
+    })
+
+    test('非数组与空值入参返回空数组而不是抛出', () => {
+        assert.deepEqual(findTraceShapeGaps(undefined), [])
+        assert.deepEqual(findTraceShapeGaps('x'), [])
+        assert.deepEqual(findTraceShapeGaps([null, undefined]), [])
     })
 })

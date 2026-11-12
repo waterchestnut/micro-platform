@@ -56,6 +56,7 @@ import {
     classifyToolCalls,
     buildToolNameIndex,
     buildToolCallTraceEntry,
+    findTraceShapeGaps,
     drainAssistantStream,
     iterationDecision,
     loopExitReason,
@@ -1373,6 +1374,20 @@ async function saveMessage(query, messageCode, messages, conversationCode, chann
         const {turnSandboxCost} = await import('../sandbox/usage.js')
         sandboxPrice = await turnSandboxCost({conversationCode})
     } catch { /* 忽略：保持 0 */ }
+    /**
+     * 形状探测器。
+     *
+     * H1 之后每条 trace 都出自 `buildToolCallTraceEntry`，**缺 `argsChars` 就等于有写入路径绕过了它**——
+     * 2026-11-12 在 cw2pc 出现过一条只有 `{id, name, result}` 的记录，当时运行的代码（文件哈希核对过）
+     * 在两处出口都带着展开，四轮复现全是六键，我没解释成它为什么，也不打算靠"以后再点一次"来守它。
+     * 所以这里让档案自己报告：只写标识符与计数（`messageCode`、`writtenBy`、条目数、`tool_call_id`），
+     * 不写任何正文——这条线的外泄边界跟工具结果全文一样严格。
+     */
+    const traceShapeGaps = findTraceShapeGaps(options.toolCalls)
+    if (traceShapeGaps.length) {
+        logger.warn(`trace 形状缺入参声明 messageCode=${messageCode} writtenBy=${options.writtenBy || '-'} `
+            + `条目=${(options.toolCalls || []).length} 缺=${traceShapeGaps.length} ids=${traceShapeGaps.join(',').slice(0, 160)}`)
+    }
     await messageDac.add({
         messageCode,
         conversationCode,

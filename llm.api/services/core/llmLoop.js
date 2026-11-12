@@ -765,6 +765,26 @@ export function buildToolCallTraceEntry(toolCallId, toolName, content, opts = {}
     }
 }
 
+/**
+ * @description 找出**没有入参声明**的 trace 条目（探测器，不改数据、不读正文）
+ * @param {Object[]} [toolCalls] 即将落库的 trace 条目
+ * @returns {String[]} 缺声明条目的 id（不是正文；空数组表示形状正常）
+ *
+ * 为什么要这个函数：2026-11-12 在 cw2pc 出现过一条 `extInfo.toolCalls` 只有
+ * `{id, name, result}` 三键的记录，而当时运行的代码（哈希核对过）在**每个出口**都展开了
+ * `clipTraceArgs`——即便入参反查落空也应当给出 `argsChars: 0`。那次没有复现成功，
+ * 所以我接受"目前无法解释"这件事，但要让它下次发生时**自己报告**，而不是靠人再去点一次界面。
+ *
+ * 判据用 `Number.isFinite` 而不是 `'argsChars' in t`：值为 `undefined` 的键会在 BSON 序列化时
+ * 整体消失，那与"从来没写过这个键"在库里长得一模一样——只看键名会被它骗过一次。
+ */
+export function findTraceShapeGaps(toolCalls = []) {
+    const list = Array.isArray(toolCalls) ? toolCalls : []
+    return list
+        .filter(t => t && typeof t === 'object' && !Number.isFinite(t.argsChars))
+        .map(t => String(t.id ?? t.tool_call_id ?? ''))
+}
+
 /* ---------- 断开阶段策略（D3/D4；供 PR-C 使用，本刀只定义不接线） ---------- */
 
 export const RUN_PHASES = ['generating', 'tool_executing', 'awaiting_input', 'idle']
@@ -1121,6 +1141,7 @@ export default {
     clipTraceResult,
     clipTraceArgs,
     buildToolCallTraceEntry,
+    findTraceShapeGaps,
     drainAssistantStream,
     iterationDecision,
     loopExitReason,
