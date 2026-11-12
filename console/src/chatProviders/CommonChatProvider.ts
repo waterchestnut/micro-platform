@@ -1,9 +1,17 @@
 ﻿import {AbstractChatProvider, TransformMessage, XRequestOptions} from '@ant-design/x-sdk';
+import {applySegmentEnd, applySegmentStart, ChatSegment} from './segments';
 
 export const CHANNEL_COMMON = 'micro_common';
 
-/** 与后端协商的 SSE 事件协议版本，见 llm.api/docs/api/chat-sse.md */
-export const CHAT_PROTOCOL = 2;
+/**
+ * 与后端协商的 SSE 事件协议版本，见 llm.api/docs/api/chat-sse.md。
+ *
+ * 3 相对 2 的全部内容差异就是 `segment_start` / `segment_end` 两个事件
+ * （服务端判据：`llmLoop.js:resolveProtocol` 里 `emitSegments: protocol >= 3`）。
+ * 这一版从 2 升到 3 是有意的：**不升就没有分段视图可长**——服务端不会向协议 2 的客户端发段事件。
+ * 代价是这里开始依赖服务端的段语义，所以段的判定一律走 `segments.ts` 的纯函数，组件不自己猜。
+ */
+export const CHAT_PROTOCOL = 3;
 
 /** 单个工具调用 */
 export type ChatToolCall = {
@@ -11,6 +19,14 @@ export type ChatToolCall = {
   name?: string | null;
   /** 结果原文，可能很长，渲染时自行截断 */
   result?: string;
+  /**
+   * 入参三字段自 llm.api PR-H H1 起才有。
+   * **键缺失与 argsChars=0 是两件事**：前者是"当时没记录"（存量行），后者是"确实传了空入参"。
+   * 怎么说不撒谎的判据在 `segments.ts:toolArgsView`，组件里不要自己拼这句话。
+   */
+  args?: string;
+  argsChars?: number;
+  argsTruncated?: boolean;
   status: 'pending' | 'done';
 };
 
@@ -46,6 +62,27 @@ export type ChatProcessInfo = {
   contextUsage?: ChatContextUsage | null;
   sources?: ChatSource[];
   toolCalls?: {id: string; name?: string | null}[];
+  /** 循环怎么退出的（break / exhausted / aborted:<站点> …）；解释空答案用 */
+  loopExit?: string | null;
+  forcedFinal?: boolean;
+  /** 中断归因：client-disconnect / shutdown-draining / process-lost（不是"谁写的这行"，那是 writtenBy，视图不给） */
+  interruptedBy?: string | null;
+  /**
+   * 遗弃回填行估计丢失的字符数。
+   * **只有 `> 0` 才是事实**：历史数据里存在 `0`（当时的回填把"没估过"写成了 0），
+   * 所以 0 与 null 都表示"不知道"，判据在 `segments.ts:lostCharsText`。
+   */
+  lostChars?: number | null;
+  /** 过程分段（协议 3 的边界在库里的权威副本；数据本身与协议版本无关，一直在落库） */
+  segments?: ChatSegment[];
+  segmentSummary?: {count?: number; processChars?: number; dropped?: {count?: number; chars?: number}} | null;
+  usage?: {promptTokens?: number; completionTokens?: number; totalTokens?: number; hasUsage?: boolean; modelCalls?: number; callAlert?: string} | null;
+  /**
+   * 被裁工具结果的**量级摘要**（llm.api PR-H H3 起有；正文不在这里，走 /core/message/tool-result）。
+   * `chars`=原文真实字符数、`stored`=全文是否留住（缺键=不知道）。
+   * 界面怎么据此说话由 `segments.ts:toolResultScopeNote` 决定，组件不自己拼字数。
+   */
+  toolResults?: {ref?: string | null; tool?: string | null; chars?: number | null; stored?: boolean | null; originalTokens?: number | null; keptTokens?: number | null}[];
 };
 
 export type CommonChatInput = {
@@ -85,6 +122,11 @@ export type CommonChatMessage = {
   sources?: ChatSource[];
   /** 执行过程统计，历史消息由 /core/message/list 的 process 字段回填 */
   process?: ChatProcessInfo;
+  /**
+   * 协议 3 的过程分段（流式累积）。
+   * 历史行不复制这个字段——直接读 `process.segments`，避免两处真相。
+   */
+  segments?: ChatSegment[];
   streamState?: ChatStreamState;
   errorText?: string;
   fromCache?: boolean;
@@ -214,9 +256,9 @@ class CommonChatProvider<
         const id = payload.tool_call_id || `tool-${calls.length}`;
         const idx = calls.findIndex((c) => c.id === id);
         if (idx >= 0) {
-          calls[idx] = {...calls[idx], result: payload.content, name: payload.tool || calls[idx].name, status: 'done'};
+          calls[idx] = {...calls[idx], result: payload.content, args: payload.args, argsChars: payload.argsChars, argsTruncated: payload.argsTruncated, name: payload.tool || calls[idx].name, status: 'done'};
         } else {
-          calls.push({id, name: payload.tool || null, result: payload.content, status: 'done'});
+          calls.push({id, name: payload.tool || null, result: payload.content, args: payload.args, argsChars: payload.argsChars, argsTruncated: payload.argsTruncated, status: 'done'});
         }
         return {...base, toolCalls: calls} as ChatMessage;
       }
@@ -232,8 +274,15 @@ class CommonChatProvider<
         } as ChatMessage;
       }
 
-      case 'delta':
-      default: {
+      case 'segment_start': {
+        return {...base, segments: applySegmentStart(base.segments || [], payload)} as ChatMessage;
+      }
+
+      case 'segment_end': {
+        return {...base, segments: applySegmentEnd(base.segments || [], payload)} as ChatMessage;
+      }
+
+      case 'delta': {
         /*旧版服务端把 reset 当作 delta 下发，这里保留哨兵识别，使前端可先于服务端上线*/
         if (payload.tool_call_id === 'clear_answer_content') {
           const rounds = (base.process?.answerRounds || 0) + 1;
@@ -253,6 +302,15 @@ class CommonChatProvider<
           messageCode: payload.messageCode || base.messageCode,
           streamState: base.streamState || 'streaming',
         } as ChatMessage;
+      }
+
+      default: {
+        /**
+         * 未知事件名**不再并入正文**。原先这里与 `delta` 共用一个分支，
+         * 等于"服务端每新增一种事件，旧前端就多一种把结构体当答案拼出来的风险"——
+         * 协议 3 加 `segment_*` 时恰好就是这样：现在有了显式分支，兜底才敢改成"忽略"。
+         */
+        return base as ChatMessage;
       }
     }
   }

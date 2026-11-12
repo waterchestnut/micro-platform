@@ -41,6 +41,7 @@ import ConversationList, {
 import {getAccessToken, getUserCache} from '@/utils/authority'
 import CommonChatProvider, {
   CHANNEL_COMMON,
+  asText,
   type CommonChatInput,
   type CommonChatMessage,
   type CommonChatOutput,
@@ -48,6 +49,9 @@ import CommonChatProvider, {
 import {MessageInfo, useXChat, XRequest} from '@ant-design/x-sdk'
 import {getMessageList} from '@/services/llm/message'
 import ProcessPanel from '@/pages/Chat/components/ProcessPanel'
+import EmptyRoundNotice from '@/pages/Chat/components/EmptyRoundNotice'
+import {fromHistorySegments} from '@/chatProviders/segments'
+import {makeToolResultLoader} from '@/services/llm/toolResultClient'
 import {formatUploadFile, getDocHttpUrl, isArray, uuidV4} from '@/utils/util'
 
 type AttachmentItem = GetProp<AttachmentsProps, 'items'>[number];
@@ -82,6 +86,23 @@ const useStyles = createStyles(({token, css}) => ({
   `,
 }))
 
+/**
+ * 取凭据的写法全页只有一份。
+ *
+ * 之所以在这里立一个函数而不是再抄一遍：`/core/message/tool-result` 的取回与 SSE 流用的是
+ * **同一套凭据**，两处各写一次就意味着"其中一处改了而另一处没改"这种故障。
+ * 语义与原先内联实现逐字相同：`param-accessToken` 恒发，dev 环境额外带 `user-info`。
+ */
+const buildAuthHeaders = (): Record<string, string> => {
+  const headers: any = {}
+  headers['param-accessToken'] = getAccessToken()
+  if (process.env.NODE_ENV === 'development') {
+    const userStr: string = getUserCache(false)
+    userStr && (headers['user-info'] = userStr)
+  }
+  return headers
+}
+
 const providerCaches = new Map<string, CommonChatProvider>()
 const providerFactory = (conversationKey: string) => {
   if (!providerCaches.get(conversationKey)) {
@@ -94,16 +115,10 @@ const providerFactory = (conversationKey: string) => {
           {
             manual: true,
             fetch: async (baseURL, options = {}) => {
-              let headers: any = {}
-              headers['param-accessToken'] = getAccessToken()
-              if (process.env.NODE_ENV === 'development') {
-                let userStr: string = getUserCache(false)
-                userStr && (headers['user-info'] = userStr)
-              }
               return await fetch(baseURL, {
                 ...options,
                 headers: {
-                  ...headers,
+                  ...buildAuthHeaders(),
                   ...options.headers, // 保留原始 headers
                 },
               })
@@ -171,18 +186,28 @@ const Index: React.FC = () => {
       msgList.unshift({
         message: {
           role: 'ai',
-          content: `${_.answer}`,
+          /**
+           * 原先是 `${_.answer}`：answer 缺失的行会渲染出字面量 "undefined"（本轮没有正文时就是这个形状，
+           * 而"没有正文"恰恰是 EmptyRoundNotice 要解释的那一类，不能先被字符串模板糊掉）。
+           */
+          content: _.answer ?? '',
           messageCode: _.messageCode,
           attachments: _.answerAttachments,
           answerFeedback: _.answerFeedback,
           answerReasoning: _.answerReasoning,
-          // 协议 2 展示视图（message/list 的 process/progress）→ 历史回放同样带过程面板
+          // 协议 3 展示视图（message/list 的 process/progress）→ 历史回放同样带过程面板与分段
           fromCache: !!_.answerFromCache,
           process: _.process,
           sources: _.process?.sources || [],
           toolCalls: (_.process?.toolCalls || []).map((t: any) => ({...t, status: 'done'})),
+          /** 历史行的段：库里的 `process.segments` 是权威副本，形状在这里归一，组件只消费 */
+          segments: fromHistorySegments(_.process?.segments),
           streamState: _.progress === 'abort' ? 'aborted' : _.progress === 'error' ? 'error' : 'done',
-          errorText: _.progress === 'error' ? _.error : undefined,
+          /**
+           * `error` 两种进度都要带：`abandoned:` 前缀是判断"这轮是被服务重启打断的"唯一凭据，
+           * 只给 error 行的话，回填行的空正文就只能显示成"内容不完整"那种含糊话。
+           */
+          errorText: _.progress === 'error' || _.progress === 'abort' ? _.error : undefined,
         },
         id: `${_.messageCode}-answer`,
         status: 'success',
@@ -496,8 +521,36 @@ const Index: React.FC = () => {
                 toolCalls={data.extraInfo?.toolCalls}
                 sources={data.extraInfo?.sources}
                 fromCache={data.extraInfo?.fromCache}
+                segments={data.extraInfo?.segments}
+                /**
+                 * 取回全文的入口。这里闭包 messageCode 与鉴权头，面板因此既不需要知道 token
+                 * 从哪来，也不会出现第二份取 token 的写法（`buildAuthHeaders` 全页只有一份）。
+                 * 拿不到 messageCode 就不给函数 ⇒ 按钮不出现：界面不承诺没有入口的动作。
+                 */
+                toolResultLoader={(call: any) =>
+                  call?.id && data.extraInfo?.messageCode
+                    ? makeToolResultLoader({
+                        // @ts-ignore LLM_API_BASE 是构建期注入的全局
+                        url: `${LLM_API_BASE}/core/message/tool-result`,
+                        messageCode: data.extraInfo.messageCode,
+                        headers: buildAuthHeaders(),
+                      })
+                    : undefined
+                }
               />
-              {streamState === 'aborted' ? <Typography.Text type='warning'>本轮回答已中断，内容不完整</Typography.Text> : null}
+              {/*
+                空正文的说明按实测分三类给（判据在 segments.ts，用例在 segments.test.ts）：
+                被服务重启打断 / 有过程可回放 / 首 token 前就取消。
+                原先这里对任何 abort 行都写"内容不完整"——对第 3 类是假的（它根本没产出过内容），
+                对第 2 类则是把最有价值的信息（当时做了什么）漏掉了。
+              */}
+              <EmptyRoundNotice
+                content={asText(data.content)}
+                segments={data.extraInfo?.segments}
+                error={data.extraInfo?.errorText}
+                process={data.extraInfo?.process}
+                streamState={streamState}
+              />
               {streamState === 'error' ? <Typography.Text type='danger'>{data.extraInfo?.errorText || '请求失败，请稍后再试'}</Typography.Text> : null}
             </Flex>
           ),

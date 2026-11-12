@@ -1,13 +1,27 @@
-import {Collapse, Flex, Tag, Typography} from 'antd';
+import {Button, Collapse, Flex, Space, Spin, Tag, Typography} from 'antd';
 import {Sources, ThoughtChain} from '@ant-design/x';
 import type {ThoughtChainItemType} from '@ant-design/x';
+import {useState} from 'react';
+import type {ReactNode} from 'react';
+import type {ToolResultPage} from '@/chatProviders/toolResult';
+import {runToolResultFetch, toolResultIntent, toolResultRunNote} from '@/chatProviders/toolResult';
 import {
+  ApartmentOutlined,
   CheckCircleOutlined,
   LoadingOutlined,
   LinkOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import type {ChatProcessInfo, ChatSource, ChatToolCall} from '@/chatProviders/CommonChatProvider';
+import type {ChatSegment} from '@/chatProviders/segments';
+import {
+  resolveToolCalls,
+  toolResultScopeNote,
+  toolArgsView,
+  droppedSegmentsText,
+  segmentCategory,
+  segmentTimelineView,
+} from '@/chatProviders/segments';
 
 const {Text} = Typography;
 
@@ -33,26 +47,165 @@ export type ProcessPanelProps = {
   toolCalls?: ChatToolCall[];
   sources?: ChatSource[];
   fromCache?: boolean;
+  /**
+   * 协议 3 的过程分段。
+   * 流式时传 provider 累积的 `message.segments`；历史行传 `process.segments`——
+   * **两个来源都汇到这一个 prop，但同一时刻只有一个非空**，所以不会出现两套顺序。
+   */
+  segments?: ChatSegment[];
+  /**
+   * 取回全文的入口，由页面注入（面板不知道 messageCode 与凭据从哪来）。
+   * **不给函数就不渲染按钮**：界面不承诺还没有的动作。
+   */
+  toolResultLoader?: (call: ChatToolCall) => ((body: {ref: string; offset: number; limit: number}) => Promise<ToolResultPage>) | undefined;
+};
+
+/** 段的渲染大类 → 图标。类别由服务端给（`category`），前端不反推 */
+const CATEGORY_ICON: Record<string, ReactNode> = {
+  tools: <ThunderboltOutlined/>,
+  skill: <ApartmentOutlined/>,
 };
 
 /**
- * 展示本轮真实执行过程：工具调用、迭代轮次、技能、上下文用量与引用来源。
- * 数据全部来自协议 2 的事件与 /core/message/list 的 process 字段，不使用占位样例。
+ * 展示本轮真实执行过程：过程分段、工具调用、迭代轮次、技能、上下文用量与引用来源。
+ * 数据全部来自协议 2/3 的事件与 /core/message/list 的 process 字段，不使用占位样例。
+ *
+ * **本组件没有渲染测试**，原因不是"没想到要写"：这仓的 jest 环境跑不了组件测试
+ * （`@testing-library/react@13` 要 `react-dom/test-utils`，而 `@babel/plugin-transform-modules-commonjs`
+ * 根本没装——此前仓里没有任何组件测试，所以这个缺口一直没暴露）。
+ * 因此**凡是需要被证明的判断都不写在这里**：段的顺序、类别、度量文案、"要不要再放一份正文"、
+ * 空正文该说什么，全部在 `@/chatProviders/segments.ts` 里并有穷举用例。
+ * 补齐渲染测试需要先加一个 devDependency（会动 lockfile），那是一个单独的决定，不夹在这一版里做。
  */
-const ProcessPanel = ({process, toolCalls, sources, fromCache}: ProcessPanelProps) => {
-  const calls: ChatToolCall[] = toolCalls?.length
-    ? toolCalls
-    : (process?.toolCalls || []).map((t) => ({id: t.id, name: t.name, status: 'done' as const}));
+/**
+ * 一条工具结果的正文，加上"取回全文"这件事。
+ *
+ * 单独成组件的原因：翻页是有状态的东西，写在 `calls.map(...)` 里就是**在循环里调 hook**
+ * （React 直接报错，而且顺序一变状态就串到别的调用上）。
+ *
+ * 三句话必须在场：
+ * - 动作旁：`toolResultIntent` 说"能不能取、取回可能仍不完整"；
+ * - 进行中：转圈而不是让按钮看着像没反应；
+ * - 结束后：`toolResultRunNote` 按出口分四种说法，**partial 不会报成取完**。
+ */
+const ToolCallResult = ({call, process, load}: {
+  call: ChatToolCall;
+  process?: ChatProcessInfo;
+  load?: (body: {ref: string; offset: number; limit: number}) => Promise<ToolResultPage>;
+}) => {
+  const intent = toolResultIntent(call, process?.toolResults);
+  const [phase, setPhase] = useState<'idle' | 'loading' | 'done'>('idle');
+  const [fetched, setFetched] = useState('');
+  const [note, setNote] = useState('');
+  const canFetch = intent.ok && !!load;
+
+  const doFetch = async () => {
+    if (!load) {
+      return;
+    }
+    setPhase('loading');
+    /** 本仓的 ChatToolCall 只有 id；tool_call_id 的别名只在量级条目那边匹配，不要在这里假设它存在 */
+    const ref = call.id || '';
+    const run = await runToolResultFetch({load: (b) => load(b), messageCode: '', ref, pageSize: 0});
+    /**
+     * `messageCode` 由注入方闭包，这里留空串是**故意的**：面板不知道也不该知道它。
+     * `pageSize: 0` 走纯模块里的默认值——默认值只有一份，不在界面里再抄一个 4000。
+     */
+    setFetched(run.text);
+    setNote(toolResultRunNote(run));
+    setPhase('done');
+  };
+
+  return (
+    <Flex vertical gap={4}>
+      <pre style={{whiteSpace: 'pre-wrap', margin: 0, fontSize: 12, maxHeight: 260, overflow: 'auto'}}>
+        {truncate(tryPretty(phase === 'done' && fetched ? fetched : call.result)) || '（无返回内容）'}
+      </pre>
+      {intent.note ? (
+        <Text type="secondary" style={{fontSize: 12}}>{intent.note}</Text>
+      ) : null}
+      {canFetch && phase !== 'done' ? (
+        <div>
+          {phase === 'loading' ? (
+            <Space size={6}>
+              <Spin size="small"/>
+              <Text type="secondary" style={{fontSize: 12}}>正在取回…</Text>
+            </Space>
+          ) : (
+            <Button size="small" type="link" style={{padding: 0}} onClick={doFetch}>
+              取回全文
+            </Button>
+          )}
+        </div>
+      ) : null}
+      {note ? (
+        <Text type={phase === 'done' && note.startsWith('取回失败') ? 'danger' : 'secondary'} style={{fontSize: 12}}>
+          {note}
+        </Text>
+      ) : null}
+    </Flex>
+  );
+};
+
+const ProcessPanel = ({process, toolCalls, sources, fromCache, segments, toolResultLoader}: ProcessPanelProps) => {
+  const calls: ChatToolCall[] = resolveToolCalls(toolCalls, process);
   const finalSources = sources?.length ? sources : (process?.sources || []);
   const usage = process?.contextUsage;
   const skills = process?.skills;
   const candidates = skills?.candidates || [];
+  /** 段：流式累积优先（它是本轮实时状态），否则用库里回放的权威副本 */
+  const segs: ChatSegment[] = segments?.length ? segments : (process?.segments || []);
 
-  if (!calls.length && !finalSources.length && !candidates.length && !usage && !fromCache) {
+  if (!calls.length && !finalSources.length && !candidates.length && !usage && !fromCache && !segs.length) {
     return null;
   }
 
   const items: ThoughtChainItemType[] = [];
+
+  /**
+   * 段按 seq 升序排在最前：它是"这一轮干了什么"的时间线，工具/来源是它的汇总视图。
+   * 判断（标题兜底、状态、要不要放正文、度量文案）全在 `segments.ts:segmentTimelineView`，
+   * 这里只做"数据 → ThoughtChain 属性"的映射。
+   * 为什么不靠渲染测试覆盖这段：本仓跑不了引入 `@ant-design/x` 的组件测试
+   * （其依赖链上 `refractor@5`、`mermaid@11` 是 ESM-only，而 jest 用的 babel 链是 `@babel/core@7.4.5`：
+   * 转换报 `Requires Babel "^7.22.0"`，不转换报 `Cannot use import statement outside a module`，两个方向都实测过）。
+   * 逐个给三方包打桩等于手工再造一个模块图，那不是验证——所以判断挪进纯模块，在那里穷举测。
+   */
+  for (const seg of segs) {
+    const v = segmentTimelineView(seg);
+    items.push({
+      key: v.key,
+      title: v.title,
+      description: v.description ?? undefined,
+      icon: CATEGORY_ICON[segmentCategory(seg)],
+      status: v.status as ThoughtChainItemType['status'],
+      collapsible: v.collapsible,
+      content:
+        v.bodyKind === 'text' ? (
+          <pre style={{whiteSpace: 'pre-wrap', margin: 0, fontSize: 12, maxHeight: 220, overflow: 'auto'}}>
+            {truncate(v.body ?? '')}
+          </pre>
+        ) : v.bodyKind === 'hint' ? (
+          <Text type="secondary">{v.body}</Text>
+        ) : undefined,
+    });
+  }
+
+  /**
+   * 整段丢弃的声明（`segmentSummary.dropped`）：服务端一直在给，四端此前一个字都不说。
+   * 放在工具条目之前——它说的是"这段过程本身不完整"，比任何单条工具结果都靠前。
+   * 判据文案在 `segments.ts:droppedSegmentsText`（那里穷举测），这里只负责挂一条。
+   */
+  const droppedText = droppedSegmentsText(process?.segmentSummary);
+  if (droppedText) {
+    items.push({
+      key: 'segments-dropped',
+      title: '过程内容未完整留存',
+      description: droppedText,
+      status: 'error' as ThoughtChainItemType['status'],
+      collapsible: false,
+    });
+  }
 
   if (calls.length) {
     items.push({
@@ -73,13 +226,25 @@ const ProcessPanel = ({process, toolCalls, sources, fromCache}: ProcessPanelProp
               <Flex align="center" gap="small">
                 {c.status === 'pending' ? <LoadingOutlined/> : <CheckCircleOutlined style={{color: '#52c41a'}}/>}
                 <Text code>{c.name || '未知工具'}</Text>
+                {/* 片段声明：只说读得到的两个数（原文字数=服务端量、显示字数=本地量）。
+                    "展开全文"这种动作还没有入口，所以这里**不写**任何可展开的承诺。 */}
+                <Text type="secondary" style={{fontSize: 12}}>
+                  {toolResultScopeNote(c, process?.toolResults).text}
+                </Text>
+                {/*
+                  入参这一行只转达 `toolArgsView` 的结论：未记录 / 无入参 / 被服务端截断（真实字数）。
+                  判断不在这里，所以组件不需要渲染测试来证明它没说错话。
+                */}
+                <Text type="secondary" style={{fontSize: 12}}>
+                  {(() => {
+                    const av = toolArgsView(c);
+                    if (!av.recorded) return av.note;
+                    return [av.preview ? `入参 ${av.preview}` : '', av.note].filter(Boolean).join(' · ') || '无入参';
+                  })()}
+                </Text>
               </Flex>
             ),
-            children: (
-              <pre style={{whiteSpace: 'pre-wrap', margin: 0, fontSize: 12, maxHeight: 260, overflow: 'auto'}}>
-                {truncate(tryPretty(c.result)) || '（无返回内容）'}
-              </pre>
-            ),
+            children: <ToolCallResult call={c} process={process} load={toolResultLoader?.(c)}/>,
           }))}
         />
       ),
