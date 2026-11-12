@@ -324,6 +324,27 @@ describe('H2：入参与整段丢弃必须说实话', () => {
     expect(v.preview.length).toBeLessThanOrEqual(161);
     expect(v.preview.endsWith('…')).toBe(true);
   });
+
+  test('真实测到的截断形状：5988 字入参、服务端存下 4000（= limits.toolArgsChars）', () => {
+    /**
+     * 这条的数字**不是我编的**，也不是合成用例：2026-11-12 用 fake-relay-abort 交回一个
+     * 5988 字符的 memory_search 入参，跑完整一轮后档案里是
+     * argsChars=5988 / argsTruncated=true / args 实存 4000，
+     * 流侧 tool_result 帧给的是同一批数（同源核对：一致）。
+     *
+     * 为什么要把它钉进界面判据：argsTruncated=true 这条分支在真实流量里此前一次都没出现过
+     * （最好的样本只有 234 字符），所以"入参被截断时会说出来"长期只是代码里的分支。
+     * 现在它是被数据证明过的行为：必须同时讲出**原文真实长度**与**留存长度**，
+     * 否则读者看到的只是一截 4000 字、看不出被切过的字符串。
+     */
+    const args = 'x'.repeat(4000);
+    const v = toolArgsView({args, argsChars: 5988, argsTruncated: true});
+    expect(v.note).toBe('5988 字，服务端留存前 4000 字');
+    expect(v.preview.length).toBeLessThanOrEqual(161);
+    expect(v.preview.endsWith('…')).toBe(true);
+    /** 上限是从配置测出来的数（4000），不是这里硬猜的尺度 */
+    expect(args.length).toBe(4000);
+  });
   test('没截断时不造 note，也不说"过程完整"', () => {
     const v = toolArgsView({ args: '{"q":"abc"}', argsChars: 11, argsTruncated: false });
     expect(v).toEqual({ recorded: true, preview: '{"q":"abc"}', note: '' });
