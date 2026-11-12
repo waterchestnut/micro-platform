@@ -1380,8 +1380,10 @@ async function saveMessage(query, messageCode, messages, conversationCode, chann
      * H1 之后每条 trace 都出自 `buildToolCallTraceEntry`，**缺 `argsChars` 就等于有写入路径绕过了它**——
      * 2026-11-12 在 cw2pc 出现过一条只有 `{id, name, result}` 的记录，当时运行的代码（文件哈希核对过）
      * 在两处出口都带着展开，四轮复现全是六键，我没解释成它为什么，也不打算靠"以后再点一次"来守它。
-     * 所以这里让档案自己报告：只写标识符与计数（`messageCode`、`writtenBy`、条目数、`tool_call_id`），
-     * 不写任何正文——这条线的外泄边界跟工具结果全文一样严格。
+     * 所以这里让档案自己报告，而且是**两条通道**：日志给人看（只写标识符与计数：`messageCode`、
+     * `writtenBy`、条目数、`tool_call_id`），档案里再落一个计数（见下面 extInfo 的 `traceShapeGaps`）——
+     * 后者不依赖日志级别，生产把 `debug` 关掉时探测器仍然说话。两处都不写任何正文，
+     * 这条线的外泄边界跟工具结果全文一样严格。
      */
     const traceShapeGaps = findTraceShapeGaps(options.toolCalls)
     if (traceShapeGaps.length) {
@@ -1438,6 +1440,15 @@ async function saveMessage(query, messageCode, messages, conversationCode, chann
             /** 写下这条档的路径：normal / early-stop / rescue / error / backfill / unattributed */
             writtenBy: options.writtenBy,
             toolOverflows: options.toolOverflows,
+            /**
+             * 形状探测结果**必须同时走数据通道**，不能只走日志。
+             * 理由很具体：app logger 的根级别是 `debug ? 'trace' : 'error'`，而 dev/cw2pc 目前
+             * 都没设 env 覆盖（默认 `debug: true`，所以 warn 现在看得见）——**一旦某个部署把
+             * `debug=false`（生产就是），`logger.warn` 会被根级别整条吃掉**，探测器变成哑巴而没人知道。
+             * 这正是本方案反复点名的"静默开关"形状，所以计数恒定落库：0 也是一个被量过的事实；
+             * 旧行没有这个键 ⇒ 那是探测器存在之前写的，不与"0 个缺口"混读。
+             */
+            traceShapeGaps: traceShapeGaps.length,
         },
         messageTokens: options.messageTokens,
         answerTokens: options.answerTokens,

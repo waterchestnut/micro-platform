@@ -229,6 +229,29 @@ describe('llmChat 不许再自己内联拼这条 trace（源码级防漂移）',
         assert.equal(/answer|toolResult\.content|\.query|inputs\b/.test(stmt), false,
             '告警不得携带正文（与全文外泄边界同一条纪律）')
     })
+
+    test('探测结果必须同时落进档案：日志级别不是可靠通道（debug=false 时 warn 会被整条吃掉）', () => {
+        const lines = src.split('\n')
+        const writes = lines.filter((l) => l.includes('traceShapeGaps: traceShapeGaps.length,'))
+        assert.equal(writes.length, 1, `档案里的计数字段写了 ${writes.length} 次，期望 1`)
+        const calcAt = lines.findIndex((l) => l.includes('const traceShapeGaps = findTraceShapeGaps('))
+        const writeAt = lines.findIndex((l) => l.includes('traceShapeGaps: traceShapeGaps.length,'))
+        assert.ok(calcAt > 0 && writeAt > calcAt, '计数字段必须在算出缺口之后，否则写进去的是未定义')
+    })
+
+    test('落库对象不许丢 messageCode（我本轮就差点删掉它，而 node --check 毫无反应）', () => {
+        const lines = src.split('\n')
+        const at = lines.findIndex((l) => l.includes('await messageDac.add({'))
+        assert.ok(at > 0, '找不到落库调用')
+        const body = []
+        for (let i = at + 1; i < lines.length; i += 1) {
+            if (/^ {4}\}\)/.test(lines[i])) break
+            body.push(lines[i])
+        }
+        const obj = body.join('\n')
+        assert.ok(/^\s+messageCode,$/m.test(obj), 'messageDac.add 的对象里必须有 messageCode 简写')
+        assert.ok(obj.includes('conversationCode,'), '会话标识也必须在')
+    })
 })
 
 describe('findTraceShapeGaps：只认"有没有可核对的入参声明"', () => {
