@@ -323,6 +323,34 @@ export function deriveEmptyRoundNotice(p: {
 }
 
 /**
+ * @description 上游模型调用次数要不要说、怎么说（审计 P1 里唯一仍然值得做的一条，且已收窄）
+ * @param {any} process 视图的 `process` 字段
+ * @returns {String} 一行说明；**空串表示不说**
+ *
+ * 为什么默认不说：`modelCalls` 与 `iterationCount` 相等时，这一句只是把"模型往返 N 轮"
+ * 换个说法再讲一遍——**重复信息不是信息**。dev 实测 46 条有工具调用的档案里
+ * 两者绝大多数相等，所以它只在不等时才有价值（重试、换档、无工具收尾补落都会让
+ * 上游调用数多于面板轮次）。
+ *
+ * 三种"不说"是分开的，不要混成一个：
+ * - 没有用量记录（`hasUsage:false` 或 `modelCalls` 非有限数）⇒ 我们不知道，**不许编**；
+ * - 没有 `iterationCount` ⇒ 没有可比较的分母，单独报一个调用数容易被读成"轮次数"；
+ * - 两者相等 ⇒ 说它是重复。
+ *
+ * 措辞只报数，不报原因：`6 != 5` 可能是重试也可能是补落，界面没资格替服务端选一个。
+ */
+export function modelCallNote(process: any): string {
+  const iter = Number(process?.iterationCount);
+  const usage = process?.usage;
+  const calls = Number(usage?.modelCalls);
+  if (!Number.isFinite(calls) || calls <= 0) return '';
+  if (usage?.hasUsage === false) return '';
+  if (!Number.isFinite(iter) || iter <= 0) return '';
+  if (calls === iter) return '';
+  return `上游模型实际调用 ${calls} 次`;
+}
+
+/**
  * @description 工具**入参**该怎么说（PR-H H1/H2 的判据都在这里，不在组件里）
  * @param {any} call 工具调用记录（流式累积或历史 `process.toolCalls[]` 的形状）
  * @returns {{recorded: boolean, preview: string, note: string}} recorded=服务端有没有记这个维度

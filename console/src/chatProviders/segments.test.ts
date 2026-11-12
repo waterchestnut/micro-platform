@@ -3,6 +3,7 @@ import {
   toolResultScopeNote,
   toolArgsView,
   droppedSegmentsText,
+  modelCallNote,
   applySegmentStart,
   applySegmentEnd,
   fromHistorySegments,
@@ -467,5 +468,52 @@ describe('H2c：历史形状不许把字段削平（resolveToolCalls）', () => 
     const src = {toolCalls: [{id: 'a', name: 'n'}]};
     resolveToolCalls(undefined, src);
     expect('status' in src.toolCalls[0]).toBe(false);
+  });
+});
+
+describe('modelCallNote：相等就是重复，所以默认不说', () => {
+  test('modelCalls 与 iterationCount 相等 ⇒ 不说任何东西', () => {
+    expect(modelCallNote({iterationCount: 5, usage: {modelCalls: 5, hasUsage: true}})).toBe('');
+    expect(modelCallNote({iterationCount: 1, usage: {modelCalls: 1, hasUsage: true}})).toBe('');
+  });
+
+  test('不等 ⇒ 只报数，不替服务端选原因', () => {
+    const s = modelCallNote({iterationCount: 5, usage: {modelCalls: 6, hasUsage: true}});
+    expect(s).toBe('上游模型实际调用 6 次');
+    expect(/重试|补落|换档/.test(s)).toBe(false);
+  });
+
+  test('少于轮次也照实报（我们不知道是不是同一因，但不能装看不见）', () => {
+    expect(modelCallNote({iterationCount: 4, usage: {modelCalls: 3, hasUsage: true}})).toBe('上游模型实际调用 3 次');
+  });
+
+  test('没有用量记录 ⇒ 不说，不许编', () => {
+    expect(modelCallNote({iterationCount: 3, usage: {modelCalls: 0, hasUsage: false}})).toBe('');
+    expect(modelCallNote({iterationCount: 3, usage: {}})).toBe('');
+    expect(modelCallNote({iterationCount: 3})).toBe('');
+    expect(modelCallNote({})).toBe('');
+    expect(modelCallNote(undefined)).toBe('');
+  });
+
+  test('hasUsage=false 时即便有数字也不说（用量没上报，那个数不可信）', () => {
+    expect(modelCallNote({iterationCount: 2, usage: {modelCalls: 7, hasUsage: false}})).toBe('');
+  });
+
+  test('没有可比的分母（iterationCount 缺失/非正）⇒ 不单独报调用数', () => {
+    expect(modelCallNote({usage: {modelCalls: 6, hasUsage: true}})).toBe('');
+    expect(modelCallNote({iterationCount: 0, usage: {modelCalls: 6, hasUsage: true}})).toBe('');
+    expect(modelCallNote({iterationCount: 'abc', usage: {modelCalls: 6, hasUsage: true}})).toBe('');
+  });
+
+  test('畸形数字不抛（NaN、null、对象、字符串数字之外）', () => {
+    for (const bad of [NaN, null, undefined, {}, [], 'x']) {
+      expect(() => modelCallNote({iterationCount: 3, usage: {modelCalls: bad, hasUsage: true}})).not.toThrow();
+      expect(modelCallNote({iterationCount: 3, usage: {modelCalls: bad, hasUsage: true}})).toBe('');
+    }
+  });
+
+  test('字符串数字接受（后端偶尔下发文本数字），但仍要满足"不等才说"', () => {
+    expect(modelCallNote({iterationCount: 5, usage: {modelCalls: '6', hasUsage: true}})).toBe('上游模型实际调用 6 次');
+    expect(modelCallNote({iterationCount: 6, usage: {modelCalls: '6', hasUsage: true}})).toBe('');
   });
 });

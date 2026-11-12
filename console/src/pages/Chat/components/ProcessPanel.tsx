@@ -19,6 +19,7 @@ import {
   toolResultScopeNote,
   toolArgsView,
   droppedSegmentsText,
+  modelCallNote,
   segmentCategory,
   segmentTimelineView,
 } from '@/chatProviders/segments';
@@ -222,7 +223,16 @@ const ProcessPanel = ({process, toolCalls, sources, fromCache, segments, toolRes
     items.push({
       key: 'tools',
       title: `调用工具 ${calls.length} 次`,
-      description: process?.iterationCount && process.iterationCount > 1 ? `模型往返 ${process.iterationCount} 轮` : undefined,
+      description: (() => {
+        /**
+         * 面板轮次照旧；模型调用数只在**与轮次不等时**加一句（相等就是重复，见 `modelCallNote`）。
+         */
+        const parts: string[] = [];
+        if (process?.iterationCount && process.iterationCount > 1) parts.push(`模型往返 ${process.iterationCount} 轮`);
+        const mc = modelCallNote(process);
+        if (mc) parts.push(mc);
+        return parts.length ? parts.join(' · ') : undefined;
+      })(),
       icon: <ThunderboltOutlined/>,
       // 工具结果是执行完成后才下发的，没有"进行中"态；按 calls 派生状态，兜住未来的 pending。
       status: calls.every((c) => c.status === 'done') ? ('success' as const) : ('loading' as const),
