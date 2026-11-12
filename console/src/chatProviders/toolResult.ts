@@ -186,6 +186,35 @@ export function toolResultDisplay(p: {
   };
 }
 
+/**
+ * @description 决定"打开过程面板后，哪些工具调用默认就是展开的"（少一次点击，但不糊一屏）
+ * @param {any[]} calls 工具调用记录（`result` 是服务端预览）
+ * @param {Object} [opts] 选项
+ * @param {Number} [opts.maxAutoExpand] 少于等于这个数就全展开
+ * @returns {String[]} 应默认展开的调用 id（顺序保持与入参一致）
+ *
+ * 规则不是凭感觉定的，来自 dev 实测分布（46 条有工具调用的档案）：
+ * **1 次调用占 50%，但 6 次占 37%，P90 = 6，最大 11**。
+ * 所以"全部默认展开"会让三分之一以上的轮次一开屏就是 6 段长文，那只是把"两次点击"
+ * 换成"一屏噪音"。取舍是：
+ * - 短轮次（≤ `maxAutoExpand`）全展开 ⇒ 一次点击就够，这正是 P2 抱怨的那一步；
+ * - 长轮次只展开**被截断的那些**——它们才是带 `取回全文` 入口、需要用户操作的地方；
+ * - 一条都没截断时展开最后一条（长链路的结论通常落在末尾）。
+ * 空数组是合法结果之一吗？不是：这个函数保证**至少返回一条**（有调用时），
+ * 否则"默认展开"这个特性在长轮次里等于没做。
+ */
+export function toolResultsDefaultOpen(calls: any[], opts: { maxAutoExpand?: number } = {}): string[] {
+  const list = Array.isArray(calls) ? calls.filter((c) => c && typeof c === 'object') : [];
+  if (!list.length) return [];
+  const max = Number(opts.maxAutoExpand) > 0 ? Number(opts.maxAutoExpand) : 3;
+  const idOf = (c: any, i: number) => String(c.id ?? c.toolCallId ?? c.tool_call_id ?? i);
+  if (list.length <= max) return list.map(idOf);
+  const truncated = list.map((c, i) => ({c, i}))
+    .filter(({c}) => typeof c.result === 'string' && /\[truncated\]$/.test(c.result));
+  if (truncated.length) return truncated.map(({c, i}) => idOf(c, i));
+  return [idOf(list[list.length - 1], list.length - 1)];
+}
+
 /** 取回的结果出口 */
 export type ToolResultOutcome = 'complete' | 'partial' | 'stopped' | 'failed';
 

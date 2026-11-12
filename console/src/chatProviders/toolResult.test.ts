@@ -12,6 +12,7 @@ import {
   PREVIEW_CHARS,
   prettyToolResultText,
   toolResultDisplay,
+  toolResultsDefaultOpen,
   type ToolResultPage,
   type ToolResultRun,
 } from './toolResult';
@@ -512,5 +513,59 @@ describe('toolResultDisplay：全文要真能看见，字数要真的是原文�
     expect(toolResultDisplay({ held: long, previewChars: -5 }).shownChars).toBe(PREVIEW_CHARS);
     /** 短文本本来就不该被"显示 600 字"：shownChars 是 min(原文, 预算) */
     expect(toolResultDisplay({ held: 'z'.repeat(100) }).shownChars).toBe(100);
+  });
+});
+
+describe('toolResultsDefaultOpen：少一次点击，但不换成一屏长文', () => {
+  const mk = (n: number, truncatedAt: number[] = []) =>
+    Array.from({length: n}, (_, i) => ({
+      id: `c${i}`,
+      name: `t${i}`,
+      result: truncatedAt.includes(i) ? 'x'.repeat(4000) + '...[truncated]' : '短结果',
+    }));
+
+  test('1 次调用 ⇒ 展开这一条（这就是 P2 抱怨的那一次点击）', () => {
+    expect(toolResultsDefaultOpen(mk(1))).toEqual(['c0']);
+  });
+
+  test('3 次调用 ⇒ 全展开（未超过 maxAutoExpand）', () => {
+    expect(toolResultsDefaultOpen(mk(3))).toEqual(['c0', 'c1', 'c2']);
+  });
+
+  test('4 次调用且没有截断 ⇒ 只展开最后一条（长链路结论常在末尾）', () => {
+    expect(toolResultsDefaultOpen(mk(4))).toEqual(['c3']);
+  });
+
+  test('6 次调用、其中两条被截断 ⇒ 展开的正是带取回入口的那两条，顺序保持', () => {
+    const r = toolResultsDefaultOpen(mk(6, [1, 4]));
+    expect(r).toEqual(['c1', 'c4']);
+  });
+
+  test('老形状用 tool_call_id 归因（与 resolveToolRef 同一口径）', () => {
+    expect(toolResultsDefaultOpen([{tool_call_id: 'legacy1'}, {tool_call_id: 'legacy2'}, {tool_call_id: 'legacy3'}, {tool_call_id: 'legacy4'}]))
+      .toEqual(['legacy4']);
+  });
+
+  test('没有 id 的条目回落到下标字符串，与 Collapse 的 key 形状一致', () => {
+    expect(toolResultsDefaultOpen([{result: 'a'}, {result: 'b'}, {result: 'c'}, {result: 'd'}]))
+      .toEqual(['3']);
+  });
+
+  test('空与非数组不抛', () => {
+    expect(toolResultsDefaultOpen([])).toEqual([]);
+    expect(toolResultsDefaultOpen(undefined as any)).toEqual([]);
+    expect(toolResultsDefaultOpen([null, undefined] as any)).toEqual([]);
+  });
+
+  test('maxAutoExpand 可调；0 与负数回落到默认 3', () => {
+    expect(toolResultsDefaultOpen(mk(2), {maxAutoExpand: 1})).toEqual(['c1']);
+    expect(toolResultsDefaultOpen(mk(5), {maxAutoExpand: 5})).toEqual(['c0', 'c1', 'c2', 'c3', 'c4']);
+    expect(toolResultsDefaultOpen(mk(4), {maxAutoExpand: 0})).toEqual(['c3']);
+  });
+
+  test('长轮次里保证至少给一条展开（否则这特性等于没做）', () => {
+    for (const n of [4, 6, 11]) {
+      expect(toolResultsDefaultOpen(mk(n)).length).toBeGreaterThanOrEqual(1);
+    }
   });
 });

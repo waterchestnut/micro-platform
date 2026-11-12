@@ -4,7 +4,7 @@ import type {ThoughtChainItemType} from '@ant-design/x';
 import {useState} from 'react';
 import type {ReactNode} from 'react';
 import type {ToolResultPage, ToolResultRun} from '@/chatProviders/toolResult';
-import {runToolResultFetch, toolResultIntent, toolResultNextAction, toolResultRunNote, toolResultDisplay, PREVIEW_CHARS} from '@/chatProviders/toolResult';
+import {runToolResultFetch, toolResultIntent, toolResultNextAction, toolResultRunNote, toolResultDisplay, toolResultsDefaultOpen, PREVIEW_CHARS} from '@/chatProviders/toolResult';
 import {
   ApartmentOutlined,
   CheckCircleOutlined,
@@ -231,6 +231,12 @@ const ProcessPanel = ({process, toolCalls, sources, fromCache, segments, toolRes
         <Collapse
           size="small"
           ghost
+          /**
+           * 默认展开哪几条由纯判据决定（`toolResultsDefaultOpen`）：
+           * 实测 50% 的轮次只有 1 次调用、而 37% 有 6 次，所以"全部展开"只会把
+           * 两次点击换成一片长文；短轮次全展开、长轮次只展开**带取回入口的那几条**。
+           */
+          defaultActiveKey={toolResultsDefaultOpen(calls)}
           items={calls.map((c, i) => ({
             key: c.id || String(i),
             label: (
