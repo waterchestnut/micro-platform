@@ -6,6 +6,7 @@ import {
     abandonedQuery,
     isAbandonedRun,
     validateOlderThan,
+    finalizeFilter,
 } from '../../../../daos/core/policy/llmUsagePolicy.js'
 
 /**
@@ -28,6 +29,30 @@ describe('abandonedQuery', () => {
     test('olderThanMs 可覆盖', () => {
         const q = abandonedQuery({olderThanMs: 1000, now})
         assert.equal(q.updateTime.$lt.getTime(), NOW - 1000)
+    })
+})
+
+/**
+ * `finalizeFilter` 是路由补写档案时收尾账本用的条件更新过滤器。
+ * 它值得单独测，是因为**少掉 progress 条件不会让任何功能报错**——
+ * 症状是"某一轮成功的对话后来在数据上变成失败的"，那种事只在事后统计里露出来。
+ */
+describe('finalizeFilter', () => {
+    test('必须同时限定 messageCode 与"仍在中途"', () => {
+        assert.deepEqual(finalizeFilter({messageCode: 'm-1'}), {messageCode: 'm-1', progress: 'processing'})
+    })
+    test('没有 messageCode 直接抛（否则条件会命中整个集合）', () => {
+        assert.throws(() => finalizeFilter({}), /messageCode 不能为空/)
+        assert.throws(() => finalizeFilter(), /messageCode 不能为空/)
+    })
+    test('缺省状态取自 LEDGER_PROGRESS，不写死字面量（换常量口径时这里要一起对得上）', () => {
+        assert.equal(finalizeFilter({messageCode: 'm'}).progress, LEDGER_PROGRESS.PROCESSING)
+    })
+    test('已经是终态的行不该被再次收尾：同语义交叉断言', () => {
+        /** 条件里带着 processing ⇒ finish/error/abort 的行都不在命中范围内 */
+        for (const p of ['finish', 'error', 'abort', '']) {
+            assert.notEqual(finalizeFilter({messageCode: 'm'}).progress, p, `${p} 行不该被条件命中`)
+        }
     })
 })
 

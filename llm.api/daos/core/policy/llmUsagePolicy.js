@@ -41,6 +41,24 @@ export function abandonedQuery({olderThanMs = DEFAULT_OLDER_THAN_MS, now = Date.
 }
 
 /**
+ * @description 生成"把仍在中途的账本行收尾"的条件更新过滤器
+ * @param {Object} params 参数
+ * @param {String} params.messageCode 本轮标识
+ * @param {String} [params.progress] 要求当前处于的状态（默认只认 processing）
+ * @returns {{messageCode: String, progress: String}} 查询条件
+ * @description
+ * `progress` 这一项是这条方法的**全部意义**，所以单独抽成纯函数来测：
+ * 少了它，路由补写档案时的收尾就会把 run 自己刚写的 `finish` 覆盖成 `error`——
+ * 一轮成功的对话在数据上变成失败的，比原来"少一行档案"坏得多。条件更新让"谁抢到谁说话"成为唯一结果。
+ */
+export function finalizeFilter({messageCode = '', progress = LEDGER_PROGRESS.PROCESSING} = {}) {
+    if (!messageCode) {
+        throw new Error('messageCode 不能为空（条件更新没有键就会命中整个集合）')
+    }
+    return {messageCode, progress}
+}
+
+/**
  * @description 单条记录是否算被遗弃（与 `abandonedQuery` 同语义，供内存侧核对与断言）
  * @param {Object} params 参数
  * @param {String} params.progress 该行的 progress

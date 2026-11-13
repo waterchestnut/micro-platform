@@ -1,4 +1,5 @@
-import {execChat} from '../../../services/core/llmChat.js'
+import {execChat, defaultChannel, defaultChannelGroup} from '../../../services/core/llmChat.js'
+import {archiveUncaughtErrorTurn} from '../../../services/core/session/errorTurnArchive.js'
 import {createSseChannel} from '../../../tools/sseChannel.js'
 import {validateChannels} from '../../../conf/llmChannel.js'
 import {chatStreamBodySchema, chatResumeBodySchema} from '../../../schemas/chatStreamSchema.js'
@@ -339,8 +340,11 @@ export default async function (fastify, opts) {
              * 并把 messageCode / conversationCode 显式带上——**归属信息必须在事件本身里，不能指望读的人去猜**。
              * 与母本 xxzx.llm.api 同一轮改：两侧都是这条错误路径，单边改完 cw2pc 照旧。
              *
-             * 刻意没做的事：在这里补 `persistTurn('error')`。那会开始写新的档案行，
-             * 属于行为变更（哪些抛出该落 error、该落 abort 还是 unattributed 需要单独定），留作决定。
+             * 这里补的是 P8 处置 ②：**仅当这一轮一行档案都没落时**，补一条 `progress:'error'` 的行。
+             * 判据与写库都在 `session/errorTurnArchive.js`，这里只负责"要不要叫它"与"把结果记进日志"：
+             * 已有档案（run 自己的 catch 落的）不覆盖、会话还没建起来的不造行、账本收尾走条件更新。
+             * 顺序是刻意的：**先把 error 帧发给用户，再补档**——补档是一次数据库写，
+             * 让它挡在用户能看见的那句话前面，就是拿体验换排障。
              */
             request.log.error({
                 messageCode: messageCodeForGate,
@@ -351,6 +355,28 @@ export default async function (fastify, opts) {
             }, 'chat/stream 未捕获异常（本轮可能没有档案行）')
             errored = true
             channel.emit(err.message || '处理出错，请稍等再试', 'error')
+            /**
+             * 补写档案。这个调用**不会抛**（内部把所有失败收成返回值），所以不写在 try 里；
+             * 返回值一律记下来：`skip:archive-exists` 与 `written` 是两件不同的事实，
+             * 只写"补档完成"就会把"其实什么都没写"混进去。
+             */
+            const archived = await archiveUncaughtErrorTurn({
+                messageCode: messageCodeForGate,
+                conversationCode: request.reqParams?.conversationCode || '',
+                query: request.reqParams?.query || '',
+                options: request.reqParams?.options || {},
+                userInfo: request.userInfo,
+                err,
+                defaultChannel,
+                defaultChannelGroup,
+            })
+            request.log[archived.action === 'written' ? 'warn' : 'info']({
+                messageCode: messageCodeForGate,
+                conversationCode: archived.conversationCode,
+                action: archived.action,
+                reason: archived.reason,
+                ledger: archived.ledger || '',
+            }, 'chat/stream 未捕获异常的补档结果')
         } finally {
             /**
              * **注销放在 finally 是这条链上唯一的保险**：正常收尾、上游抛错、客户端断开、

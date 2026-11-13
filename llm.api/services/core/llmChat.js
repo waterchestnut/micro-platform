@@ -43,6 +43,7 @@ import {isClosing} from './session/shutdownState.js'
 import {attachArchive, detachArchive} from './session/runRegistry.js'
 import {CLOSE_ARCHIVE_WAIT_FOR_RUN_MS, PERSIST_VIA} from './session/shutdownPolicy.js'
 import {normalizeRegeneratedFrom, allowsAnswerCache, regeneratedFromForArchive} from './session/regeneration.js'
+import {cacheIntentForArchive} from './session/cacheIntent.js'
 import {truncateToolMessage} from '../../tools/truncate.js'
 import {resolveMemory, safeWorkspaceId} from './memory/policy.js'
 /**
@@ -80,8 +81,15 @@ const tools = llm.tools
 const logger = llm.logger
 const config = llm.config
 /** 全局默认档位由 conf/llmModel.js 读取（LLM_DEFAULT_CONFIG_KEY / LLM_DEFAULT_VL_CONFIG_KEY） */
-const defaultChannel = process.env['LLM_DEFAULT_CHANNEL'] || 'micro_common'
-const defaultChannelGroup = 'none'
+/**
+ * 缺省频道与缺省分组。
+ * **刻意 export**：路由层的补写档案（`session/errorTurnArchive.js`）也要算出同一个 `channel`，
+ * 各写一份字面量的话，"哪天改缺省"就会变成只改一半的老问题。
+ * 这一份保留底座自己的 env 覆盖口径（母本那份是固定值，不要把两边压成一个字面量）。
+ * 两侧一致性由 `test/services/core/session/errorTurnArchive.test.js` 的源码断言钉住。
+ */
+export const defaultChannel = process.env['LLM_DEFAULT_CHANNEL'] || 'micro_common'
+export const defaultChannelGroup = 'none'
 
 /**
  * @description 执行用户通用聊天
@@ -1431,6 +1439,12 @@ async function saveMessage(query, messageCode, messages, conversationCode, chann
      * 后者不依赖日志级别，生产把 `debug` 关掉时探测器仍然说话。两处都不写任何正文，
      * 这条线的外泄边界跟工具结果全文一样严格。
      */
+    /**
+     * 「这一轮允不允许用答案缓存、按什么键分组」的落档值。
+     * 归一必须发生在**这里（唯一出口）**而不是某个调用点：缓存命中支与 `persistTurn` 两支都调 `saveMessage`，
+     * 写在任一支上都会缺一支。
+     */
+    const cacheIntent = cacheIntentForArchive(options)
     const traceShapeGaps = findTraceShapeGaps(options.toolCalls)
     if (traceShapeGaps.length) {
         logger.warn(`trace 形状缺入参声明 messageCode=${messageCode} writtenBy=${options.writtenBy || '-'} `
@@ -1493,6 +1507,15 @@ async function saveMessage(query, messageCode, messages, conversationCode, chann
              */
             runOverlap: options.runOverlap,
             regeneratedFrom: options.regeneratedFrom,
+            /**
+             * 这两个是**请求侧的表态**，以前从不落档：母本实测 dev 库 `message` 1490 行里两个键各 0 行，
+             * 因为这份白名单没列它们（"这份装配清单才是 extInfo 的唯一出口"）。
+             * 缺它们的后果是少一条排查口径：只能从顶层 `answerFromCache` 与账本 `modelCalls` 反推"命中没命中"，
+             * 推不出"当时允不允许命中、按什么键分组"。值走 `cacheIntentForArchive` 归一：
+             * `false` 是"明确不允许"，`null` 才是"没有表态"。刻意不进视图（没有界面消费方）。
+             */
+            cache: cacheIntent.cache,
+            channelCacheKey: cacheIntent.channelCacheKey,
             toolOverflows: options.toolOverflows,
             /**
              * 形状探测结果**必须同时走数据通道**，不能只走日志。

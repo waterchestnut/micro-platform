@@ -8,7 +8,7 @@
  */
 
 import {LlmUsage} from '../schema/index.js'
-import {abandonedQuery, DEFAULT_OLDER_THAN_MS, LEDGER_PROGRESS} from '../policy/llmUsagePolicy.js'
+import {abandonedQuery, DEFAULT_OLDER_THAN_MS, LEDGER_PROGRESS, finalizeFilter} from '../policy/llmUsagePolicy.js'
 import BaseDac from './BaseDac.js'
 
 /**
@@ -177,6 +177,28 @@ export class LlmUsageDac extends BaseDac {
      * 代价要写明：认领后写档前进程崩了，这条会变成"账本 abort、档案没有"。
      * 窗口是毫秒级，失败方会把 `messageCode` 留在日志里便于人工补——比写重复行的后果轻。
      */
+    /**
+     * @description 把仍在中途的账本行原子收尾成给定终态（抢不到就说明别人已写完或已是终态）
+     * @param {Object} params 参数
+     * @param {String} params.messageCode 本轮标识
+     * @param {String} params.progress 目标终态（finish/abort/error）
+     * @param {Object} [params.patch] 一并写入的字段
+     * @returns {Promise<Boolean>} 本次是否由我改成
+     * @description
+     * 判据在 `finalizeFilter`（纯函数、有穷举用例），这里只执行不拼条件。
+     * 返回 false 不是失败：它说的是"这行不需要我收尾了"，调用方应当只记日志、不重试。
+     */
+    async finalizeIfProcessing({messageCode, progress, patch = {}} = {}) {
+        if (!progress) {
+            throw new Error('progress 不能为空（收尾必须给终态）')
+        }
+        const r = await LlmUsage.updateOne(
+            finalizeFilter({messageCode}),
+            {$set: {progress, ...patch, updateTime: new Date()}},
+        )
+        return (r?.modifiedCount ?? 0) === 1
+    }
+
     async claimAbandoned({messageCode, olderThanMs = DEFAULT_OLDER_THAN_MS, now = Date.now} = {}) {
         if (!messageCode) {
             throw new Error('messageCode 不能为空')

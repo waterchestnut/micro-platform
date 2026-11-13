@@ -97,6 +97,17 @@ function writtenIn(key, rel) {
     return codeOf(rel).some((l) => l.trim().startsWith(`${key}:`))
 }
 
+/**
+ * 装配清单里允许"不是字面透传"的例外：值必须是**某个纯归一函数对 options 的产物**，
+ * 而且这里要写清函数名与所在模块，测试会去那个模块确认真的导出了它。
+ * 为什么要这么严：「派生」与「凭空造字段」的差别只在于能不能查到一个源头；
+ * 一张不附来源的例外表，三个月后就会变成什么都敢往里塞的后门。
+ */
+const DERIVED_ASSEMBLY_KEYS = {
+    cache: {prefix: 'cacheIntent.', via: 'cacheIntentForArchive', module: 'services/core/session/cacheIntent.js'},
+    channelCacheKey: {prefix: 'cacheIntent.', via: 'cacheIntentForArchive', module: 'services/core/session/cacheIntent.js'},
+}
+
 describe('extInfo 装配清单必须覆盖视图承诺的键', () => {
     const whitelist = extInfoKeysFrom(codeOf('services/core/llmChat.js'))
     const view = viewKeys()
@@ -136,10 +147,41 @@ describe('extInfo 装配清单必须覆盖视图承诺的键', () => {
                 if (/^\s{8}\}/.test(lines[i])) break
                 continue
             }
-            if (!/^options\./.test(m[2]) && !/^[a-zA-Z_$][\w$.]*\.length$/.test(m[2])) {
-                bad.push(`${m[1]}=${m[2].slice(0, 30)}`)
+            if (/^options\./.test(m[2]) || /^[a-zA-Z_$][\w$.]*\.length$/.test(m[2])) {
+                continue
             }
+            /** 例外：纯归一函数的产物。要同时满足"前缀对得上、源头变量确实由 options 归一而来、模块真的导出那个函数" */
+            const d = DERIVED_ASSEMBLY_KEYS[m[1]]
+            if (d && m[2].startsWith(d.prefix)) {
+                const declaresSource = lines.some((l) => new RegExp(`const ${d.prefix.slice(0, -1)}\\s*=\\s*${d.via}\\(`).test(l))
+                if (!declaresSource) {
+                    bad.push(`${m[1]}=${m[2].slice(0, 30)}（例外表说它来自 ${d.via}(options)，但 llmChat 里找不到这句）`)
+                    continue
+                }
+                const mod = codeOf(d.module).join('\n')
+                if (!new RegExp(`export function ${d.via}\\b`).test(mod)) {
+                    bad.push(`${m[1]}=${d.via} 在 ${d.module} 里没有被导出 ⇒ 例外表已经过期`)
+                    continue
+                }
+                continue
+            }
+            bad.push(`${m[1]}=${m[2].slice(0, 30)}`)
         }
         assert.deepEqual(bad, [], `装配清单里出现非透传值：${JSON.stringify(bad)}`)
+    })
+
+    /**
+     * `cache` / `channelCacheKey` 是 2026-11-13 补进来的两个排查字段，单独钉一条：
+     * 当时实测全库 1490 行里这两个键**一处都没有**，而"为什么没有"（白名单没列）只有在这种测试红掉时才会被再次发现。
+     * 同时钉住**它们刻意不进视图**——落档不等于下发，下发要有人消费才有意义（`regeneratedFrom` 进 SSE 那次的反面教训）。
+     */
+    test('cache / channelCacheKey 必须在装配清单里，且刻意不出现在视图键集', () => {
+        const whitelist = extInfoKeysFrom(codeOf('services/core/llmChat.js'))
+        for (const k of ['cache', 'channelCacheKey']) {
+            assert.ok(whitelist.includes(k), `装配清单缺 ${k} ⇒ 库里读不到"当时允不允许用缓存"，只能靠 answerFromCache 反推`)
+        }
+        const view = viewKeys()
+        const leaked = ['cache', 'channelCacheKey'].filter((k) => view.includes(k))
+        assert.deepEqual(leaked, [], '这两个键没有界面消费方，进视图只会多两个没人读的承诺')
     })
 })
