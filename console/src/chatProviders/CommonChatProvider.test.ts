@@ -125,3 +125,38 @@ describe('协商值与分支必须同批存在', () => {
     expect(CHAT_PROTOCOL).toBe(3);
   });
 });
+
+describe('meta 里的 runOverlap 必须进 process（P5 在实时那一轮说话的前提）', () => {
+  /**
+   * 为什么单独测这个：provider 的 meta 分支是**白名单**——服务端新加的键不写在这里就收不到，
+   * 症状与"服务端根本没发"一模一样（2026-11-13 实测：档案有 runOverlap、实时界面不说、
+   * 重新进入会话才说）。两侧必须同一轮改，所以这一侧也得有用例钉住，不然改完还是哑的。
+   */
+  const provider = mkProvider();
+
+  test('meta 带 runOverlap ⇒ 原样放进 process.runOverlap（给事实，不给措辞）', () => {
+    const m = feed(provider, {
+      event: 'meta',
+      data: JSON.stringify({
+        type: 'meta',
+        messageCode: 'MC-1',
+        protocol: 2,
+        runOverlap: {prevMessageCode: 'MC-0', prevAgeMs: 2582, contextMissing: true, reason: 'stale-open-run'},
+      }),
+    }) as any;
+    expect(m.process.runOverlap).toEqual({prevMessageCode: 'MC-0', prevAgeMs: 2582, contextMissing: true, reason: 'stale-open-run'});
+  });
+
+  test('meta 没带（旧服务端）⇒ 键存在且是 null：缺键与"确认没有重叠"必须分得开', () => {
+    const m = feed(provider, {event: 'meta', data: JSON.stringify({type: 'meta', messageCode: 'MC-2', protocol: 2})}) as any;
+    expect('runOverlap' in m.process).toBe(true);
+    expect(m.process.runOverlap).toBeNull();
+  });
+
+  test('显式 null 之后再来 delta 帧也不许被冲成 undefined', () => {
+    let m = feed(provider, {event: 'meta', data: JSON.stringify({type: 'meta', messageCode: 'MC-3', protocol: 2, runOverlap: null})}) as any;
+    expect(m.process.runOverlap).toBeNull();
+    m = feed(provider, {event: 'delta', data: JSON.stringify({content: '答'})}, m) as any;
+    expect(m.process.runOverlap).toBeNull();
+  });
+});

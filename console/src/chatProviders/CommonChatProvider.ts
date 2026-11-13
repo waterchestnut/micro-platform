@@ -68,6 +68,19 @@ export type ChatProcessInfo = {
   /** 中断归因：client-disconnect / shutdown-draining / process-lost（不是"谁写的这行"，那是 writtenBy，视图不给） */
   interruptedBy?: string | null;
   /**
+   * P5：发起这一轮时同一会话的上一轮仍未终态；没有重叠时服务端给 **null**。
+   * `undefined`（旧服务端/旧档案）与 `null`（确认没有重叠）是两件事，
+   * 所以声明成可选 + 可空；只在有对象时说话的判据在 segments.ts:runOverlapNote。
+   * 2026-11-13 之前 provider 收了这个键但类型里没有，访问全靠 `as any`——
+   * 那就是"字段实际存在但没人知道"的形状，补声明比绕断言正确。
+   */
+  runOverlap?: {
+    prevMessageCode?: string | null;
+    prevAgeMs?: number | null;
+    contextMissing?: boolean;
+    reason?: string;
+  } | null;
+  /**
    * 遗弃回填行估计丢失的字符数。
    * **只有 `> 0` 才是事实**：历史数据里存在 `0`（当时的回填把"没估过"写成了 0），
    * 所以 0 与 null 都表示"不知道"，判据在 `segments.ts:lostCharsText`。
@@ -244,6 +257,14 @@ class CommonChatProvider<
               payload.contextBudget && !base.process?.contextUsage
                 ? {...(base.process?.contextUsage || {}), budget: payload.contextBudget}
                 : base.process?.contextUsage,
+            /**
+             * P5：这是白名单——服务端 meta 新加的键不收，症状与"服务端没发"一模一样。
+             * 2026-11-13 双标签页实测到的正是这个：档案有 runOverlap，实时界面不说，
+             * 重新进入会话（走 /core/message/list 回填）才说。服务端与五端 provider 必须同一轮改，
+             * 单边改完看不出效果。
+             * `?? null`：缺键（旧服务端）与"确认没有重叠"是两件事。
+             */
+            runOverlap: payload.runOverlap ?? null,
           },
         } as ChatMessage;
       }
