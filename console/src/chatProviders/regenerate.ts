@@ -43,6 +43,16 @@ export function textOf(content: any): string {
 }
 
 /**
+ * 各端历史消息的角色名并不统一（实测）：
+ * 母本/mopit/raisef 用 `ai`，pdfviewer 的 `LiteratureChatMessage` 用 `assistant`；
+ * 用户侧母本用 `my`，pdfviewer 用 `user`。
+ * 判据必须同时认这几样，否则"重新生成"在某一端会永远显示"只能对最后一条回答"——
+ * 而那种沉默在单端测试里是看不见的（这条是 tsc 在 pdfviewer 上报出来的，不是我想到的）。
+ */
+const AI_ROLES = ['ai', 'assistant'];
+const USER_ROLES = ['my', 'user'];
+
+/**
  * @description 这一条会话能不能、该对哪一条重新生成
  * @param {any[]} messages useXChat 的消息列表
  * @param {Object} [opts] 选项
@@ -54,8 +64,8 @@ export function regenerateTarget(messages: any[], opts: {requesting?: boolean} =
   if (!Array.isArray(messages) || messages.length === 0) return {ok: false, reason: 'no-messages'};
   const last = messages[messages.length - 1];
   const msg = last?.message || {};
-  /** 只有 AI 侧的成品回答才谈得上"重新生成" */
-  if (msg.role !== 'ai') return {ok: false, reason: 'last-not-answer'};
+  /** 只有 AI 侧的成品回答才谈得上"重新生成"（角色名各端不同，见 AI_ROLES） */
+  if (!AI_ROLES.includes(msg.role)) return {ok: false, reason: 'last-not-answer'};
   /** 空回答（还在 loading、或失败留白）：重跑没有"旧答案"可替换，说清楚而不是给个哑按钮 */
   if (!textOf(msg.content).trim()) return {ok: false, reason: 'empty-answer'};
   const messageCode = msg.messageCode || last?.extraInfo?.messageCode;
@@ -65,7 +75,7 @@ export function regenerateTarget(messages: any[], opts: {requesting?: boolean} =
   let attachments: any[] = [];
   for (let i = messages.length - 2; i >= 0; i -= 1) {
     const m = messages[i]?.message || {};
-    if (m.role === 'my' || m.role === 'user') {
+    if (USER_ROLES.includes(m.role)) {
       query = textOf(m.content);
       attachments = Array.isArray(m.attachments) ? m.attachments : [];
       break;

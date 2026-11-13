@@ -157,3 +157,40 @@ describe('历史形状（2026-11-13 dev 点验抓到的缺陷）', () => {
     expect(textOf([{type: 'image'}])).toBe('');
   });
 });
+
+describe('跨端角色名差异（pdfviewer 用 assistant/user，母本用 ai/my）', () => {
+  /**
+   * 这不是假想：tsc 在 pdfviewer 上直接报
+   * "This comparison appears to be unintentional because the types '"user" | "assistant"' and '"ai"' have no overlap"
+   * ——也就是说如果判据只认 'ai'，那一端的"重新生成"会永远显示"只能对最后一条回答"，
+   * 而母本的单测全绿看不见这件事。
+   */
+  test('AI 角色为 assistant 时同样能判定', () => {
+    const t = regenerateTarget([
+      {message: {role: 'user', content: [{type: 'text', text: '总结核心内容'}]}, extraInfo: {}},
+      {message: {role: 'assistant', content: '这是回答', messageCode: 'as-1'}, extraInfo: {}},
+    ]);
+    expect(t.ok).toBe(true);
+    expect(t.query).toBe('总结核心内容');
+    expect(t.messageCode).toBe('as-1');
+  });
+
+  test('未知角色仍算 last-not-answer（不是"什么都接受"）', () => {
+    const t = regenerateTarget([
+      {message: {role: 'user', content: '一个问题'}, extraInfo: {}},
+      {message: {role: 'system', content: '系统提示', messageCode: 's1'}, extraInfo: {}},
+    ]);
+    expect(t.ok).toBe(false);
+    expect(t.reason).toBe('last-not-answer');
+  });
+
+  test('用户侧只认 my/user：divider/notice 这类噪声条目要被跳过', () => {
+    const t = regenerateTarget([
+      {message: {role: 'user', content: '真问题'}, extraInfo: {}},
+      {message: {role: 'notice', content: '本轮在模型开始输出前已被取消'}, extraInfo: {}},
+      {message: {role: 'ai', content: '回答', messageCode: 'm7'}, extraInfo: {}},
+    ]);
+    expect(t.ok).toBe(true);
+    expect(t.query).toBe('真问题');
+  });
+});
