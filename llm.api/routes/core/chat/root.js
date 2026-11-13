@@ -327,7 +327,28 @@ export default async function (fastify, opts) {
             aborted = ret === 'aborted'
             channel.emit(aborted ? 'aborted' : 'done', aborted ? 'abort' : 'done')
         } catch (err) {
-            console.error(err);
+            /**
+             * 原来这里是 `console.error(err)`。问题不在于"用了 console"，
+             * **而在于那一行没有任何归属字段**：不带 reqId、不带 messageCode、不带 conversationCode，
+             * 而 `logger` 也没有接管 console（全仓搜不到 `console.error =` 之类的改写），
+             * 所以它进了容器 stdout 就等于没进日志——dev 库里那批"有会话、无消息"的残留之所以无法归因，
+             * 根子就在这条路上（不只是"日志留存期过了"：本来就没写下可对账的线索）。
+             *
+             * 现在走本仓既有的路由约定 `request.log`（fastify 请求级 logger，自带 reqId，
+             * 见 plugins/format-reply.js 与 routes/core/agentTask/root.js），
+             * 并把 messageCode / conversationCode 显式带上——**归属信息必须在事件本身里，不能指望读的人去猜**。
+             * 与母本 xxzx.llm.api 同一轮改：两侧都是这条错误路径，单边改完 cw2pc 照旧。
+             *
+             * 刻意没做的事：在这里补 `persistTurn('error')`。那会开始写新的档案行，
+             * 属于行为变更（哪些抛出该落 error、该落 abort 还是 unattributed 需要单独定），留作决定。
+             */
+            request.log.error({
+                messageCode: messageCodeForGate,
+                conversationCode: request.reqParams?.conversationCode || '',
+                errName: String(err?.name || ''),
+                errMessage: String(err?.message || err).slice(0, 300),
+                errStack: String(err?.stack || '').slice(0, 800),
+            }, 'chat/stream 未捕获异常（本轮可能没有档案行）')
             errored = true
             channel.emit(err.message || '处理出错，请稍等再试', 'error')
         } finally {
