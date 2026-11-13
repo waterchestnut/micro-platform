@@ -31,18 +31,36 @@ const doc = (over = {}) => ({
 })
 
 /**
- * dev 实测（`evals/platform-probes/segments-view-probe.mjs`）读到的视图键集，逐字对照。
- * `toolResults` 是 PR-H H3 新增的：**部署后必须由探针复测这一键真的出现在现网视图里**，
- * 复测前这一条只是"代码侧期望的形状"，不要当成实测结论（列表此前之所以敢逐字对照，就是因为它是读出来的）。
+ * 视图键集，逐字对照。**但最后两键的等级不同，别把整张表当"实测"**：
+ * - 前面 15 键是母本 dev 探针读到的既有形状；
+ * - `runOverlap` / `regeneratedFrom` 是本轮从母本同步进来的 P5/P3 两键，
+ *   **在本仓的部署（cw2pc）上还没实测过**——镜像还没带这次改动构建。
+ *   部署后要用视图探针复测这两键真的出现在现网响应里，测到了再删掉这条说明
+ *   （处理方式与 `toolResults` 那条同样：复测前它只是"代码侧期望的形状"）。
+ *
+ * 为什么写成一份字面量而不是两段 spread：`extInfoPassthrough.test.js` 的 `viewKeys()`
+ * 是按正则读这个常量当权威清单的，spread 会让它只解析出尾部几键
+ * ——这个失效是我刚才重构时自己撞出来的，守卫直接报了红。**要改的是写法，不是解析器。**
  */
 const DEV_MEASURED_PROCESS_KEYS = ['iterationCount', 'tools', 'toolCalls', 'toolChoice', 'answerRounds',
-    'skills', 'contextUsage', 'sources', 'recallStats', 'loopExit', 'forcedFinal',
-    'interruptedBy', 'lostChars', 'segments', 'segmentSummary', 'usage', 'toolResults']
+    'skills', 'contextUsage', 'sources', 'recallStats', 'loopExit', 'forcedFinal', 'interruptedBy',
+    'runOverlap', 'regeneratedFrom', /** ↑ 这两键：本仓部署上未实测，见上方说明 */
+    'lostChars', 'segments', 'segmentSummary', 'usage', 'toolResults']
 
-describe('视图的键集就是四端读到的那份（文档不许比代码多承诺、也不许少）', () => {
-    test('process 的键与 dev 实测一致', () => {
+describe('视图的键集就是四端读到的那份（新增键必须标明是否已在部署上实测）', () => {
+    test('process 的键与快照清单一致（顺序也算契约）', () => {
         assert.deepEqual(Object.keys(toProcessSummary({})), DEV_MEASURED_PROCESS_KEYS,
-            '视图形状变了：要么同步改 docs/api/chat-sse.md，要么本来就不该改')
+            '视图形状变了：本仓没有 docs/api/chat-sse.md（那条提示来自母本拷贝），'
+            + '所以要改的是前端读 process 的代码，或者本来就不该改')
+    })
+
+    test('同步进来的两键在空 extInfo 下是 null，不是缺键', () => {
+        /** "没有重叠"与"这版代码还不知道重叠"必须能区分——缺键会被前端读成后者 */
+        const p = toProcessSummary({})
+        assert.ok('runOverlap' in p, 'runOverlap 必须存在')
+        assert.equal(p.runOverlap, null)
+        assert.ok('regeneratedFrom' in p, 'regeneratedFrom 必须存在')
+        assert.equal(p.regeneratedFrom, null)
     })
 
     test('顶层视图键含前端在用的那几个，且没有提示词字段', () => {

@@ -278,6 +278,22 @@ export default {
             retryAfterMs: parseInt(process.env['limits_concurrentRunsRetryAfterMs'] || '1500'),
         },
         /**
+         * 同一会话"上一轮还没结束"的检测（P5）。与上面的并发闸口径不同：闸看总量/每人数（默认关、
+         * 单进程计数），这里只看同一个 conversationCode，数据源是账本的 `progress:'processing'` 行，
+         * 因而**跨 worker 可见**（PM2 两个 worker 的进程内登记表互相看不见，而"两个标签页问同一会话"
+         * 恰恰常落到不同 worker）。
+         * 默认开：并发时后一轮会**静默地**缺上下文（两轮都成功、都没提这件事）。
+         * 拒绝窗口只有 1.5 秒，只覆盖"秒级重复"；超过窗口一律只记录不拒绝，
+         * 免得一条僵尸 processing 行永久锁死一个会话。
+         * 退回旧行为：`limits_runOverlapReject=0`（只记录）或 `limits_runOverlap=0`（整体关闭）。
+         */
+        runOverlap: {
+            /** 显式 0 关闭检测（连账本都不查）；其余值都算开 */
+            enabled: parseInt(process.env['limits_runOverlap'] || '1') !== 0,
+            windowMs: parseInt(process.env['limits_runOverlapWindowMs'] || '1500'),
+            reject: parseInt(process.env['limits_runOverlapReject'] || '1') !== 0,
+        },
+        /**
          * 过程分段（PR-B）的体积预算：单段 2000 字 × 8 段 + 总量 12000 字。
          * 依据是"被 reset 抹掉的中间正文最多 6 段、字数在百级"，
          * 增量因此与一条工具 trace 同量级；`answer`/`finalize` 段不存正文，不重复占体积。

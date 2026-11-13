@@ -42,6 +42,7 @@ import {scheduleCheckpoint, flushCheckpoints} from './session/checkpoint.js'
 import {isClosing} from './session/shutdownState.js'
 import {attachArchive, detachArchive} from './session/runRegistry.js'
 import {CLOSE_ARCHIVE_WAIT_FOR_RUN_MS, PERSIST_VIA} from './session/shutdownPolicy.js'
+import {normalizeRegeneratedFrom, allowsAnswerCache, regeneratedFromForArchive} from './session/regeneration.js'
 import {truncateToolMessage} from '../../tools/truncate.js'
 import {resolveMemory, safeWorkspaceId} from './memory/policy.js'
 /**
@@ -206,10 +207,19 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
 
     /*缓存命中与写入都不携带会话上下文，因此仅在该会话无历史时启用；
       批量/无状态场景可显式传 cacheIgnoreHistory 跳过该判定*/
+    /**
+     * P3：重新生成的来源（判据在 `session/regeneration.js`）。
+     * 必须在缓存分支**之前**算出来：缓存的键是 (query, channel, model)，
+     * 重跑时三样都没变 ⇒ 不绕开缓存，"重新生成"会把同一条缓存答案再发一遍，
+     * 用户看到按钮完成了，实际一个字都没变。
+     */
+    const regeneratedFrom = normalizeRegeneratedFrom(options.regeneratedFrom)
     let cacheEligible = false
     if (options.cache && options.channelCacheKey) {
         cacheEligible = !!options.cacheIgnoreHistory || !(await messageDac.getTop(1, {conversationCode}))?.length
     }
+    /** 重生成一律不走缓存：这条不靠"前端记得传 cache:false" */
+    cacheEligible = allowsAnswerCache({cacheEligible, regeneratedFrom})
 
     if (cacheEligible) {
         /*从缓存加载回答*/
@@ -768,6 +778,20 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
              * 循环入口/出口那两处检查故意留 unattributed —— 给一个看似合理的假来源比留空更坏。
              */
             writtenBy: extra.via || PERSIST_VIA.UNATTRIBUTED,
+            /**
+             * P5：发起这一轮时同一会话的上一轮还没终态 ⇒ **本轮上下文不可能包含它**。
+             * 这是本轮开始前的一个读数，不是推测的告警，所以必须进档案：
+             * 用户遇到的症状是"它怎么不记得我上一句"，而档案里没这句话时，
+             * 我们排查只能看到"两轮都成功"，于把一个可核对的事实读成模型质量问题。
+             * 没有重叠时是 `null`（显式空值，不是缺键——缺键与"确认没有"是两件事）。
+             */
+            runOverlap: options.runOverlap || null,
+            /**
+             * P3：这一轮是"重新生成"出来的，值是被替换那条的 messageCode；不是重跑时写**显式 null**。
+             * 旧答案不删（可能已被引用），所以这条来源是"哪两条是同一问的重跑"的唯一依据。
+             * 重生成既不读也不写答案缓存（见 `regeneration.js`）。
+             */
+            regeneratedFrom: regeneratedFromForArchive(regeneratedFrom),
             /** PR-B：过程分段。中间正文从此不再只存在于已经断开的那条 SSE 连接里 */
             segments: segments.list(),
             segmentSummary: segments.summary(),
@@ -1450,6 +1474,14 @@ async function saveMessage(query, messageCode, messages, conversationCode, chann
             interruptedBy: options.interruptedBy,
             /** 写下这条档的路径：normal / early-stop / rescue / error / backfill / unattributed */
             writtenBy: options.writtenBy,
+            /**
+             * P5/P3 的两个新键必须在这里也出现：`persistTurn` 那边算出来只是半成品，
+             * **这份装配清单才是 extInfo 的唯一出口**。
+             * 源仓实测踩过：两键在上游都写了、接线测试全绿，库里却都不存在——因为这里没列，
+             * 而守卫只看了一侧。现在由 `test/services/core/extInfoPassthrough.test.js` 钉住"两侧必须齐"。
+             */
+            runOverlap: options.runOverlap,
+            regeneratedFrom: options.regeneratedFrom,
             toolOverflows: options.toolOverflows,
             /**
              * 形状探测结果**必须同时走数据通道**，不能只走日志。

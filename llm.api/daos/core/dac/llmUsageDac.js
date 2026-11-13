@@ -108,6 +108,38 @@ export class LlmUsageDac extends BaseDac {
     }
 
     /**
+     * @description 查同一会话里仍未终态的上一轮（P5 的数据源）
+     * @param {Object} params 参数
+     * @param {String} params.conversationCode 会话标识
+     * @param {String} [params.excludeMessageCode] 排除本轮自己（否则刚 markStarted 就会看见自己）
+     * @returns {Promise<Object|null>} `{messageCode, insertTime}`；没有未终态行返回 null
+     * @description
+     * 为什么读账本而不是进程登记表：`runRegistry` 是**每 worker 一份**（PM2 下 2 个 worker 互不可见），
+     * 而"两个标签页同时问同一个会话"最可能正好落到不同 worker——用进程内表会得到"没有并发"的假读数。
+     *
+     * **投影必须包含判定要读的每一个字段**（`messageCode`、`insertTime`）。
+     * 这不是套话：`listAbandoned` 就曾经少投影了 `progress`，于是回填整条链路看起来一切正常、
+     * 实际一条都不处理。这里少投影 `insertTime` 的话，症状会是"永远只记录、从不拒绝"，
+     * 因为 `decideOverlap` 拿不到时间会走 `unreadable-time` 放行分支——由
+     * `test/services/core/session/runOverlapWiring.test.js` 把这条约束钉住。
+     */
+    async findOpenRun({conversationCode = '', excludeMessageCode = ''} = {}) {
+        if (!conversationCode) {
+            return null
+        }
+        const filter = {conversationCode, progress: LEDGER_PROGRESS.PROCESSING}
+        if (excludeMessageCode) {
+            filter.messageCode = {$ne: excludeMessageCode}
+        }
+        const row = await LlmUsage
+            .findOne(filter, {messageCode: 1, insertTime: 1})
+            .sort({insertTime: -1})
+            .lean()
+            .exec()
+        return row ? {messageCode: row.messageCode, insertTime: row.insertTime} : null
+    }
+
+    /**
      * @description 在途刷新：每次真正发起上游调用时把累计计数写回去
      * @param {Object} info 含 messageCode 与本 run 累计值
      * @returns {Promise<Object|null>} 更新后的记录

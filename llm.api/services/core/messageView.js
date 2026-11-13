@@ -62,6 +62,19 @@ export function toProcessSummary(extInfo) {
          * 这里要的是"解释这一轮为什么空"，不是"这行是谁写的"，两件事别混成一个更大的暴露面。
          */
         interruptedBy: info.interruptedBy || null,
+        /**
+         * P5：本轮发起时上一轮仍未终态（`{prevMessageCode, prevAgeMs, contextMissing, reason}`），
+         * 没有则 `null`。给前端的是**事实**而不是措辞——界面怎么说由前端判据决定，
+         * 这里不预先写一句中文，免得两套文案在不同端分叉。
+         * `prevMessageCode` 不构成新的暴露面：那是同一会话里用户本来就看得见的一条消息。
+         */
+        runOverlap: info.runOverlap || null,
+        /**
+         * P3：这一轮是对哪条回答的重新生成（不是重跑时为 null）。
+         * 界面要靠它才能把"两条同样问题的回答"讲成"旧的保留、这是重跑的那条"，
+         * 而不是让用户以为系统出了重复 bug。
+         */
+        regeneratedFrom: info.regeneratedFrom || null,
         /** 只认有限数字：缺失或非数值一律 null，不许用 0 冒充"丢了 0 字" */
         lostChars: Number.isFinite(info.lostChars) ? info.lostChars : null,
         /**

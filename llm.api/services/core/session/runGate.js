@@ -86,9 +86,17 @@ export function decideAdmission({
  */
 export function rejectResponse(decision = {}) {
     const retryAfterMs = Number(decision.retryAfterMs) || 0
+    /**
+     * 错误码默认仍是 4290（并发闸）。P5 的"同会话重复"带自己的 4291 进来：
+     * 两者对客户端的含义不同——一个是"服务忙"，一个是"你自己上一条还没结束"，
+     * 混成同一个码，前端就没法只针对后者提示"等待上一轮"。
+     */
+    const code = Number(decision.code) || GATE_REJECT_CODE
     const message = decision.reason === 'user-full'
         ? '你有多个问题正在处理中，请等待其中一个完成后再问'
-        : '服务当前繁忙，请稍后再问'
+        : (decision.reason === 'same-conversation-duplicate'
+            ? '这个问题上一条还在处理中，请等它结束后再问'
+            : '服务当前繁忙，请稍后再问')
     return {
         httpStatus: 200,
         body: {
@@ -97,9 +105,16 @@ export function rejectResponse(decision = {}) {
             name: 'ConcurrencyLimited',
             message,
             /** 给本项目 retSchema 口径的调用方 */
-            code: GATE_REJECT_CODE,
+            code,
             msg: message,
-            data: {reason: decision.reason, active: decision.active, limit: decision.limit},
+            /**
+             * `data` 的既有三键是 4290 的契约，四端在读 ⇒ 不加新东西。
+             * P5 的两份额外事实**只在同会话重复时出现**（那时它们才有意义），
+             * 这样 4290 的载荷形状与改造前逐字一致，不需要动任何客户端。
+             */
+            data: decision.reason === 'same-conversation-duplicate'
+                ? {reason: decision.reason, active: decision.active ?? null, limit: decision.limit ?? null, prevMessageCode: decision.prevMessageCode ?? null, ageMs: decision.ageMs ?? null}
+                : {reason: decision.reason, active: decision.active, limit: decision.limit},
         },
         /** `Retry-After` 单位是秒（RFC）；没有建议值就不给这个头——给 `0` 会被读成"立刻重试" */
         headers: retryAfterMs > 0 ? {'Retry-After': String(Math.max(1, Math.round(retryAfterMs / 1000)))} : {},

@@ -26,6 +26,7 @@ export const chatStreamBodySchema = {
                 answerAttachments: {type: 'array', description: '随回答产生的文件材料', items: {type: 'object'}},
                 cache: {type: ['boolean', 'number'], description: '是否读写回答缓存，需与 channelCacheKey 同时提供'},
                 channelCacheKey: {type: 'string', description: '缓存分组键'},
+                regeneratedFrom: {type: 'string', description: '重新生成的来源消息标识；带这个键时本轮不读也不写回答缓存', minLength: 1, maxLength: 128},
                 cacheIgnoreHistory: {type: ['boolean', 'number'], description: '跳过会话有历史则不使用缓存的保护，仅用于无状态批量场景'},
                 enableThinking: {type: ['boolean', 'number'], description: '是否开启深度思考，受模型配置约束'},
                 skillLoadMode: {type: 'string', enum: ['candidates', 'matched', 'full'], description: '技能加载模式'},

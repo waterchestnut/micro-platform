@@ -9,6 +9,9 @@ import {createRunEventMirror, readRunEventLog, defaultGetClient} from '../../../
 import messageDac from '../../../daos/core/dac/messageDac.js'
 import {socketCloseAbortDecision} from '../../../services/core/session/shutdownPolicy.js'
 import {isClosing, shutdownStatus} from '../../../services/core/session/shutdownState.js'
+import {decideOverlap, overlapNote} from '../../../services/core/session/runOverlap.js'
+import {rejectResponse} from '../../../services/core/session/runGate.js'
+import llmUsageDac from '../../../daos/core/dac/llmUsageDac.js'
 
 const logger = llm.logger
 const tools = llm.tools
@@ -157,6 +160,50 @@ export default async function (fastify, opts) {
             }
         }
 
+        /**
+         * P5：同一个会话已经有未终态 run 时怎么办（判据在 `runOverlap.js`，这里只接线）。
+         *
+         * 位置与并发闸同层是有原因的：`writeHead(200)` 之后就只能用 SSE 帧表达拒绝，
+         * 而"这一轮根本没开始"与"开始了但被打断"是两件事，混在一个流里前端分不开。
+         *
+         * 数据源用账本的 `progress:'processing'` 行而不是进程登记表：`runRegistry` 每 worker 一份，
+         * 两个标签页落到不同 worker 时进程内表会给出"没有并发"的**假读数**。
+         *
+         * 检测本身失败（库读不动）一律放行并 warn：把"我读不懂数据"变成"用户不能提问"是更坏的失败。
+         */
+        const overlapCfg = llm.config.limits?.runOverlap || {}
+        let runOverlap = null
+        if (overlapCfg.enabled !== false && request.reqParams?.conversationCode) {
+            try {
+                const prevOpen = await llmUsageDac.findOpenRun({
+                    conversationCode: request.reqParams.conversationCode,
+                    excludeMessageCode: messageCodeForGate,
+                })
+                const od = decideOverlap({
+                    prev: prevOpen,
+                    now: Date.now(),
+                    windowMs: overlapCfg.windowMs,
+                    reject: overlapCfg.reject,
+                })
+                runOverlap = overlapNote(od)
+                if (!od.admit) {
+                    const r = rejectResponse(od)
+                    Object.entries(r.headers || {}).forEach(([k, v]) => reply.header(k, v))
+                    logger.warn(`同会话重复拒绝: reason=${od.reason}, 上一轮=${od.prevMessageCode}, `
+                        + `已跑ms=${od.ageMs}, userCode=${request.userInfo.userCode}, conversationCode=${request.reqParams.conversationCode}`)
+                    /** 与并发闸同一套回法：200 + `success:false`，429 会让四端读不到这句话 */
+                    return reply.code(r.httpStatus).send(r.body)
+                }
+                if (runOverlap) {
+                    /** 放行但要说出来：这一轮的上下文里确实不可能有上一轮 */
+                    logger.warn(`上一轮未终态就发起了新一轮（记录供界面说明）: 上一轮=${runOverlap.prevMessageCode}, `
+                        + `已跑ms=${runOverlap.prevAgeMs}, reason=${runOverlap.reason}, conversationCode=${request.reqParams.conversationCode}`)
+                }
+            } catch (e) {
+                logger.warn(`同会话重叠检测失败（放行，不影响这一轮）: ${String(e?.message || e).slice(0, 200)}`)
+            }
+        }
+
         const controller = new AbortController()
         const {signal} = controller
         /**
@@ -268,6 +315,8 @@ export default async function (fastify, opts) {
                  * 登记与注销必须是同一个键，否则要么额度永久泄漏，要么多减一次把别人的位置踩掉。
                  */
                 ...request.reqParams.options, messageCode: messageCodeForGate,
+                /** P5：路由在 writeHead 之前查到的"上一轮未终态"事实，交给 run 写进档案 */
+                runOverlap,
                 signal, streamCallback: (content, eventType) => {
                     channel.emit(content, eventType)
                 },
