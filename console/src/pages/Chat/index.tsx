@@ -12,6 +12,7 @@ import {
   Spin,
   Space,
   Upload,
+  Modal,
 } from 'antd'
 import {createStyles} from 'antd-style'
 import {
@@ -51,6 +52,7 @@ import {getMessageList} from '@/services/llm/message'
 import ProcessPanel from '@/pages/Chat/components/ProcessPanel'
 import EmptyRoundNotice from '@/pages/Chat/components/EmptyRoundNotice'
 import {fromHistorySegments} from '@/chatProviders/segments'
+import {regenerateTarget, regenerateConfirmText, regenerateBlockedText} from '@/chatProviders/regenerate'
 import {makeToolResultLoader} from '@/services/llm/toolResultClient'
 import {formatUploadFile, getDocHttpUrl, isArray, uuidV4} from '@/utils/util'
 
@@ -270,12 +272,18 @@ const Index: React.FC = () => {
     },
   })
 
-  const handleSend = useCallback(
-    async (content: string) => {
+  const doSend = useCallback(
+    async (content: string, extra: {regeneratedFrom?: string; attachments?: any[]} = {}) => {
       if (!content.trim() && attachmentItems.length === 0) return
 
       let messageCode = uuidV4()
       let inputs: any[] = []
+      /**
+       * P3：重跑必须绕开答案缓存并留下来源。缓存键是 (query, channel, model)，
+       * 重跑时三样都没变 ⇒ 不绕开就是把同一条缓存答案再发一遍，按钮看着有效其实无事发生。
+       * 服务端见到该键也会绕开；这里显式覆盖是不让界面依赖对方记得自己的规则。
+       */
+      const regenFrom = typeof extra.regeneratedFrom === 'string' && extra.regeneratedFrom ? extra.regeneratedFrom : ''
       onRequest(
         {
           messages: [
@@ -292,8 +300,12 @@ const Index: React.FC = () => {
             channel: CHANNEL_COMMON,
             inputs,
             messageCode,
-            attachments: formatUploadFile(attachmentItems).filter((_) => _.status === 'done'),
+            /** 重跑复用原问题的附件，否则不是同一件事 */
+            attachments: regenFrom
+              ? (extra.attachments || []).filter((_: any) => _?.status === 'done')
+              : formatUploadFile(attachmentItems).filter((_) => _.status === 'done'),
             enableThinking: 0,
+            ...(regenFrom ? {regeneratedFrom: regenFrom, cache: 0} : {}),
           },
         },
         {extraInfo: {}},
@@ -301,12 +313,22 @@ const Index: React.FC = () => {
 
       conversationListRef?.current?.modifyInitLabel(activeConv, content?.slice(0, 20))
 
-      setInputValue('')
-      setAttachmentItems([])
-      setAttachmentsOpen(false)
+      /** 重新生成不清空输入框与附件：那是用户可能正在写的草稿 */
+      if (!regenFrom) {
+        setInputValue('')
+        setAttachmentItems([])
+        setAttachmentsOpen(false)
+      }
     },
     [attachmentItems, activeConv, conversationListRef],
   )
+
+  /**
+   * Sender 的 onSubmit 契约是 `(message, slotConfig?, skill?)`：
+   * 内部需要能带 `regeneratedFrom` 的形状，但不能把它漏给组件——
+   * 否则类型不兼容，只能 `as any`，那是契约分叉的开始。
+   */
+  const handleSend = useCallback((content: string) => doSend(content, {}), [doSend])
 
   const handleConversationSelect = async (key: string, item?: any) => {
     isRequesting && abort()
@@ -415,6 +437,22 @@ const Index: React.FC = () => {
     return 'file'
   }
 
+  /**
+   * P3：能不能重新生成、对哪一条生成，判据在 `chatProviders/regenerate.ts`（穷举测，
+   * 含历史载入时"用户消息是分片数组"与跨端角色名两种真实形状）。
+   * 不可用时把原因写在按钮旁边，不留哑按钮。
+   */
+  const regenTarget = useMemo(() => regenerateTarget(messages, {requesting: isRequesting}), [messages, isRequesting])
+  const lastAiCode = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const m = messages[i]?.message || {}
+      if (m.role === 'ai' && (m.messageCode || messages[i]?.extraInfo?.messageCode)) {
+        return m.messageCode || messages[i]?.extraInfo?.messageCode
+      }
+    }
+    return ''
+  }, [messages])
+
   const items: BubbleListProps['items'] = useMemo(
     () =>
       messages.map((item) => ({
@@ -439,19 +477,46 @@ const Index: React.FC = () => {
                 }))}/>
               ) : null}
               {info.extraInfo?.role === 'ai' ? (
-                <div style={{display: 'flex'}}>
+                <div style={{display: 'flex', alignItems: 'center', gap: 8}}>
                   <label>
                     <Typography.Text type='secondary'>
                       以上内容由AI生成，请注意甄别。
                     </Typography.Text>
                   </label>
+                  {(item?.message?.messageCode || item?.extraInfo?.messageCode) === lastAiCode ? (
+                    regenTarget.ok ? (
+                      <Button
+                        size='small'
+                        type='text'
+                        onClick={() => {
+                          /** 先说费用，再说旧答案不删，最后说新答案另起一条 */
+                          Modal.confirm({
+                            title: '重新生成这条回答',
+                            content: regenerateConfirmText(regenTarget),
+                            okText: '重新生成',
+                            cancelText: '取消',
+                            onOk: () => doSend(regenTarget.query || '', {
+                              regeneratedFrom: regenTarget.messageCode,
+                              attachments: regenTarget.attachments,
+                            }),
+                          })
+                        }}
+                      >
+                        重新生成
+                      </Button>
+                    ) : (
+                      <Typography.Text type='secondary' style={{fontSize: 12}}>
+                        {regenerateBlockedText(regenTarget)}
+                      </Typography.Text>
+                    )
+                  ) : null}
                 </div>
               ) : null}
             </div>
           )
         },
       })),
-    [messages, isRequesting, token.colorSuccess, token.colorPrimary],
+    [messages, isRequesting, token.colorSuccess, token.colorPrimary, regenTarget, lastAiCode, doSend],
   )
 
   const contentRender: BubbleProps['contentRender'] = (content: any, info) => {

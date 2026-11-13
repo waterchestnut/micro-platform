@@ -98,6 +98,12 @@ export type CommonChatInput = {
     attachments?: any[];
     enableThinking?: number;
     protocol?: number;
+    /**
+     * P3：本轮是对哪条回答的重新生成（服务端 schema 已声明这个键）。
+     * 带它时服务端不读也不写答案缓存，并把来源写进档案与视图；
+     * 类型缺了就只能 `as any` 传，那是契约分叉的开始。
+     */
+    regeneratedFrom?: string;
   };
   messages?: CommonChatMessage[];
 };
