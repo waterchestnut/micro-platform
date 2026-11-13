@@ -370,6 +370,35 @@ export function modelCallPlacement(process: any, toolCallCount: number): string 
 }
 
 /**
+ * @description 同会话并发缺上下文该怎么说（P5 的界面判据）
+ * @param {any} process 视图的 `process` 字段
+ * @returns {String} 一行说明；**空串表示不说**
+ *
+ * 三种情况必须分开，不能都落到"不说"：
+ * - **键不存在**（这一行写于 P5 之前）⇒ 我们不知道，不许编，也不许说"没有并发"；
+ * - `runOverlap === null` ⇒ 服务端**确认**本轮发起时没有未终态的上一轮，也不必说；
+ * - 是对象 ⇒ 必须说出来：本轮的上下文里没有上一轮，这正是"它怎么不记得我上一句"的真相。
+ *
+ * 措辞只报事实与可核对的标识，不评价后果：
+ * 上一轮的标识取前 8 位（与 messageCode 在流里出现的口径一致），
+ * 让用户/客服能拿去对账，而不是给一个无法核对的形容词。
+ * `prevAgeMs` 只在能算出来时提，取整到秒——毫秒级精度在这里没有意义。
+ */
+export function runOverlapNote(process: any): string {
+  const o = process?.runOverlap;
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return '';
+  const head = String(o.prevMessageCode || '').slice(0, 8);
+  if (!head) return '本轮发起时，上一轮回答尚未结束，其内容不在本轮上下文中';
+  /**
+   * 时长只接受真数值：`Number(null)` 是 0、`Number('')` 也是 0，
+   * 那样会把"服务端没记时长"说成"约 0 秒"——与 H1 里 `argsChars=0` 与"键缺失"必须分开是同一条纪律。
+   */
+  const age = typeof o.prevAgeMs === 'number' && Number.isFinite(o.prevAgeMs) && o.prevAgeMs >= 0 ? o.prevAgeMs : null;
+  const ageText = age === null ? '' : `（当时已进行约 ${Math.round(age / 1000)} 秒）`;
+  return `本轮发起时上一轮（${head}…）尚未结束${ageText}，其内容不在本轮上下文中`;
+}
+
+/**
  * @description 工具**入参**该怎么说（PR-H H1/H2 的判据都在这里，不在组件里）
  * @param {any} call 工具调用记录（流式累积或历史 `process.toolCalls[]` 的形状）
  * @returns {{recorded: boolean, preview: string, note: string}} recorded=服务端有没有记这个维度

@@ -20,6 +20,7 @@ import {
   toolArgsView,
   droppedSegmentsText,
   modelCallNote,
+  runOverlapNote,
   modelCallPlacement,
   segmentCategory,
   segmentTimelineView,
@@ -223,6 +224,23 @@ const ProcessPanel = ({process, toolCalls, sources, fromCache, segments, toolRes
       key: 'segments-dropped',
       title: '过程内容未完整留存',
       description: droppedText,
+      status: 'error' as ThoughtChainItemType['status'],
+      collapsible: false,
+    });
+  }
+
+  /**
+   * P5：同会话并发导致的上下文缺失（判据在 `segments.ts:runOverlapNote`，那里穷举测）。
+   * 状态用 `error` 是有意的：它和"过程内容未完整留存"是同一类——**内容不完整**，
+   * 而不是"这一轮失败了"（这一轮通常答得好好的）。
+   * 用 `success` 会把一个可核对的缺口粉饰成正常，那正是这轮工作一直在删的东西。
+   */
+  const overlapText = runOverlapNote(process);
+  if (overlapText) {
+    items.push({
+      key: 'run-overlap',
+      title: '本轮上下文不含上一轮',
+      description: overlapText,
       status: 'error' as ThoughtChainItemType['status'],
       collapsible: false,
     });

@@ -4,6 +4,7 @@ import {
   toolArgsView,
   droppedSegmentsText,
   modelCallNote,
+  runOverlapNote,
   modelCallPlacement,
   applySegmentStart,
   applySegmentEnd,
@@ -581,5 +582,61 @@ describe('modelCallPlacement：挂在哪儿，和说不说，是两件事', () =
       expect(() => modelCallPlacement(bad as any, 1)).not.toThrow();
       expect(modelCallPlacement(bad as any, 1)).toBe('');
     }
+  });
+});
+
+describe('runOverlapNote：并发缺上下文要么说出来，要么明确不知道', () => {
+  /**
+   * 三种"没有话可说"是分开的，不许混成一个空串了事：
+   * 键不存在（P5 之前写的行）⇒ 不知道；null ⇒ 服务端确认没有；对象 ⇒ 必须说。
+   */
+  test('键不存在 ⇒ 不说（不许把"没记"读成"没有并发"）', () => {
+    expect(runOverlapNote({iterationCount: 2})).toBe('');
+    expect(runOverlapNote({})).toBe('');
+    expect(runOverlapNote(undefined)).toBe('');
+    expect(runOverlapNote(null)).toBe('');
+  });
+
+  test('runOverlap 为 null ⇒ 不说（这是"确认没有"，与上面那种"不知道"不同，但都不该编话）', () => {
+    expect(runOverlapNote({runOverlap: null})).toBe('');
+  });
+
+  test('对象 ⇒ 说出上一轮标识与当时已进行的秒数', () => {
+    const s = runOverlapNote({runOverlap: {prevMessageCode: '0fe89d60def611f1b60ee7d71f1169f0', prevAgeMs: 1986, contextMissing: true, reason: 'stale-open-run'}});
+    expect(s).toContain('0fe89d60');
+    expect(s).toContain('约 2 秒');
+    expect(s).toContain('不在本轮上下文中');
+    /** 只给前 8 位：完整标识不该被塞进界面文案 */
+    expect(s.includes('def611f1b60ee7d71f1169f0')).toBe(false);
+  });
+
+  test('没有标识时仍然要说这件事，只是给不出可核对的引用', () => {
+    const s = runOverlapNote({runOverlap: {prevAgeMs: 500}});
+    expect(s).toBe('本轮发起时，上一轮回答尚未结束，其内容不在本轮上下文中');
+  });
+
+  test('秒数取不到（负数/NaN/缺失/字符串）就不提时长，不提假的"0 秒"', () => {
+    for (const bad of [-1, NaN, undefined, null, 'abc']) {
+      const s = runOverlapNote({runOverlap: {prevMessageCode: 'abcd1234ef', prevAgeMs: bad}});
+      expect(s).toContain('abcd1234');
+      expect(/约\s*-?\d+\s*秒|约 0 秒/.test(s)).toBe(false);
+      expect(s.includes('秒')).toBe(false);
+    }
+  });
+
+  test('0 秒是合法读数（同一秒内发起），要说"约 0 秒"而不是当成没有', () => {
+    const s = runOverlapNote({runOverlap: {prevMessageCode: 'abcd1234ef', prevAgeMs: 0}});
+    expect(s).toContain('约 0 秒');
+  });
+
+  test('非对象或畸形值（字符串/数字/数组/布尔）一律不说也不抛', () => {
+    for (const bad of ['x', 42, [], true, [{}]]) {
+      expect(() => runOverlapNote({runOverlap: bad})).not.toThrow();
+      expect(runOverlapNote({runOverlap: bad})).toBe('');
+    }
+  });
+
+  test('空对象：服务端确实观察到重叠，但给不出任何可核对的事实 ⇒ 说通用那句', () => {
+    expect(runOverlapNote({runOverlap: {}})).toBe('本轮发起时，上一轮回答尚未结束，其内容不在本轮上下文中');
   });
 });
