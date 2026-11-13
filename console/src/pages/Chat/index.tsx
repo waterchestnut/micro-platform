@@ -53,6 +53,7 @@ import ProcessPanel from '@/pages/Chat/components/ProcessPanel'
 import EmptyRoundNotice from '@/pages/Chat/components/EmptyRoundNotice'
 import {fromHistorySegments} from '@/chatProviders/segments'
 import {regenerateTarget, regenerateConfirmText, regenerateBlockedText} from '@/chatProviders/regenerate'
+import {structuredRejectText} from '@/chatProviders/rejectText'
 import {makeToolResultLoader} from '@/services/llm/toolResultClient'
 import {formatUploadFile, getDocHttpUrl, isArray, uuidV4} from '@/utils/util'
 
@@ -247,7 +248,7 @@ const Index: React.FC = () => {
     conversationKey: activeConv,
     provider: providerFactory(activeConv),
     defaultMessages: getDefaultMessages(activeConv),
-    requestFallback: (_, {error, messageInfo}) => {
+    requestFallback: (_, {error, errorInfo, messageInfo}) => {
       //console.log(error, messageInfo)
       if (error.name === 'AbortError') {
         return {
@@ -259,7 +260,12 @@ const Index: React.FC = () => {
       return {
         ...messageInfo.message,
         content: messageInfo.message?.content || '',
-        errorText: '请求失败 请稍后再试!',
+        /**
+         * 拒绝要说得出原因：服务端的拒绝体（`200 + success:false + message`）由 SDK 原样放在
+         * `errorInfo` 里交下来，不读它就等于把"你上一条还在收尾"念成"系统坏了"。
+         * 判据（含哪些情况不该念）在 `chatProviders/rejectText.ts`，那边有穷举用例。
+         */
+        errorText: structuredRejectText(errorInfo) || '请求失败 请稍后再试!',
         streamState: 'error',
         role: 'ai',
       } as CommonChatMessage
