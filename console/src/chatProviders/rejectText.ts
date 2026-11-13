@@ -49,4 +49,31 @@ export function structuredRejectText(errorInfo: any): string {
   return pick(errorInfo.message) || pick(errorInfo.msg);
 }
 
-export default {structuredRejectText, REJECT_TEXT_MAX_CHARS};
+/**
+ * 请求中占位气泡的文案（`requestPlaceholder` 与终止态判定共用同一个来源）。
+ *
+ * 为什么它要出现在判据模块里而不是只写在页面里：2026-11-13 在 dev 与 cw2pc 都实测到——
+ * 一轮被 4291 拒掉之后，气泡**头部念出了拒绝原因**，**正文却仍然是这句"正在处理，请稍后。。。"**，
+ * 而且等 6 秒再读还是它在。用户看到的是一句永远不结束的假状态。
+ * 根因不是文案，是 `requestFallback` 返回 `{...messageInfo.message}` 时把占位内容原样带进了终止态。
+ * 所以这里把"终止态不许保留加载占位"做成一条能测的判据，页面只负责用它。
+ */
+export const LOADING_PLACEHOLDER_TEXT = '正在处理，请稍后。。。';
+
+/**
+ * @description 终止态下剥掉加载占位文案，其他内容原样保留
+ * @param {any} content 气泡当前正文（可能是占位、可能是半截正文、可能没有）
+ * @param {String} [placeholder] 占位文案；传空串表示"这一端没有占位机制"，此时一律原样返回
+ * @returns {String} 该显示的正文；空串表示什么都不显示
+ *
+ * 判据刻意用**全等**而不是 `includes`/前缀匹配：
+ * 半截真正文（占位句后面还有内容）不是占位，把它清空就是**销毁已有信息**——
+ * 那比留着假状态更坏。宁可留着，也不要造出"内容凭空消失"。
+ */
+export function dropLoadingPlaceholder(content: any, placeholder: string = LOADING_PLACEHOLDER_TEXT): string {
+  if (typeof content !== 'string') return '';
+  if (!placeholder) return content;
+  return content === placeholder ? '' : content;
+}
+
+export default {structuredRejectText, REJECT_TEXT_MAX_CHARS, LOADING_PLACEHOLDER_TEXT, dropLoadingPlaceholder};

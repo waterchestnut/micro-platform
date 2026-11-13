@@ -7,7 +7,7 @@
  * 比原来那句通用的"请求失败，请稍后重试"更糟。所以下面每一组都在测闭嘴的边界。
  */
 
-import {structuredRejectText, REJECT_TEXT_MAX_CHARS} from './rejectText';
+import {structuredRejectText, REJECT_TEXT_MAX_CHARS, LOADING_PLACEHOLDER_TEXT, dropLoadingPlaceholder} from './rejectText';
 
 describe('structuredRejectText：只念服务端有意写给用户看的那句话', () => {
   test('4290 与 4291 的拒绝体都念出原句（这就是这次要修的那件事）', () => {
@@ -111,5 +111,41 @@ describe('structuredRejectText：只念服务端有意写给用户看的那句�
     expect(structuredRejectText({success: false, msg: ''})).toBe('');
     expect(structuredRejectText({success: false, msg: 'x'.repeat(201)})).toBe('');
     expect(structuredRejectText({success: false, msg: 4291})).toBe('');
+  });
+});
+describe('dropLoadingPlaceholder：终止态不许留着"正在处理"', () => {
+  /**
+   * 这条判据来自 2026-11-13 的两次实测（dev www-console 与 cw2pc 模板端）：
+   * 4291 被拒那一轮，气泡头部念出了原因，正文却仍是"正在处理，请稍后。。。"，等 6 秒再读还是它。
+   * 所以这里测的不是文案，是**假状态能不能被清掉**。
+   */
+  test('与占位全等 ⇒ 清空（这就是那次实测到的形状）', () => {
+    expect(dropLoadingPlaceholder(LOADING_PLACEHOLDER_TEXT)).toBe('');
+  });
+
+  test('真实正文原样保留，包括半截正文', () => {
+    expect(dropLoadingPlaceholder('这是模型已经输出的半句话')).toBe('这是模型已经输出的半句话');
+    expect(dropLoadingPlaceholder('')).toBe('');
+  });
+
+  test('刻意不用前缀/includes 匹配：占位句后面还有内容时不许清空（那是销毁信息，比留着更坏）', () => {
+    const mixed = LOADING_PLACEHOLDER_TEXT + '后面其实已经有正文了';
+    expect(dropLoadingPlaceholder(mixed)).toBe(mixed);
+  });
+
+  test('非字符串一律给空串，不许抛（异常路径上调用它不能再造一个异常）', () => {
+    for (const v of [undefined, null, 42, {}, [], true]) {
+      expect(dropLoadingPlaceholder(v)).toBe('');
+    }
+  });
+
+  test('这一端没有占位机制时（placeholder 传空串）⇒ 原样返回，不做任何清除', () => {
+    expect(dropLoadingPlaceholder(LOADING_PLACEHOLDER_TEXT, '')).toBe(LOADING_PLACEHOLDER_TEXT);
+  });
+
+  test('占位常量与页面共用同一份：改字面量必须同时改判据，否则清不掉', () => {
+    expect(typeof LOADING_PLACEHOLDER_TEXT).toBe('string');
+    expect(LOADING_PLACEHOLDER_TEXT.length).toBeGreaterThan(0);
+    expect(dropLoadingPlaceholder(LOADING_PLACEHOLDER_TEXT + ' ')).not.toBe('');
   });
 });

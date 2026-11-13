@@ -53,7 +53,7 @@ import ProcessPanel from '@/pages/Chat/components/ProcessPanel'
 import EmptyRoundNotice from '@/pages/Chat/components/EmptyRoundNotice'
 import {fromHistorySegments} from '@/chatProviders/segments'
 import {regenerateTarget, regenerateConfirmText, regenerateBlockedText} from '@/chatProviders/regenerate'
-import {structuredRejectText} from '@/chatProviders/rejectText'
+import {structuredRejectText, LOADING_PLACEHOLDER_TEXT, dropLoadingPlaceholder} from '@/chatProviders/rejectText'
 import {makeToolResultLoader} from '@/services/llm/toolResultClient'
 import {formatUploadFile, getDocHttpUrl, isArray, uuidV4} from '@/utils/util'
 
@@ -254,12 +254,20 @@ const Index: React.FC = () => {
         return {
           ...messageInfo.message,
           role: 'ai',
+          /** P9：abort 也可能落在正文之前，那时正文就是占位句，不能带进终止态 */
+          content: dropLoadingPlaceholder(messageInfo.message?.content),
           streamState: 'aborted',
         } as CommonChatMessage
       }
       return {
         ...messageInfo.message,
-        content: messageInfo.message?.content || '',
+        /**
+         * P9（2026-11-13 在 cw2pc 现网实测）：被 4291 拒掉那一轮，头部念出了拒绝原因，
+         * 正文却仍是 `requestPlaceholder` 留下的"正在处理，请稍后。。。"，6 秒后还在——
+         * 同一句话里既说"被拒了"又说"还在跑"。原来这行 `content || ''` 正是把占位带进终止态的那一步。
+         * 判据在 `chatProviders/rejectText.ts`（半截正文不许清空，所以用全等而不是 includes）。
+         */
+        content: dropLoadingPlaceholder(messageInfo.message?.content),
         /**
          * 拒绝要说得出原因：服务端的拒绝体（`200 + success:false + message`）由 SDK 原样放在
          * `errorInfo` 里交下来，不读它就等于把"你上一条还在收尾"念成"系统坏了"。
@@ -272,7 +280,8 @@ const Index: React.FC = () => {
     },
     requestPlaceholder: () => {
       return {
-        content: '正在处理，请稍后。。。',
+        /** 与 `dropLoadingPlaceholder` 共用同一个常量：两处各写一遍字面量，改一处就会让终止态清不掉占位 */
+        content: LOADING_PLACEHOLDER_TEXT,
         role: 'ai',
       } as CommonChatMessage
     },
