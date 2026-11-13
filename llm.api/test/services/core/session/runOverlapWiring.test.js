@@ -98,11 +98,36 @@ describe('DAO 与档案：投影字段齐、落库与视图都带上', () => {
     })
 
     test('llmChat 把 runOverlap 写进 extInfo，且没有重叠时是 null 而不是缺键', () => {
+        /**
+         * 2026-11-13 改过一次：原来这里数的是"文本出现次数==1"，
+         * 而 `runOverlap: options.runOverlap || null` 这行合法地出现在两个地方
+         * （meta 发射点 + persistTurn 落库点），于是加 meta 那一行把它撞红了。
+         * **文本计数不能表达"这个形状必须出现在哪个函数里"**——这正是它给假绿/假红的地方：
+         * 少一处它可能照样绿，多一处合理用法它一定红。
+         * 现在按位置断言：在 `persistTurn` 函数体内必须有一处；缺键问题由 `|| null` 那段守着。
+         */
         const ls = codeOnly(linesOf('services/core/llmChat.js'))
-        const hit = ls.filter((l) => /runOverlap:\s*options\.runOverlap \|\| null/.test(l))
-        assert.equal(hit.length, 1, `落库点应恰好一处，实际 ${hit.length}`)
+        const at = ls.findIndex((l) => /const persistTurn\s*=\s*async/.test(l))
+        assert.ok(at >= 0, '找不到 persistTurn 的定义位置 ⇒ 本文件与 llmChat 已经分叉，要重写而不是跳过')
+        /**
+         * 函数体边界：从定义行往后找到**下一个同缩进的 const 声明**为止。
+         * 固定 60 行的窗口是不够的——这里到落库点实际隔了一百多行，
+         * 窗口小了会假装"落库点缺失"而报红（我第一版就是这么写错的）。
+         */
+        const indent = (ls[at].match(/^ */) || [''])[0].length
+        let end = ls.length
+        for (let i = at + 1; i < ls.length; i++) {
+            const m = ls[i].match(/^( *)const /)
+            if (m && m[1].length === indent) {
+                end = i
+                break
+            }
+        }
+        const body = ls.slice(at, end)
+        assert.ok(body.length > 40, `persistTurn 的函数体只截到 ${body.length} 行 ⇒ 边界判定失效，别拿这个结果下结论`)
+        const hits = body.filter((l) => /runOverlap:\s*options\.runOverlap \|\| null/.test(l))
+        assert.equal(hits.length, 1, `persistTurn 里的落库点应恰好一处（写两处会互相覆盖），实际 ${hits.length}`)
     })
-
     test('messageView 暴露 runOverlap（前端读不到就等于没说）', () => {
         const ls = codeOnly(linesOf('services/core/messageView.js'))
         assert.ok(ls.some((l) => /runOverlap:\s*info\.runOverlap \|\| null/.test(l)), '视图没带这个字段')

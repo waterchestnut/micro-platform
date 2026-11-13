@@ -938,6 +938,17 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         tools: (createBody.tools || []).map(t => t?.function?.name).filter(Boolean),
         toolChoice: createBody.tool_choice,
         contextBudget: contextUsage?.budget,
+        /**
+         * P5：同会话重叠的事实必须**在这条流里就说出来**，不能只留在档案里。
+         * 母本 2026-11-13 双标签页实测：档案有 runOverlap，但实时界面什么也没说，
+         * 重新进入会话（走 /core/message/list 回填）之后那句"本轮上下文不含上一轮"才出现——
+         * 最需要它的那一刻（用户正在等这一轮）它不说话。
+         *
+         * 这里发的是事实（对象或 null），措辞仍由前端判据决定。
+         * provider 的 case 'meta' 是白名单，不收就等于没发：**两侧必须同一轮改**，
+         * 单边改完症状一模一样，最容易被误判成"改了没用"。
+         */
+        runOverlap: options.runOverlap || null,
     })
 
     /** 同上：协议 3 不能丢掉 sources（理由见 meta 那处注释） */

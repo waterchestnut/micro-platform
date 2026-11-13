@@ -110,6 +110,38 @@ describe('meta 必须自报真实档位（源码级守卫）', () => {
     })
 })
 
+describe('meta 必须把 P5 的事实带在流里（源码级守卫）', () => {
+    test('runOverlap 的三处接线必须齐：meta（实时）+ 档案 + 装配清单', () => {
+        /**
+         * 2026-11-13 双标签页实测出来的缺口：档案里 `runOverlap` 是对象（`prevAgeMs=2582,
+         * contextMissing=true, reason='stale-open-run'`），**实时界面却不显示那句提示**，
+         * 重新进入会话（走 `/core/message/list` 回填）才显示。原因是 `emitMeta` 只发了
+         * `cached / tools / toolChoice / contextBudget`——"用户正在等这一轮"的时刻恰恰没有事实，
+         * 等他有空刷新时，那句话已经晚了。
+         *
+         * 与前两条同族的写法：发射顺序离线跑不起来（要真上游与真库），所以守的是形状而不是行为，
+         * 这一点不假装。**形状守卫抓得住的正是这次的症状**：谁把这行删掉或改名，用例立刻红。
+         */
+        const src = fs.readFileSync(new URL('../../../services/core/llmChat.js', import.meta.url), 'utf8')
+        const lines = src.split(/\r?\n/).filter(l => !/^\s*(\*|\/\/)/.test(l.trim()))
+        const inMeta = lines.findIndex((l, i) => /emitMeta\(\{/.test(l)
+            && lines.slice(i, i + 14).some(x => /runOverlap:\s*options\.runOverlap \|\| null/.test(x)))
+        assert.ok(inMeta >= 0, 'emitMeta 没带 runOverlap ⇒ 实时那一轮永远说不出"上下文不含上一轮"（只有刷新后才有）')
+        /**
+         * 三处必须齐：meta（实时）+ persistTurn 的 extra（档案）+ saveMessage 的装配清单（唯一出口）。
+         * 少 meta ⇒ 实时不说（今天的症状）；少后两者 ⇒ 前端读不到、事后也查不到。
+         * 这条断言的意义在于"数量 + 位置"都能钉住：谁删掉任意一处，这里就红。
+         */
+        const asLiteral = lines.filter(l => /^\s*runOverlap:/.test(l))
+        assert.equal(asLiteral.length, 3, `runOverlap 的接线点应是 meta/档案/装配清单三处，现在 ${asLiteral.length} 处：${JSON.stringify(asLiteral.map(s => s.trim().slice(0, 52)))}`)
+        for (const l of asLiteral) {
+            /** 值必须是 `options.runOverlap` 的透传；`|| null` 是显式空值（缺键与"确认没有"不是同一件事） */
+            assert.match(l, /options\.runOverlap/, `runOverlap 必须来自路由查到的事实，不许现编：${l.trim().slice(0, 60)}`)
+        }
+        assert.match(asLiteral.join('\n'), /options\.runOverlap \|\| null/, '至少要有一处显式写 null（meta 或档案）')
+    })
+})
+
 describe('请求侧的协议闸门（端到端实测照出来的教训）', () => {
     /**
      * 我曾以为"resolveProtocol 支持 3"就等于协议 3 可用；实发一次得到 **400 "响应体预定义枚举值之一"**
