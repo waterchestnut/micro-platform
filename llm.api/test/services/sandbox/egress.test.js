@@ -13,16 +13,16 @@ const {buildCreateBody} = await import('../../../services/sandbox/runner.js')
 
 test('只给集群内域名不给 Service CIDR 必须直接抛错（dns+nft 的两层放行）', () => {
     assert.throws(
-        () => buildEgressPolicy({allow: ['llm-api-http.micro.svc.cluster.local']}),
+        () => buildEgressPolicy({allow: ['llm-api-http.xxzx.svc.cluster.local']}),
         /serviceCidrs/,
     )
     const p = buildEgressPolicy({
-        allow: ['llm-api-http.micro.svc.cluster.local'],
+        allow: ['llm-api-http.xxzx.svc.cluster.local'],
         serviceCidrs: ['10.43.0.0/16'],
     })
     assert.equal(p.defaultAction, 'deny')
     assert.deepEqual(p.egress, [
-        {action: 'allow', target: 'llm-api-http.micro.svc.cluster.local'},
+        {action: 'allow', target: 'llm-api-http.xxzx.svc.cluster.local'},
         {action: 'allow', target: '10.43.0.0/16'},
     ])
 })
@@ -31,7 +31,7 @@ test('外部域名不需要 Service CIDR；CIDR 本身也不算内部目标', ()
     const p = buildEgressPolicy({allow: ['*.pypi.org', '192.168.31.108']})
     assert.equal(p.egress.length, 2)
     assert.equal(looksInternal('10.43.0.0/16'), false)
-    assert.equal(looksInternal('reg.example.net'), false)
+    assert.equal(looksInternal('reg.xxzx.paretop.net'), false)
     assert.equal(looksInternal('api.foo.svc.cluster.local'), true)
     assert.equal(looksInternal('llm-api-http'), true, '不含点是靠 search 域拼出来的 Service 短名')
     assert.equal(looksInternal('db.internal', ['db.internal']), true)
@@ -192,12 +192,76 @@ test('buildCreateBody：credentialProxy 三条互斥/前置都建箱前抛（池
 })
 
 test('assertPolicyCoversBindings：建档/改策略前本地守门，缺哪个报哪个（精确+通配）', () => {
-    const pol = {defaultAction: 'deny', egress: [{action: 'allow', target: 'reg.example.net'}, {action: 'allow', target: '*.npmjs.org'}]}
-    const binds = [{name: 'b1', match: {hosts: ['reg.example.net']}}, {name: 'b2', match: {hosts: ['registry.npmjs.org']}}]
+    const pol = {defaultAction: 'deny', egress: [{action: 'allow', target: 'reg.xxzx.paretop.net'}, {action: 'allow', target: '*.npmjs.org'}]}
+    const binds = [{name: 'b1', match: {hosts: ['reg.xxzx.paretop.net']}}, {name: 'b2', match: {hosts: ['registry.npmjs.org']}}]
     assert.doesNotThrow(() => assertPolicyCoversBindings(pol, binds))
     assert.throws(
-        () => assertPolicyCoversBindings({defaultAction: 'deny', egress: [{action: 'allow', target: 'other.com'}]}, [{name: 'b1', match: {hosts: ['reg.example.net']}}]),
-        /b1 → reg.example.net/,
+        () => assertPolicyCoversBindings({defaultAction: 'deny', egress: [{action: 'allow', target: 'other.com'}]}, [{name: 'b1', match: {hosts: ['reg.xxzx.paretop.net']}}]),
+        /b1 → reg.xxzx.paretop.net/,
     )
     assert.throws(() => assertPolicyCoversBindings(pol, [{name: 'bx', match: {hosts: ['npmjs.org']}}]), /裸域不被通配覆盖|bx → npmjs\.org/)
 })
+/**
+ * E0.6 ④ 的回归用例：`looksInternal` 以前认不出 `name.namespace` 与 `.svc`，
+ * 而技能回连宿主用的正是 `llm-api-http.xxzx`（`skillHost.baseUrl` 默认值）。
+ * 结果不是"多放行"，而是**该报的配置错误从来不报**：收紧后症状会变成
+ * "DNS 放行、解析后被 nftables 丢弃"的偶发失败且日志无错（§2B.4）。
+ */
+const {hostOfUrl, namespaceOfHost, knownInternalNamespaces} = await import('../../../services/sandbox/egress.js')
+
+test('hostOfUrl / namespaceOfHost：先把形状拆出来再判内外', () => {
+    assert.equal(hostOfUrl('http://llm-api-http.xxzx:80'), 'llm-api-http.xxzx')
+    assert.equal(hostOfUrl('https://reg.xxzx.paretop.net/'), 'reg.xxzx.paretop.net')
+    assert.equal(hostOfUrl('llm-api-http.xxzx'), 'llm-api-http.xxzx')
+    assert.equal(hostOfUrl(''), '')
+    assert.equal(namespaceOfHost('llm-api-http.xxzx'), 'xxzx')
+    assert.equal(namespaceOfHost('reg.xxzx.paretop.net'), '', '三段以上不是 name.namespace 形状')
+    assert.equal(namespaceOfHost('localhost'), '')
+})
+
+test('looksInternal：`.svc` 与 `.svc.cluster.local` 都算内部', () => {
+    assert.equal(looksInternal('llm-api-http.xxzx.svc.cluster.local'), true)
+    assert.equal(looksInternal('llm-api-http.xxzx.svc'), true, '上一版只认 .svc.cluster.local，漏掉 .svc')
+    assert.equal(looksInternal('llm-api-http'), true, '不含点的短名一直是内部')
+})
+
+test('looksInternal：`name.namespace` 只在第二段是已知命名空间时算内部', () => {
+    assert.equal(looksInternal('llm-api-http.xxzx'), false, '没给命名空间时不能猜——这是修复前后一致的部分')
+    assert.equal(looksInternal('llm-api-http.xxzx', [], ['xxzx']), true, '给了命名空间就必须认出来（本次修的核心）')
+    assert.equal(looksInternal('example.com', [], ['xxzx']), false, '两段不等于内部：example.com 与 llm-api-http.xxzx 形状相同，只有命名空间能区分')
+    assert.equal(looksInternal('LLM-API-HTTP.XXZX', [], ['xxzx']), true, '大小写不敏感')
+})
+
+test('buildEgressPolicy：认出内部目标后，缺 serviceCidrs 必须抛（保护这才真的会触发）', () => {
+    assert.throws(
+        () => buildEgressPolicy({allow: ['llm-api-http.xxzx'], defaultAction: 'deny', internalNamespaces: ['xxzx']}),
+        /serviceCidrs/,
+    )
+    assert.doesNotThrow(() => buildEgressPolicy({allow: ['llm-api-http.xxzx'], serviceCidrs: ['10.43.0.0/16'], internalNamespaces: ['xxzx']}))
+    assert.throws(() => buildEgressPolicy({allow: ['a.xxzx'], serviceCidrs: ['10.43.0.0'], internalNamespaces: ['xxzx']}), /必须是 CIDR/)
+})
+
+test('knownInternalNamespaces：从 skillHost.baseUrl 自动推出，不要求运维再抄一遍', () => {
+    global.llm.config = {sandboxConfig: {}, skillHost: {baseUrl: 'http://llm-api-http.xxzx:80'}}
+    assert.deepEqual(knownInternalNamespaces([]), ['xxzx'])
+    assert.deepEqual(knownInternalNamespaces(['online']).sort(), ['online', 'xxzx'].sort(), '配置给的与推出来的并存')
+    global.llm.config = {sandboxConfig: {}, skillHost: {baseUrl: 'http://llm-api-http.xxzx.svc.cluster.local'}}
+    assert.deepEqual(knownInternalNamespaces([]), [], '全限定形式不是 name.namespace，不硬推（looksInternal 本来就认得它）')
+})
+
+test('egressPolicyFromConfig：简写形式带上推导出的命名空间；完整形式缺 CIDR 至少 warn', () => {
+    const warns = []
+    global.llm.logger = {info() {}, warn: (m) => warns.push(m), error() {}}
+    global.llm.config = {sandboxConfig: {egressPolicy: {allow: ['llm-api-http.xxzx']}}, skillHost: {baseUrl: 'http://llm-api-http.xxzx:80'}}
+    assert.throws(() => egressPolicyFromConfig(), /serviceCidrs/, '简写形式必须抛（原保护现在真的会触发了）')
+    /** 完整形式：以前完全不校验，现在 warn 而不抛——把一条静默路径变成可见，同时不让一次配置改动变成建箱失败 */
+    global.llm.config = {
+        sandboxConfig: {egressPolicy: {defaultAction: 'deny', egress: [{action: 'allow', target: 'llm-api-http.xxzx'}]}},
+        skillHost: {baseUrl: 'http://llm-api-http.xxzx:80'},
+    }
+    const p = egressPolicyFromConfig()
+    assert.equal(p.defaultAction, 'deny')
+    assert.equal(warns.length, 1, `完整形式缺 CIDR 应告警一次，实际 ${warns.length}`)
+    assert.match(warns[0], /集群内目标/)
+})
+

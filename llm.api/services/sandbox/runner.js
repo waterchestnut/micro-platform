@@ -12,7 +12,8 @@
  */
 import {buildSkillBundle, parseBundleResult, checkSelfContained} from '../../tools/skillBundle.js'
 import {issueCapabilityToken} from './capability.js'
-import {egressPolicyFromConfig} from './egress.js'
+import {egressPolicyFromConfig, hostOfUrl} from './egress.js'
+import {decideEgressPosture, formatPostureForLog, assertSandboxEgressAllowed, EGRESS_MODE} from './egressPosture.js'
 import {assertQuota, recordUsage, setActiveProvider} from './usage.js'
 import {sandboxClient} from './openSandbox.js'
 
@@ -185,6 +186,42 @@ export async function waitExecdReady(client, sandboxId, opts = {}) {
     throw new Error(`execd 探活 ${tries} 次仍不可用，已销毁沙箱 ${sandboxId}：${lastErr ? lastErr.message : '未知'}`)
 }
 
+/** 建箱路径上 allow-all 告警只发一次/进程（每次建箱都发会让人学会忽略它，与 secretSources 同一纪律） */
+let postureWarned = false
+
+/**
+ * @description 技能回连宿主所需的目标（从配置推出来，不硬编码、也不要求运维再抄一遍）
+ * @returns {String[]} 结果
+ */
+function requiredEgressHosts() {
+    const h = hostOfUrl(llm?.config?.skillHost?.baseUrl || '')
+    return h ? [h] : []
+}
+
+/**
+ * @description 建箱前的出网态势闸门（PR-E0.6 ③）
+ * @param {Object|null} egress 已算出的策略
+ * @returns {Object} 态势判定
+ *
+ * 只有 `refused` 才阻断；`allow-all-visible` 每进程告警一次。
+ * 判定与阻断分开写（在 `egressPosture.js`），这样"要不要拦"只由一个配置开关决定，
+ * 不会出现某些建箱路径拦了、某些没拦的分家——那比不拦更难查。
+ */
+function enforceEgressPosture(egress) {
+    const c = cfg()
+    const decision = decideEgressPosture({
+        sandboxEnabled: c.enabled === true,
+        policy: egress,
+        enforcePolicy: c.egressEnforcePolicy === true,
+    })
+    if (decision.mode === EGRESS_MODE.ALLOW_ALL_VISIBLE && !postureWarned) {
+        postureWarned = true
+        logger().warn(formatPostureForLog(decision, {requiredHosts: requiredEgressHosts()}))
+    }
+    assertSandboxEgressAllowed(decision)
+    return decision
+}
+
 /**
  * @description 建一个沙箱并在用完（含失败）后回收
  * @author xianyang
@@ -204,6 +241,7 @@ export async function withSandbox(params = {}) {
     const startedAt = Date.now()
     /** 先算策略再建箱：配置不合法（比如放行内部域名却忘了 serviceCidrs）要在建箱之前就抛 */
     const egress = egressPolicyFromConfig()
+    enforceEgressPosture(egress)
     const poolRef = params.poolRef || cfg().defaultPoolRef
     const created = await client.createSandbox(buildCreateBody({
         poolRef,
@@ -349,6 +387,7 @@ export async function getSharedSandbox(params = {}) {
         }
     }
     const egress = egressPolicyFromConfig()
+    enforceEgressPosture(egress)
     const gate = await assertQuota({userCode: params.userCode, conversationCode: key})
     if (!gate.ok) {
         throw new Error(gate.reason)

@@ -17,23 +17,70 @@
  * @author xianyang
  */
 
-/** 集群内 Service 名的特征：`.svc.cluster.local` 或不含点的短名（走 pod resolver 的 search 域） */
+/** 集群内 Service 名的特征：`.svc.cluster.local`、`.svc`，或不含点的短名（走 pod resolver 的 search 域） */
 const SVC_SUFFIX = '.svc.cluster.local'
+
+/**
+ * @description 从 URL 或裸 host 里取 host 段
+ * @param {String} u 形如 `http://llm-api-http.xxzx:80` 或 `llm-api-http.xxzx`
+ * @returns {String} 小写 host（去端口）；取不到时空串
+ */
+export function hostOfUrl(u = '') {
+    const s = String(u || '').trim().toLowerCase()
+    if (!s) {
+        return ''
+    }
+    const noProto = s.includes('://') ? s.split('://')[1] : s
+    const host = (noProto.split('/')[0] || '').split('?')[0]
+    return host.split(':')[0]
+}
+
+/**
+ * @description 取 `name.namespace` 形式里的命名空间；不是这个形状时返回空串
+ * @param {String} host 已去协议去端口的 host
+ * @returns {String} 命名空间或空串
+ *
+ * 为什么要单独一个函数而不是在 `looksInternal` 里直接判"两段就算内部"：
+ * **`llm-api-http.xxzx` 和 `example.com` 都是两段**——段数不能区分内外，
+ * 能区分的只有"第二段是不是我们已知的命名空间"。把它写成独立函数，
+ * 是为了让调用方必须显式交出名空间来源（配置或 `skillHost.baseUrl`），而不是让判据偷偷猜。
+ */
+export function namespaceOfHost(host = '') {
+    const h = String(host || '').trim().toLowerCase()
+    if (!h || h.includes('/')) {
+        return ''
+    }
+    const labels = h.split('.')
+    if (labels.length !== 2) {
+        return ''
+    }
+    if (!labels[0] || !labels[1]) {
+        return ''
+    }
+    return labels[1]
+}
 
 /**
  * @description 判断是否指向集群内部目标（这类目标必须额外放行 Service CIDR）
  * @author xianyang
  * @param {String} target 规则 target
  * @param {String[]} [extraSuffixes] 额外认定的内部后缀
+ * @param {String[]} [internalNamespaces] 已知的集群命名空间（第二段命中即算内部）
  * @returns {Boolean} false 表示是纯外部 FQDN/IP/CIDR
+ *
+ * 修的是 E0.6 ④：上一版认不出 `name.namespace` 与 `.svc` 两种形式，
+ * 而技能回连宿主用的正是 `llm-api-http.xxzx`（`skillHost.baseUrl` 的默认值）——
+ * 于是"内部目标必须给 serviceCidrs"这道保护**一次也没为它触发过**，
+ * 收紧后的症状会是"DNS 放行、解析后被 nftables 丢弃"的偶发失败且日志无错（§2B.4 原话）。
+ * 讽刺的是旧注释里举的例子恰好就是这个 host，说明当时是照着例子写的判据，却没验证例子本身。
  */
-export function looksInternal(target = '', extraSuffixes = []) {
+export function looksInternal(target = '', extraSuffixes = [], internalNamespaces = []) {
     const t = String(target).trim().toLowerCase()
     if (!t || t.includes('/')) {
         // CIDR（含 /）是网络层规则，本身就在解决 second layer
         return false
     }
-    if (t.endsWith(SVC_SUFFIX)) {
+    if (t.endsWith(SVC_SUFFIX) || t.endsWith('.svc')) {
         return true
     }
     for (const s of extraSuffixes || []) {
@@ -41,8 +88,19 @@ export function looksInternal(target = '', extraSuffixes = []) {
             return true
         }
     }
-    /** 不含点：靠 resolver search 列表拼出来的 Service 短名（如 `llm-api-http.micro` 里的 micro 那类） */
-    return !t.includes('.')
+    /** 不含点：靠 resolver search 列表拼出来的 Service 短名 */
+    if (!t.includes('.')) {
+        return true
+    }
+    /** `name.namespace`：只有第二段是已知命名空间才算内部，否则与 `example.com` 无法区分 */
+    const ns = namespaceOfHost(t)
+    if (ns) {
+        const list = (internalNamespaces || []).map((x) => String(x).toLowerCase()).filter(Boolean)
+        if (list.includes(ns)) {
+            return true
+        }
+    }
+    return false
 }
 
 /**
@@ -56,7 +114,7 @@ export function looksInternal(target = '', extraSuffixes = []) {
  * @returns {Object} {defaultAction, egress:[{action,target}]}
  */
 export function buildEgressPolicy(params = {}) {
-    const {allow = [], serviceCidrs = [], defaultAction = 'deny', internalSuffixes = []} = params
+    const {allow = [], serviceCidrs = [], defaultAction = 'deny', internalSuffixes = [], internalNamespaces = []} = params
     if (!['deny', 'allow'].includes(defaultAction)) {
         throw new Error(`defaultAction 只能是 deny 或 allow，收到：${defaultAction}`)
     }
@@ -86,12 +144,13 @@ export function buildEgressPolicy(params = {}) {
         push('allow', cidr)
     }
 
-    const internal = (allow || []).filter(t => looksInternal(t, internalSuffixes))
+    const internal = (allow || []).filter(t => looksInternal(t, internalSuffixes, internalNamespaces))
     if (defaultAction === 'deny' && internal.length && !(serviceCidrs || []).length) {
         throw new Error(
             `放行了集群内目标（${internal.join(', ')}）但没给 serviceCidrs：` +
             'dns+nft 下 DNS 名与 Service CIDR 两层都要放行，只给域名会在解析后被 nftables 丢掉。' +
-            '请补 sandboxConfig.egressPolicy.serviceCidrs（如 ["10.43.0.0/16"]）',
+            '请补 sandboxConfig.egressPolicy.serviceCidrs（如 ["10.43.0.0/16"]）。' +
+            `（判内部的两类依据：internalSuffixes=${JSON.stringify(internalSuffixes)}、internalNamespaces=${JSON.stringify(internalNamespaces)}）`,
         )
     }
 
@@ -125,20 +184,68 @@ export function normalizeEgressPolicy(policy = {}) {
 }
 
 /**
+ * @description 已知的集群命名空间清单：配置优先，其次从 `skillHost.baseUrl` 推出来
+ * @author xianyang
+ * @param {Object} [cfgNamespaces] 配置里显式给的命名空间
+ * @returns {String[]} 去重后的小写清单
+ *
+ * 为什么要自动从 `skillHost.baseUrl` 推：技能回连宿主的目标**就是这个值**，
+ * 让它必须靠运维再手抄一遍命名空间，等于把"保护触发不了"这个原 bug 换个位置保留下来。
+ * 推不出来时（比如 baseUrl 用了全限定 `.svc.cluster.local`）也不猜：那种形式 `looksInternal` 本来就认得。
+ */
+export function knownInternalNamespaces(cfgNamespaces = []) {
+    const out = []
+    for (const n of (Array.isArray(cfgNamespaces) ? cfgNamespaces : [])) {
+        const s = String(n || '').trim().toLowerCase()
+        if (s) {
+            out.push(s)
+        }
+    }
+    try {
+        const base = llm?.config?.skillHost?.baseUrl
+        const ns = namespaceOfHost(hostOfUrl(base))
+        if (ns && !out.includes(ns)) {
+            out.push(ns)
+        }
+    } catch (e) {
+        /** 全局配置在单测里可能不存在：推不出来就少一个依据，绝不因此抛错 */
+    }
+    return out
+}
+
+/**
  * @description 读取全局配置里的出网策略；未配置即返回 null（表示不做收紧，保持现状）
  * @author xianyang
  * @returns {Object|null} 归一化后的策略，或 null
+ *
+ * ⚠️ "未配置就 allow-all"仍然是现状，因为 dev 实测 `sandbox_enabled=true` 且
+ * `sandbox_skillExecMode=sandbox`——直接把 null 变成拒绝会让正在用的技能执行当场停摆。
+ * E0.6 的 ③（未配置即拒绝启用 sandbox）由 `egressPosture` 提供开关与告警，不在这里偷偷改默认。
  */
 export function egressPolicyFromConfig() {
     const cfg = (typeof llm !== 'undefined' ? llm.config?.sandboxConfig?.egressPolicy : null) || null
     if (!cfg) {
         return null
     }
+    const namespaces = knownInternalNamespaces(cfg.internalNamespaces)
     if (Array.isArray(cfg.allow) || Array.isArray(cfg.serviceCidrs)) {
         /** 简写形式：只给 allow/serviceCidrs，由 buildEgressPolicy 负责双层放行校验 */
-        return buildEgressPolicy(cfg)
+        return buildEgressPolicy({...cfg, internalNamespaces: namespaces})
     }
-    return normalizeEgressPolicy(cfg)
+    const policy = normalizeEgressPolicy(cfg)
+    /**
+     * 完整形式以前**什么也不校验**，所以"内部目标没配 CIDR"这个原 bug 在这条路径上连报错都不会有。
+     * 这里补上检查，但只 warn 不抛：完整形式是给懂行的人手写的，突然抛错会让一次配置改动变成一次建箱失败；
+     * 而"从来没触发过"的病因已经被这次告警覆盖，剩下的是运维要不要立刻处理。
+     */
+    const allows = (policy.egress || []).filter(r => r.action === 'allow').map(r => r.target)
+    const internal = allows.filter(t => looksInternal(t, cfg.internalSuffixes || [], namespaces))
+    const hasCidr = allows.some(t => t.includes('/'))
+    if (policy.defaultAction === 'deny' && internal.length && !hasCidr) {
+        llm.logger.warn(`egress 完整形式里放行了集群内目标（${internal.join(', ')}）却没有 CIDR 规则：`
+            + 'dns+nft 下可能解析后被丢弃。请补一条如 "10.43.0.0/16" 的 allow 规则')
+    }
+    return policy
 }
 
 /**
@@ -171,4 +278,4 @@ export function assertPolicyCoversBindings(policy, bindings = []) {
     }
 }
 
-export default {buildEgressPolicy, normalizeEgressPolicy, looksInternal, egressPolicyFromConfig, assertPolicyCoversBindings}
+export default {buildEgressPolicy, normalizeEgressPolicy, looksInternal, hostOfUrl, namespaceOfHost, knownInternalNamespaces, egressPolicyFromConfig, assertPolicyCoversBindings}

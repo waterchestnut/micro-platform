@@ -469,6 +469,14 @@ export default {
         egressPolicy: process.env['sandbox_egressPolicy'] ? JSON.parse(process.env['sandbox_egressPolicy']) : null,
         /** 策略回读失败时是否阻断（默认 true：宁可报错也不要"以为收紧了"） */
         egressEnforce: process.env['sandbox_egressEnforce'] !== 'false',
+        /**
+         * 未配 egressPolicy 时是否**拒绝建箱**（E0.6 ③）。默认关。
+         * 不是偷懒：dev 实测 `sandbox_enabled=true` 且 `sandbox_skillExecMode=sandbox`，
+         * 技能真的在沙箱里跑——直接默认拒绝会让一次治理提交变成执行停摆。
+         * 正确顺序是先配 allow+serviceCidrs、验证技能仍可用，再打开这一项；
+         * 关着的期间每次启动都会有一条 allow-all 告警，这是刻意的可见性（见 tools/secretSources 同一手法）。
+         */
+        egressEnforcePolicy: process.env['sandbox_egressEnforcePolicy'] === 'true',
         /** Credential Vault（透明 MITM+凭据注入）。必须与 egressPolicy 同时开，且与池模式互斥 */
         credentialProxyEnabled: process.env['sandbox_credentialProxy'] === 'true',
         /** 默认不启用沙箱执行：与 D2 同一纪律，按环境开 */
