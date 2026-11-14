@@ -636,17 +636,24 @@ export function exhaustedFallback({loopExit = 'break', answerContent = '', answe
  * @param {Function} predicates.isCodeTool 沙箱代码工具判定
  * @returns {{memoryCalls: Object[], overflowCalls: Object[], codeCalls: Object[], otherCalls: Object[]}}
  */
-export function classifyToolCalls(toolCalls = [], {isMemoryTool, isOverflowTool, isCodeTool} = {}) {
+export function classifyToolCalls(toolCalls = [], {isMemoryTool, isOverflowTool, isCodeTool, isPlanTool, isArtifactTool} = {}) {
     const isMem = typeof isMemoryTool === 'function' ? isMemoryTool : () => false
     const isOvf = typeof isOverflowTool === 'function' ? isOverflowTool : () => false
     const isCode = typeof isCodeTool === 'function' ? isCodeTool : () => false
+    /** update_plan（PR-M）：不传谓词就恒 false ⇒ 行为与加它之前逐字一致（默认关时 llmChat 也不会走到） */
+    const isPlan = typeof isPlanTool === 'function' ? isPlanTool : () => false
+    /** save_artifact/read_artifact（PR-H2）：同款兼容——不传谓词恒 false，otherCalls 取反串同样带上它 */
+    const isArtifact = typeof isArtifactTool === 'function' ? isArtifactTool : () => false
 
     const memoryCalls = toolCalls.filter(tc => isMem(tc.function?.name))
     const overflowCalls = toolCalls.filter(tc => isOvf(tc.function?.name))
     const codeCalls = toolCalls.filter(tc => isCode(tc.function?.name))
-    /** 其余走 MCP/Skill 通道；漏判会被整批丢给 mcpToolManager 而找不到实现，所以这里显式取反 */
-    const otherCalls = toolCalls.filter(tc => !isMem(tc.function?.name) && !isOvf(tc.function?.name) && !isCode(tc.function?.name))
-    return {memoryCalls, overflowCalls, codeCalls, otherCalls}
+    const planCalls = toolCalls.filter(tc => isPlan(tc.function?.name))
+    const artifactCalls = toolCalls.filter(tc => isArtifact(tc.function?.name))
+    /** 其余走 MCP/Skill 通道；漏判会被整批丢给 mcpToolManager 而找不到实现，所以这里显式取反（plan/artifact 也必须进这串取反） */
+    const otherCalls = toolCalls.filter(tc =>
+        !isMem(tc.function?.name) && !isOvf(tc.function?.name) && !isCode(tc.function?.name) && !isPlan(tc.function?.name) && !isArtifact(tc.function?.name))
+    return {memoryCalls, overflowCalls, codeCalls, planCalls, artifactCalls, otherCalls}
 }
 
 /**

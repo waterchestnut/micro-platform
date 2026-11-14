@@ -21,6 +21,7 @@ import memoryNamespaceSchema from './memoryNamespaceSchema.js'
 import sessionCheckpointSchema from './sessionCheckpointSchema.js'
 import sandboxUsageSchema from './sandboxUsageSchema.js'
 import llmUsageSchema from './llmUsageSchema.js'
+import artifactSchema from './artifactSchema.js'
 
 const mongodbConfig = llm.config.mongodbConfig
 
@@ -60,3 +61,5 @@ export const SessionCheckpoint = conn.model('SessionCheckpoint', sessionCheckpoi
 export const SandboxUsage = conn.model('SandboxUsage', sandboxUsageSchema, 'sandboxUsage')
 /** §14 自有账本：一行一个 run 的模型用量 */
 export const LlmUsage = conn.model('LlmUsage', llmUsageSchema, 'llmUsage')
+/** PR-H2 产物登记账本：一行一个版本（版本链/幂等键/对账状态都在行上） */
+export const Artifact = conn.model('Artifact', artifactSchema, 'artifact')

@@ -59,9 +59,9 @@ test('sealSegment：形态字段齐全，前端不需要推断任何东西', () 
     assert.equal(s.truncated, false)
 })
 
-test('sealSegment：answer / finalize / cancelled 都不重复存正文，只留计数与指针', () => {
+test('sealSegment：answer / finalize / cancelled / self-check 都不重复存正文，只留计数与指针', () => {
     /** 一轮 finalize 实测 610 字：它的输出就是最终答案，段里再存一份就是同一篇文章占两处 */
-    for (const kind of [SEGMENT_KINDS.ANSWER, SEGMENT_KINDS.FINALIZE, SEGMENT_KINDS.CANCELLED]) {
+    for (const kind of [SEGMENT_KINDS.ANSWER, SEGMENT_KINDS.FINALIZE, SEGMENT_KINDS.CANCELLED, SEGMENT_KINDS.SELF_CHECK]) {
         const s = sealSegment({kind, text: '最终答案全文', tools: kind === SEGMENT_KINDS.FINALIZE ? [] : undefined})
         assert.equal(s.text, '', kind)
         assert.equal(s.ref, 'answer', `${kind} 要告诉读的人去哪儿找全文`)
@@ -72,9 +72,10 @@ test('sealSegment：answer / finalize / cancelled 都不重复存正文，只留
      * 这条把列表**整体**钉住，所以加类别时必须显式改它——这正是钉住的价值：
      * `cancelled` 是 §8.2 要求的新类别，而它的半句随 `progress:'abort'` 一起落进 `message.answer`
      * （dev 实测 `loop-exit` 那轮 answer 存了 53 字），所以它属于"正文在答案里"这一族；
-     * 漏在这里就等于把同一篇半句存两处。
+     * `self-check`（PR-M B2）同理：模型认错后补充的那段是**并进 `message.answer`** 的（决策 (i) append），
+     * 段里再存一份就是同一篇补充占两处。漏在这里 = 重复存正文。
      */
-    assert.deepEqual(BODY_IN_ANSWER, [SEGMENT_KINDS.ANSWER, SEGMENT_KINDS.FINALIZE, SEGMENT_KINDS.CANCELLED])
+    assert.deepEqual(BODY_IN_ANSWER, [SEGMENT_KINDS.ANSWER, SEGMENT_KINDS.FINALIZE, SEGMENT_KINDS.CANCELLED, SEGMENT_KINDS.SELF_CHECK])
 })
 
 test('fitSegmentsVolume：不存正文的段不会被误标成截断', () => {

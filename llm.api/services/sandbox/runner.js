@@ -332,7 +332,8 @@ export function peekSharedSandboxId(conversationCode) {
  */
 export async function getSharedSandbox(params = {}) {
     const key = params.conversationCode || 'default'
-    const client = sandboxClient()
+    /** PR-0.3：trace 随客户端走——这台共享箱上后来的 execd 调用都自动带 trace 头 */
+    const client = sandboxClient(params.trace ? {trace: params.trace} : {})
     const ttlMs = Number(cfg().sharedTtlMs) || 10 * 60 * 1000
     const hit = shared.get(key)
     if (hit && hit.expiresAt > Date.now()) {
@@ -406,6 +407,8 @@ export async function runModelCode(params = {}) {
         conversationCode: params.conversationCode,
         userCode: params.userCode,
         channel: params.channel,
+        /** PR-0.3：这一轮 run_code 的 execd 调用要能被同一 traceId 捞到 */
+        trace: params.trace,
     })
     const ret = await client.runCommand({sandboxId, command, timeoutMs: params.timeoutMs || cfg().execTimeoutMs})
     return {...ret, lang, sandboxId, exitCode: ret.exitCode}

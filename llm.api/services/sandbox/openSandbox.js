@@ -18,6 +18,9 @@
  *    错误信息里必须出现实际用的地址。
  */
 
+import {buildRangeHeader, interpretFileResponse, planRangeSlices, FILE_RESPONSE_KIND} from '../core/artifact/execdRange.js'
+import {traceHeaders} from '../../tools/traceContext.js'
+
 const DEFAULTS = {
     requestTimeoutMs: 20000,
     readyTimeoutMs: 120000,
@@ -33,6 +36,13 @@ const DEFAULTS = {
     egressPort: 18080,
     /** 侧车可能要求 OPENSANDBOX-EGRESS-AUTH；入口解析返回的 headers 无论如何都会一并转发 */
     egressAuthToken: '',
+    /**
+     * PR-0.3 第二块（§line 5807 预告的"改入参形状"就是这里）：run 级 trace 上下文。
+     * 给了 `{traceId, conversationCode}` 就在这台客户端的**每个出站请求**（lifecycle/execd/代理都算）
+     * 带 `x-trace-id`/`x-conversation-id`——沙箱侧日志才能按同一轮回答捞。
+     * 值先过 traceHeaders 的脱敏（入站形状不可信，头注入零容忍）；不给 ⇒ 头**不出现**，旧行为逐字不变。
+     */
+    trace: null,
 }
 
 /** 去掉尾部斜杠，避免拼出 //v1 */
@@ -146,7 +156,16 @@ export function createSandboxClient(options = {}) {
         warn('sandboxConfig.apiKey 未配置，调用 OpenSandbox 一定返回 401')
     }
 
-    async function call(path, {method = 'GET', body, baseUrl, timeoutMs, headers} = {}) {
+    /** trace ⇒ 出站头（脱敏在 traceHeaders 内部；无 trace 返回空对象=头不出现） */
+    function traceHeaderSet(trace) {
+        if (!trace || (!trace.traceId && !trace.messageCode)) return {}
+        return traceHeaders({
+            traceId: String(trace.traceId || trace.messageCode || ''),
+            conversationCode: String(trace.conversationCode || ''),
+        })
+    }
+
+    async function call(path, {method = 'GET', body, baseUrl, timeoutMs, headers, trace} = {}) {
         const url = `${trimSlash(baseUrl || lifecycleBase(cfg))}${path}`
         const controller = new AbortController()
         const timer = setTimeout(() => controller.abort(), Number(timeoutMs || cfg.requestTimeoutMs))
@@ -156,6 +175,7 @@ export function createSandboxClient(options = {}) {
             headers: {
                 'content-type': 'application/json',
                 [cfg.apiKeyHeader]: cfg.apiKey || '',
+                ...traceHeaderSet(trace || cfg.trace),
                 ...(headers || {}),
             },
         }
@@ -184,6 +204,177 @@ export function createSandboxClient(options = {}) {
         } catch {
             return text
         }
+    }
+
+    /**
+     * @description 非抛错支路：拿**原始字节 + 响应头 + 状态码**。`call` 只 `res.text()`，二进制与 Content-Range 都会丢，
+     * 且把 404/416 一律抛成异常——而文件语义里这两个状态是**事实**（不存在/越过 EOF），不是错误，要交给
+     * execdRange/artifactReconcile 的分类判据。传输层失败（超时/不可达）仍抛，与 call 同口径。
+     * @param {String} path 路径（相对 baseUrl）
+     * @param {Object} [opt] {method,headers,baseUrl,timeoutMs,body}
+     * @returns {Promise<{status:Number,ok:Boolean,headers:Object,buffer:Buffer}>} headers 已摊平成小写键
+     */
+    async function callRaw(path, {method = 'GET', headers, baseUrl, timeoutMs, body, trace} = {}) {
+        const url = `${trimSlash(baseUrl || lifecycleBase(cfg))}${path}`
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), Number(timeoutMs || cfg.requestTimeoutMs))
+        const init = {
+            method,
+            signal: controller.signal,
+            headers: {
+                [cfg.apiKeyHeader]: cfg.apiKey || '',
+                ...traceHeaderSet(trace || cfg.trace),
+                ...(headers || {}),
+            },
+        }
+        if (body !== undefined) {
+            init.body = typeof body === 'string' || Buffer.isBuffer(body) || body instanceof Uint8Array ? body : JSON.stringify(body)
+        }
+        let res
+        try {
+            res = await doFetch(url, init)
+        } catch (e) {
+            const why = e && e.name === 'AbortError' ? `超时 ${timeoutMs || cfg.requestTimeoutMs}ms` : (e && e.message ? e.message : String(e))
+            throw new Error(`OpenSandbox(raw) ${method} ${url} 请求失败：${why}`)
+        } finally {
+            clearTimeout(timer)
+        }
+        const buffer = res.status === 204 ? Buffer.alloc(0) : Buffer.from(await res.arrayBuffer().catch(() => new ArrayBuffer(0)))
+        const flat = {}
+        if (res.headers && typeof res.headers.get === 'function') {
+            for (const k of ['content-range', 'content-length', 'content-type']) {
+                const v = res.headers.get(k)
+                if (v != null) flat[k] = v
+            }
+        } else if (res.headers) {
+            for (const [k, v] of Object.entries(res.headers)) flat[String(k).toLowerCase()] = String(v)
+        }
+        return {status: res.status, ok: res.ok !== false && res.status >= 200 && res.status < 300, headers: flat, buffer}
+    }
+
+    /**
+     * @description execd 文件 API 的入口：走 **lifecycle 代理** `{base}/v1/sandboxes/{id}/proxy/{port}/files/...`。
+     * 刻意不走 endpoint() 网关直连——§0.1/probe.mjs 实测刚分配的池沙箱直连会 502（路由传播延迟），代理稳定 200。
+     * @param {String} sandboxId 沙箱标识
+     * @param {Number} [port] execd 端口，缺省取配置
+     * @returns {String} 代理 base（不含 /files 后缀）
+     */
+    function fileProxyBase(sandboxId, port) {
+        const p = Number(port || cfg.execdPort || 44772)
+        return `${lifecycleBase(cfg)}/sandboxes/${encodeURIComponent(sandboxId)}/proxy/${p}`
+    }
+
+    /**
+     * @description 从 files/info 响应里取可靠 size。**dev 实测（2026-11-14 live 探针）响应以路径为键**：
+     * `{"/workspace/a.bin":{path,type,size:13,modified_at,...}}`；也兼容扁平 `{size}` 写法。取不到返回 null，让上层拒拉。
+     */
+    function extractSize(json, path) {
+        if (!json || typeof json !== 'object') return null
+        const ok = (n) => { n = Number(n); return Number.isInteger(n) && n >= 0 ? n : null }
+        const flat = ok(json.size ?? json.fileSize ?? json.length)
+        if (flat !== null) return flat
+        const byPath = json[path] && typeof json[path] === 'object' ? json[path] : null
+        const cand = byPath || Object.values(json).find((v) => v && typeof v === 'object' && (v.size !== undefined || v.fileSize !== undefined))
+        return cand ? ok(cand.size ?? cand.fileSize ?? cand.length) : null
+    }
+
+    /**
+     * @description 取沙箱内文件元数据（size/mtime），intake 分段前的"有多大盘子"读数
+     * @param {Object} params 入参
+     * @param {String} params.sandboxId 沙箱标识
+     * @param {String} params.path 沙箱内绝对路径（与 probe.mjs 同口径，原样进 query）
+     * @param {Number} [params.port] execd 端口
+     * @returns {Promise<{found:Boolean,status:Number,json:Object|null,size:Number|null,rawText:String}>} 404 是事实不是异常：found=false
+     */
+    async function fileInfo({sandboxId, path, port}) {
+        const res = await callRaw(`/files/info?path=${path}`, {baseUrl: fileProxyBase(sandboxId, port)})
+        const rawText = res.buffer.length ? res.buffer.toString('utf8') : ''
+        let json = null
+        if (res.ok) {
+            try { json = JSON.parse(rawText) } catch { /* 不是 JSON 就留给调用方看 rawText */ }
+        }
+        const found = res.status !== 404 && res.ok
+        return {found, status: res.status, json, size: found ? extractSize(json, path) : null, rawText}
+    }
+
+    /**
+     * @description 拉沙箱文件（整取或按 Range 取一段），响应解读复用 execdRange 已证判据
+     * @param {Object} params 入参
+     * @param {String} params.sandboxId 沙箱标识
+     * @param {String} params.path 沙箱内绝对路径
+     * @param {Number} [params.start] 段起始字节（含）；与 end 同时给才发 Range 头
+     * @param {Number} [params.end] 段结束字节（含）
+     * @param {Number} [params.port] execd 端口
+     * @returns {Promise<{bytes:Buffer,verdict:Object}>} verdict = interpretFileResponse 结果（kind/total/complete/bytesMismatch）
+     */
+    async function downloadFile({sandboxId, path, start, end, port}) {
+        const headers = {}
+        let requested = null
+        if (start !== undefined || end !== undefined) {
+            const h = buildRangeHeader(start, end)   // 非法区间在这层就抛，不发出去
+            headers.Range = h
+            requested = {start, end}
+        }
+        const res = await callRaw(`/files/download?path=${path}`, {baseUrl: fileProxyBase(sandboxId, port), headers})
+        const verdict = interpretFileResponse({
+            status: res.status,
+            contentRange: res.headers['content-range'],
+            receivedBytes: res.buffer.length,
+            requested,
+        })
+        return {bytes: res.buffer, verdict}
+    }
+
+    /**
+     * @description 分段流式取整个文件：size→planRangeSlices→逐段拉→每段交给 onSlice 回调（上层可边拿边转投 doc.api，
+     * 不必整文件驻留内存，§9.3 "流式+上限"）。任何一段 mismatch/越界/超限/文件中途消失都**抛**并带已取字节数。
+     * @param {Object} params 入参
+     * @param {String} params.sandboxId 沙箱标识
+     * @param {String} params.path 沙箱内绝对路径
+     * @param {Number} [params.sliceBytes=1048576] 单段上限（§0.1 实测 1MB 段 206+精确长度）
+     * @param {Number} [params.maxTotalBytes] 总上限：intake 的闸门，超限直接拒（别把 llm.api 打爆）
+     * @param {Function} [params.onSlice] (buffer, sliceIndex) 每段回调；async 会被等待
+     * @param {Number} [params.port] execd 端口
+     * @returns {Promise<{total:Number,sliceCount:Number,bytes:Number}>} 校验过完整性后的汇总
+     */
+    async function fetchFileBytes({sandboxId, path, sliceBytes = 1048576, maxTotalBytes, onSlice, port}) {
+        const info = await fileInfo({sandboxId, path, port})
+        if (!info.found) {
+            throw new Error(`intake 目标不存在：${path}（status=${info.status}），不产生任何拉取`)
+        }
+        const total = info.size
+        if (total === null || total === undefined) {
+            throw new Error(`files/info 未给出可靠 size：${JSON.stringify(info.json ?? info.rawText).slice(0, 200)}`)
+        }
+        if (maxTotalBytes !== undefined && total > Number(maxTotalBytes)) {
+            throw new Error(`文件 ${total} 字节超过 intake 上限 ${maxTotalBytes}，拒绝`)
+        }
+        if (total === 0) {
+            if (onSlice) await onSlice(Buffer.alloc(0), 0)
+            return {total: 0, sliceCount: 1, bytes: 0}
+        }
+        const slices = planRangeSlices(total, sliceBytes)
+        let cursor = 0
+        for (const seg of slices) {
+            if (seg.start !== cursor) {
+                throw new Error(`分段计划不连续（编程错误）：期望 ${cursor} 得到 ${seg.start}`)
+            }
+            const {bytes, verdict} = await downloadFile({sandboxId, path, start: seg.start, end: seg.end, port})
+            // 分段请求只该收 206；服务端忽略 Range 回 200 全文，除"本就一段覆盖全文件"外一律拒
+            const wholeFileSeg = seg.start === 0 && seg.end === total - 1
+            if (verdict.kind === FILE_RESPONSE_KIND.FULL && !wholeFileSeg) {
+                throw new Error(`分段 ${seg.start}-${seg.end} 收到 200 全文（服务端忽略 Range），拒绝拼装，已取 ${cursor}/${total}`)
+            }
+            if (verdict.bytesMismatch || verdict.kind === FILE_RESPONSE_KIND.ERROR || verdict.kind === FILE_RESPONSE_KIND.NOT_FOUND || verdict.kind === FILE_RESPONSE_KIND.RANGE_UNSATISFIABLE) {
+                throw new Error(`分段 ${seg.start}-${seg.end} 取回异常（kind=${verdict.kind}, reason=${verdict.reason}），已取 ${cursor}/${total}`)
+            }
+            if (onSlice) await onSlice(bytes, seg.index)
+            cursor += bytes.length
+        }
+        if (cursor !== total) {
+            throw new Error(`分段完成但字节不符：累计 ${cursor} ≠ 宣告总长 ${total}`)
+        }
+        return {total, sliceCount: slices.length, bytes: cursor}
     }
 
     /**
@@ -592,6 +783,7 @@ export function createSandboxClient(options = {}) {
     }
 
     return {cfg, createSandbox, waitReady, waitState, endpoint, runCommand, destroySandbox, health, call,
+        callRaw, fileProxyBase, fileInfo, downloadFile, fetchFileBytes,
         pause, resume, renewExpiration, createSnapshot, waitSnapshotReady, getSnapshot, deleteSnapshot, listSnapshots,
         getNetworkPolicy, replaceNetworkPolicy, egressCall, createCredentialVault, getCredentialVault,
         parseCommandStream}

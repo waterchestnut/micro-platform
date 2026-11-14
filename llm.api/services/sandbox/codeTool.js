@@ -94,6 +94,8 @@ export async function executeCodeTool({toolCall, context = {}} = {}) {
             /** 账本要按人归属，缺了就只能记成匿名 */
             userCode: context.userCode,
             channel: context.channel,
+            /** PR-0.3：本轮 messageCode 就是 traceId——execd 侧日志与聊天流同一个键 */
+            trace: context.messageCode ? {traceId: context.messageCode, conversationCode: context.conversationCode} : undefined,
         })
         return wrap({
             success: ret.exitCode === 0,

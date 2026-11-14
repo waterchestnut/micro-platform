@@ -1156,7 +1156,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                     const codeResults = await Promise.all(codeCalls.map(toolCall =>
                         executeCodeTool({
                             toolCall,
-                            context: {conversationCode, userCode: curUserInfo?.userCode, channel},
+                            context: {conversationCode, userCode: curUserInfo?.userCode, channel, messageCode},
                         })))
 
                     // 执行工具调用（区分 MCP 工具和 Skill 工具）

@@ -37,6 +37,12 @@ export const SEGMENT_KINDS = {
      * 它让"这一轮被打断在何处、当时已说多少字"成为可回放的事实，而不是只剩一条 progress 让人猜。
      */
     CANCELLED: 'cancelled',
+    /**
+     * PR-M 完成性反问（§10.3 B2 决策 (ii)）：模型对"计划仍有未结项、你确定做完了吗"认错并补充的那段。
+     * 补充内容会并进 `message.answer`，所以同 `answer/finalize/cancelled` 走 `BODY_IN_ANSWER`（段里只给计数与指针）。
+     * 它和 `finalize` 分开，是因为语义相反：finalize 是"没答案被迫补"，self-check 是"有答案但被追问后主动补"。
+     */
+    SELF_CHECK: 'self-check',
 }
 
 /** 前端分组用的大类：与 kind 分开，是为了让 kind 可以细化而不影响渲染 */
@@ -96,7 +102,7 @@ export function segmentCategory(kind) {
  * 正文以 `message.answer` 为准的 kind：这些段的全文已经在 answer 里，
  * 段里再存一份就是同一篇文章占两处（实测一轮 finalize 610 字，重复一份就是 610 字白占）。
  */
-export const BODY_IN_ANSWER = [SEGMENT_KINDS.ANSWER, SEGMENT_KINDS.FINALIZE, SEGMENT_KINDS.CANCELLED]
+export const BODY_IN_ANSWER = [SEGMENT_KINDS.ANSWER, SEGMENT_KINDS.FINALIZE, SEGMENT_KINDS.CANCELLED, SEGMENT_KINDS.SELF_CHECK]
 
 /**
  * @description 判断"这次落库要不要补一段 `cancelled`"（纯函数，判决与写分离）
