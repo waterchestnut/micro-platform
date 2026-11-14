@@ -11,6 +11,9 @@ import Tag from '../definition/Tag.js'
 const Schema = mongoose.Schema
 const tools = llm.tools
 
+/** world-time 失效原因词表（D31）。services/core/memory/worldTime.js 有同名集合，测试断言集合相等防漂移 */
+export const WORLD_INVALID_REASONS = ['superseded', 'retired', 'expired']
+
 /**
  * @description 定义memoryAtom的结构
  * @property {String} atomCode 唯一标识
@@ -71,6 +74,25 @@ const memoryAtomSchema = new Schema({
     state: {type: String, default: 'active', description: '生命周期', enum: MemoryStatusEnum.toValues()},
     supersededBy: {type: String, description: '被替代到的原子标识'},
     mergedFrom: {type: [String], description: '合并来源的原子标识'},
+    /**
+     * world-time（D31）：system-time 的 supersededBy/mergedFrom 记"我们何时改口"（认识论），
+     * 这组记"事实在现实里何时成立/失效"（本体论）。边界口径（validFrom 含 / invalidAt 不含）与
+     * 谓词镜像在 services/core/memory/worldTime.js（测试对账两口径）。
+     */
+    validFrom: {type: Date, default: null, description: 'world-time：事实生效起点；null=自写入即有效'},
+    invalidAt: {type: Date, default: null, description: 'world-time：事实失效时刻；null=仍有效'},
+    invalidReason: {
+        type: String,
+        default: '',
+        enum: ['', ...WORLD_INVALID_REASONS],
+        validate: {
+            validator: function (v) {
+                return !v || Boolean(this.invalidAt)
+            },
+            message: 'invalidReason 只能在 invalidAt 已给出时存在',
+        },
+        description: '失效原因：superseded|retired|expired',
+    },
     ragMaterialCode: {type: String, description: '索引侧材料标识'},
     ragSegmentCode: {type: String, description: '索引侧分段标识'},
     indexedAt: {type: Date, description: '最后一次同步索引时间'},
@@ -100,6 +122,8 @@ memoryAtomSchema.index({atomCode: 1}, {unique: true})
 memoryAtomSchema.index({userCode: 1, channel: 1, state: 1, confidence: -1})
 memoryAtomSchema.index({userCode: 1, channel: 1, topic: 1})
 memoryAtomSchema.index({supersededBy: 1})
+/** as-of 查询主路径（D31）：命名空间内按失效位过滤 */
+memoryAtomSchema.index({userCode: 1, channel: 1, invalidAt: 1})
 memoryAtomSchema.index({ragSegmentCode: 1})
 memoryAtomSchema.index({'entities.entityCode': 1})
 memoryAtomSchema.index({'tags.key': 1})

@@ -113,6 +113,74 @@ test('budgetCut 单条超预算时整条丢弃，不截断成正文碎片', () =
   assert.ok(ret.droppedCount >= 1)
 })
 
+/** ===== D22/PR-L 保底名额（§line 988）："规则想不起来"的治法 ===== */
+
+test('minByKind 缺省 ⇒ 决策与旧行为逐条一致（不配置=现网零变化）', () => {
+  const items = [
+    atom({atomCode: 'F1', kind: 'fact', score: 0.9}),
+    atom({atomCode: 'P1', kind: 'preference', score: 0.1}),
+    atom({atomCode: 'F2', kind: 'fact', score: 0.8}),
+  ]
+  const legacy = budgetCut(items, 80, TOK)
+  const explicit = budgetCut(items, 80, TOK, {})
+  assert.deepEqual(explicit.kept.map(i => i.atomCode), legacy.kept.map(i => i.atomCode))
+  assert.equal(explicit.droppedCount, legacy.droppedCount)
+  assert.equal(explicit.reservedDropped, 0)
+  assert.ok(!explicit.kept.some(i => i.reservedSlot))
+})
+
+test('低分 preference 在紧预算下被保底，压过更高分 fact（不参与纯分数竞争）', () => {
+  const F1 = atom({atomCode: 'F1', kind: 'fact', content: '事实一条，说明馆藏编号与检索入口的对应关系。'})
+  const F2 = atom({atomCode: 'F2', kind: 'fact', content: '事实二条，说明开馆时间与闭馆前半小时的提醒。'})
+  const P1 = atom({atomCode: 'P1', kind: 'preference', content: '所有回复用中文。', score: 0.01})
+  const cF1 = budgetCut([F1], 1500, TOK).tokens
+  const cF2 = budgetCut([F2], 1500, TOK).tokens
+  const budget = cF1 + cF2   // 恰好只装得下两条 fact：纯分数序里 P1 必死
+  const noReserve = budgetCut([F1, F2, P1], budget, TOK)
+  assert.ok(!noReserve.kept.some(i => i.atomCode === 'P1'), '对照组失真：纯分数序里 P1 本该被挤掉')
+  const r = budgetCut([F1, F2, P1], budget, TOK, {preference: 1})
+  const keptCodes = r.kept.map(i => i.atomCode)
+  assert.ok(keptCodes.includes('P1'), `保底位必须出现：${JSON.stringify(keptCodes)}`)
+  assert.equal(r.kept.find(i => i.atomCode === 'P1').reservedSlot, true)
+  assert.equal(keptCodes[0], 'P1', '锁位先填：位次不被分数挤后')
+  assert.ok(r.tokens <= budget, '保底不豁免预算：总账仍要守住')
+})
+
+test('minByKind 名额是上限不是指标：该 kind 再高产也只保 N 条，多的回普通竞争', () => {
+  const items = [
+    atom({atomCode: 'P1', kind: 'preference', score: 0.9}),
+    atom({atomCode: 'P2', kind: 'preference', score: 0.8}),
+    atom({atomCode: 'P3', kind: 'preference', score: 0.7}),
+  ]
+  const r = budgetCut(items, 1500, TOK, {preference: 2})
+  assert.equal(r.kept.filter(i => i.reservedSlot).length, 2, '只保前 2（分数降序里该 kind 的前 2）')
+  assert.deepEqual(r.kept.filter(i => i.reservedSlot).map(i => i.atomCode), ['P1', 'P2'])
+})
+
+/** 纯件测绿 ≠ 主链路真的在调它（本档反复立的规矩）：调用点必须把配置接上 */
+test('composeRecall 把 recall.minByKind 传进 budgetCut（源码锚点）', async () => {
+  const src = await import('node:fs').then(fs => fs.readFileSync(new URL('../../../../services/core/memory/recall.js', import.meta.url), 'utf8'))
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+  assert.match(code, /budgetCut\(deduped, budget, tokenizerOptions, cfg\?\.recall\?\.minByKind\)/,
+      'minByKind 没接进 composeRecall ⇒ 配置是死键，保底只活在测试里')
+  assert.match(code, /reservedKept: kept\.filter\(i => i\.reservedSlot\)\.length, reservedDropped/,
+      'stats 不回吐保底结果 ⇒ "想保没保住"在观测上是隐形人')
+})
+
+test('保位次不保预算：保底条自己装不下 ⇒ 如实 reservedDropped，绝不打爆预算', () => {
+  const fat = atom({atomCode: 'P1', kind: 'preference', content: '长'.repeat(400)})
+  const r = budgetCut([atom({atomCode: 'F1', kind: 'fact'}), fat], 60, TOK, {preference: 1})
+  assert.equal(r.kept.some(i => i.atomCode === 'P1'), false, '超预算的保底条不许塞进来')
+  assert.equal(r.reservedDropped, 1, '但必须如实报告"想保没保住"，静默丢弃=统计里永远看不到')
+  assert.ok(r.tokens <= 60)
+})
+
+test('raw 兜底（无 kind）不占约束名额；非法名额（0/负/小数/非数字）忽略', () => {
+  const rawHit = {atomCode: null, content: '近期对话原文一条。', topic: 'recent', score: 0.2, insertTime: NOW, source: 'raw'}
+  const r = budgetCut([rawHit, atom({atomCode: 'P1', kind: 'preference'})], 1500, TOK, {preference: 1, fact: -3, decision: 1.5, entity: 'x'})
+  assert.deepEqual(r.kept.filter(i => i.reservedSlot).map(i => i.atomCode), ['P1'])
+})
+
 test('renderRecall 每条带上可引用的标识与日期', () => {
   const text = renderRecall([atom()])
   assert.ok(text.startsWith('## 已知记忆'))

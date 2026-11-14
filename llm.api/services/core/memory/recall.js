@@ -134,12 +134,43 @@ export async function suppressAgainstManualContext(items, manualContext, dupAt =
  * @param {Object} [options] 计数选项
  * @returns {{kept: Object[], droppedCount: Number, tokens: Number}} 结果
  */
-export function budgetCut(items, budget, options) {
+export function budgetCut(items, budget, options, minByKind) {
+    const need = {}
+    for (const [k, n] of Object.entries(minByKind || {})) {
+        const c = Number(n)
+        if (Number.isInteger(c) && c > 0) need[k] = c
+    }
+    const reserved = []
+    const reservedRefs = new Set()
+    if (Object.keys(need).length) {
+        const taken = {}
+        for (const item of items || []) {
+            const k = item?.kind
+            if (k && need[k] && (taken[k] || 0) < need[k]) {
+                taken[k] = (taken[k] || 0) + 1
+                reserved.push(item)
+                reservedRefs.add(item)
+            }
+        }
+    }
     const kept = []
     let tokens = 0
+    let reservedDropped = 0
+    const costOf = (item) => calcMessagesTokenCount([{role: 'user', content: item.content}], options)
+    // D22/PR-L 保底名额：该类最好的 N 条先锁位（保位次**不豁免预算**，装不下如实报 reservedDropped）
+    for (const item of reserved) {
+        const cost = costOf(item)
+        if (tokens + cost > budget) {
+            reservedDropped++
+            continue
+        }
+        tokens += cost
+        kept.push({...item, tokens: cost, reservedSlot: true})
+    }
     let droppedCount = 0
     for (const item of items || []) {
-        const cost = calcMessagesTokenCount([{role: 'user', content: item.content}], options)
+        if (reservedRefs.has(item)) continue
+        const cost = costOf(item)
         if (tokens + cost > budget) {
             droppedCount++
             continue
@@ -147,7 +178,7 @@ export function budgetCut(items, budget, options) {
         tokens += cost
         kept.push({...item, tokens: cost})
     }
-    return {kept, droppedCount, tokens}
+    return {kept, droppedCount, tokens, reservedDropped}
 }
 
 /**
@@ -261,13 +292,14 @@ export async function composeRecall({
         manualContext,
         cfg?.promotion?.dupSimilarity,
     )
-    const {kept, droppedCount, tokens} = budgetCut(deduped, budget, tokenizerOptions)
+    const {kept, droppedCount, tokens, reservedDropped} = budgetCut(deduped, budget, tokenizerOptions, cfg?.recall?.minByKind)
     return {
         text: renderRecall(kept),
         items: kept,
         stats: {
             atoms: atoms.length, events: events.length, entities: entities.length,
             ranked: ranked.length, kept: kept.length, budgetDropped: droppedCount,
+            reservedKept: kept.filter(i => i.reservedSlot).length, reservedDropped,
             siblingsDropped: ranked.length - collapsed.length, tokens, budget,
         },
     }
