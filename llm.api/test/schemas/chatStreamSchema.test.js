@@ -3,8 +3,11 @@ import * as assert from 'node:assert'
 import Ajv from 'ajv'
 import { chatStreamBodySchema } from '../../schemas/chatStreamSchema.js'
 
-/* 与 app.js 的 ajv customOptions 保持一致，避免测试与运行时判定结果不同 */
-const ajv = new Ajv({removeAdditional: false, coerceTypes: true, allErrors: true})
+/* 与 app.js / server.js 的 ajv customOptions 保持一致，避免测试与运行时判定结果不同。
+ * allowUnionTypes 不能漏：漏了本文件默认严格模式下 `ajv.compile` 会对 chatStreamBodySchema 的
+ * 10 个联合类型字段刷 `use allowUnionTypes` 告警——这正是 §16.1 待办要消的噪音，且测试用的 ajv
+ * 配置和运行时不一致本身就违背本注释的初衷。改这里前先跑 test/conf/appAjvOptions.test.js（它钉三处同步）。 */
+const ajv = new Ajv({removeAdditional: false, coerceTypes: true, allErrors: true, allowUnionTypes: true})
 const validate = ajv.compile(chatStreamBodySchema)
 
 const ok = (body, label) => assert.equal(validate(structuredClone(body)), true, `${label} 应通过: ${JSON.stringify(validate.errors)}`)

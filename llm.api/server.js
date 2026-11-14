@@ -29,6 +29,15 @@ const app = Fastify({
             removeAdditional: false,
             coerceTypes: true,
             allErrors: true,
+            /**
+             * 消除启动期 10 条 `strict mode: use allowUnionTypes ...` 噪音（§16.1 待办 / 实测 dev 双 pod 每次启动都刷）。
+             * `chatStreamSchema` 里 `cache`/`enableThinking`/`memory.*` 等 10 个字段是 `type: ['x','null']` 联合类型，
+             * ajv 严格模式默认对联合类型告警——**只是提醒，不改判定结果**：打开后这些 schema 的校验行为逐字不变，
+             * 只是不再刷这 10 行。为什么值得动这一行：本仓刚给启动日志加了 E0.2 凭据审计、E0.6 出网态势两条**真该被看到的 warn**，
+             * 而每次启动 10 行样板噪音会把它们埋掉（"日志里全是无害告警"正是让人学会忽略告警的最快方式）。
+             * 静掉噪音是为了让治理告警有信号量，不是为了好看。
+             */
+            allowUnionTypes: true,
         },
     },
 })

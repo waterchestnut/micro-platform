@@ -633,4 +633,13 @@ export default {
             textMaxChars: parseInt(process.env['context_constraints_textMaxChars'] || '500'),
         },
     },
+    /**
+     * PR-E0.2 第三步：凭据来源的启动闸门。**默认关**（`secrets_requireEnv` 不为 true ⇒ 只 warn、照常启动）。
+     * 开=true 时，若 `tools/secretSources.js` 清单里的凭据 env 仍有未配置（在用源码字面量兜底），进程**拒绝启动**。
+     * ⚠️ 翻开前置 = 运维已把这些 env 配进 Secret（dev 实测当前 5 个全未配 ⇒ 现在开就是全站起不来）。
+     * 与"删字面量"是同一顺序约束的两端：先配 env，再谈开闸门/删兜底。判据与阻断都在 secretSources.js，这里是开关。
+     */
+    secrets: {
+        requireEnv: process.env['secrets_requireEnv'] === 'true',
+    },
 }
