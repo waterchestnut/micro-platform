@@ -140,6 +140,8 @@ export default async function (fastify, opts) {
          */
         const gateCfg = llm.config.limits?.concurrentRuns || {}
         const messageCodeForGate = request.reqParams?.options?.messageCode || tools.getUUID()
+        /** 全局闸的句柄（开且占位成功才非 null）——finally 成对释放靠它 */
+        let globalGate = null
         if (Number(gateCfg.limit) > 0) {
             const gated = admitRun({
                 messageCode: messageCodeForGate,
@@ -158,6 +160,28 @@ export default async function (fastify, opts) {
                  * 用户看到的是一条空回答而不是一句"请稍后再问"。
                  */
                 return reply.code(r.httpStatus).send(r.body)
+            }
+            /**
+             * 全局闸（PR-0.4）：`global.enabled` 不真值 ⇒ 这里连模块都不加载
+             * （redisClient 是"import 即建连"的模块，绝不能被默认路径拖进来）。
+             * 顺序刻意：**先局部后全局**——局部闸便宜且先削峰；全局拒了要**归还局部位**，
+             * 不然每次全局拒绝都永久吃掉一格本地额度，finally 防的泄漏从这个分支同样成立。
+             */
+            if (gateCfg.global?.enabled === true) {
+                const G = await import('../../../services/core/session/globalRunGate.js')
+                const R = await import('../../../daos/cache/redisClient.js')
+                const store = G.createRedisStore(R.default.client, gateCfg)
+                const g = await G.admitGlobal({
+                    store, messageCode: messageCodeForGate, userCode: request.userInfo.userCode, cfg: gateCfg, logger,
+                })
+                if (!g.admit) {
+                    releaseRun(messageCodeForGate)
+                    const r = g.response
+                    Object.entries(r.headers || {}).forEach(([k, v]) => reply.header(k, v))
+                    logger.warn(`全局闸拒绝: reason=${g.decision.reason}, active=${g.decision.active}, limit=${g.decision.limit}, userCode=${request.userInfo.userCode}, conversationCode=${request.reqParams?.conversationCode}`)
+                    return reply.code(r.httpStatus).send(r.body)
+                }
+                globalGate = {mod: G, store}
             }
         }
 
@@ -385,6 +409,12 @@ export default async function (fastify, opts) {
              */
             if (Number(gateCfg.limit) > 0) {
                 releaseRun(messageCodeForGate)
+            }
+            /** 局部位与全局位**成对归还**（同一条"少一次注销=闸永久少一格"的保险，只是另一张账本） */
+            if (globalGate) {
+                await globalGate.mod.releaseGlobal({
+                    store: globalGate.store, messageCode: messageCodeForGate, userCode: request.userInfo.userCode, logger,
+                })
             }
             /**
              * 摘掉落档函数**必须放在闸的 if 外面**：放进 `if (limit > 0)` 就是重复同一个错——
