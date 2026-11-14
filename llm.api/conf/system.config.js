@@ -269,13 +269,25 @@ export default {
          *
          * 三条口径写在 `services/core/session/runGate.js` 文件头，最容易读错的一条：
          * **这是单进程闸**——PM2 每 worker 各数自己的，集群实际天花板 ≈ `limit × worker 数`；
-         * 要全局闸得靠 redis 计数或 PR-C 的 Streams，别把这里的数字当全局上限用。
+         * 全局上限走下面的 `global`（redis Lua 原子计数，跨 worker 一份账），别把这里的数字当全局上限用。
          */
         concurrentRuns: {
             limit: parseInt(process.env['limits_concurrentRuns'] || '0'),
             perUserLimit: parseInt(process.env['limits_concurrentRunsPerUser'] || '0'),
             /** 拒的时候建议客户端多久后再试（会折算成 `Retry-After` 秒） */
             retryAfterMs: parseInt(process.env['limits_concurrentRunsRetryAfterMs'] || '1500'),
+            /**
+             * 全局闸（PR-0.4 剩余项，判据/执行在 `session/globalRunGate.js`）。默认关：
+             * 关 ⇒ 一次 redis 调用都不发（同"plan 关着连 seed 查询都不发"的取向）。
+             * 上限刻意**不在这配**——P-8 实测是单 pod 口径、relay 渠道余量归 P-13，
+             * 全局 limit 复用本块的 `limit`/`perUserLimit`（开全局就是把同一数字换成全局账本执行，
+             * 两套上限并存而不换算，比偷偷乘 worker 数诚实）。
+             */
+            global: {
+                enabled: process.env['limits_concurrentRunsGlobal'] === 'true',
+                /** 死账清理线：超过这个时长还没 release 的登记按崩溃残骸移除（崩溃自愈靠它，不是靠 TTL） */
+                maxRunAgeMs: parseInt(process.env['limits_concurrentRunsGlobalMaxRunAgeMs'] || '900000'),
+            },
         },
         /**
          * 同一会话"上一轮还没结束"的检测（P5）。与上面的并发闸口径不同：闸看总量/每人数（默认关、
@@ -567,5 +579,58 @@ export default {
         grpcHost: process.env['TRANSFORM_GRPC'],
         /** 最大传送数据：256M */
         maxMessageLength: 256 * 1024 * 1024,
+    },
+    /** ===== 以下配置块自源仓逐字抽取（搬运批 2b）：env 驱动、默认全关 ⇒ 无配置时零行为变化 ===== */
+    /**
+     * 计划外置（PR-M，§10/D25）。**默认全关**：不开 ⇒ `update_plan` 工具不下发、
+     * recitation 不注入、计划不落档，主循环行为与加它之前逐字一致。
+     * 判据全在 `session/planState.js`/`planTool.js`/`planAssembly.js`（纯函数、离线可测），
+     * 这里只给"开关与预算"。开之前必须先在 relay 上验 recitation 的 role 是否被认（见 planAssembly 的 ⚠️）。
+     */
+    planConfig: {
+        /** 是否下发 update_plan 并启用 recitation（默认关） */
+        enabled: process.env['plan_enabled'] === 'true',
+        /** recitation 注入文本的字符软上限（超了整项丢弃并声明"另有 N 项未显示"） */
+        recitationMaxChars: parseInt(process.env['plan_recitationMaxChars'] || '1200'),
+    },
+    /**
+     * run 退出前的收尾（PR-M 完成性反问接这里）。`selfCheck` 默认关：
+     * 关 ⇒ 模型自称做完就照常结束；开 ⇒ 若计划仍有未结项，复用无工具收尾那条路追加一次反问。
+     */
+    finalize: {
+        selfCheck: process.env['finalize_selfCheck'] === 'true',
+    },
+    /** doc.api 文件服务的配置（PR-H2 产物转投用；契约见 services/core/artifact/docApiUpload 头注释） */
+    docApiConfig: {
+        /** 基地址（对外域名，产下载 URL 用） */
+        baseUrl: process.env['docApiConfig_baseUrl'] || 'http://localhost:12004',
+        /** 内网基地址：与 ragStore 同款直连，需自带 user-info 头 */
+        baseIntranetUrl: process.env['docApiConfig_baseIntranetUrl'] || 'http://doc-api-http',
+        /** 单次请求超时（上传大文件比检索长得多） */
+        timeoutMs: parseInt(process.env['docApiConfig_timeoutMs'] || 120000),
+    },
+    /** 产物入库（save_artifact → intake）的配置；默认关，同 plan_enabled 的"先可见后按需开" */
+    artifactConfig: {
+        enabled: process.env['artifact_enabled'] === 'true',
+        /** 单文件字节上限（intake 的 maxTotalBytes 闸门；默认 64MB） */
+        maxFileBytes: parseInt(process.env['artifact_maxFileBytes'] || 64 * 1024 * 1024),
+        /** 分段拉取的单段上限（§0.1 实测 1MB 段精确） */
+        sliceBytes: parseInt(process.env['artifact_sliceBytes'] || 1048576),
+        /** 展示名长度上限 */
+        maxNameChars: parseInt(process.env['artifact_maxNameChars'] || 120),
+    },
+    /**
+     * PR-T0 上下文治理（D22）。判据全在 `context/constraints.js`（纯函数、离线可测），这里只给开关与槽预算。
+     * 收益按 §16.4 P-2b 裁定记为**治理**（约束在压缩后存活），与缓存命中率无关；缓存腿等 P-13，不在此。
+     */
+    contextConfig: {
+        constraints: {
+            /** 默认关（同 plan_enabled 取向）：装配侧读到开才注入槽 */
+            enabled: process.env['context_constraints_enabled'] === 'true',
+            /** 槽的字符软上限：装不下 ⇒ 整条延后并如实报告，**绝不半截截断约束文本** */
+            slotMaxChars: parseInt(process.env['context_constraints_slotMaxChars'] || '1200'),
+            /** 单条约束文本上限（授权时把关，别让一条撑爆槽） */
+            textMaxChars: parseInt(process.env['context_constraints_textMaxChars'] || '500'),
+        },
     },
 }
