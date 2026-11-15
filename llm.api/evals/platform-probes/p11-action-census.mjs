@@ -29,20 +29,16 @@ const {Message} = await import('file:///D:/workspace/xxzx/xxzx.llm.api/src/daos/
 
 const since = new Date(Date.now() - DAYS * 86400000)
 /**
- * 排除合成流量（普查的有效性判据）：评测/探针/等闸脚本的会话前缀全在名单里——
- * 门的暴露面要给**自然流量**设计规则表；把自己的压测算进去，第一层词表会照着跑批形状长。
- * 前缀清单与本仓探针/跑批实际写入的 conversationCode 对账（新增探针要同步进来，
- * 名单与流量对不上时"排除率"会在报告里显形，不静默）。
+ * 排除合成流量（普查的有效性判据）：名单的权威在 evals/gate/sampleCorpus（单源，
+ * 本件与 classifier-cost 都是它的消费者）；排除数进报告，名单过旧会以数字显形。
  */
-const SYNTH_PREFIXES = ['eval-golden-', 'art-e2e-', 'ctl-e2e-', 'ask-e2e-', 'gate3-check-', 'gate4-check-',
-    'h1-args-', 'prh2-probe', 'aab-', 'toktest-', 'p11-', 'plan-e2e-', 'resume-', 'seg-', 'b2-']
+const {isSynthetic} = await import('../gate/sampleCorpus.mjs')
 const rows0 = await Message.find({
     insertTime: {$gte: since},
     progress: 'finish',
     'extInfo.toolCalls.0': {$exists: true},
 }, {'extInfo.toolCalls': 1, conversationCode: 1, insertTime: 1}).sort({insertTime: -1}).limit(LIMIT).lean()
-const isSynth = (code) => SYNTH_PREFIXES.some((p) => String(code || '').startsWith(p))
-const rows = rows0.filter((r) => !isSynth(r.conversationCode))
+const rows = rows0.filter((r) => !isSynthetic(r.conversationCode))
 const excluded = rows0.length - rows.length
 
 /**

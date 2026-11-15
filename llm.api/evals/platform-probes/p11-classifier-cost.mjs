@@ -36,16 +36,15 @@ await import('file:///D:/workspace/xxzx/xxzx.llm.api/src/init.js')
 const {Message} = await import('file:///D:/workspace/xxzx/xxzx.llm.api/src/daos/core/schema/index.js')
 const modelsCfg = llm.config.models || {}
 
-// —— 样本：真实自然工具调用（排除合成前缀，名单与 census 同源） ——
-const SYNTH_PREFIXES = ['eval-golden-', 'art-e2e-', 'ctl-e2e-', 'ask-e2e-', 'gate3-check-', 'gate4-check-',
-    'h1-args-', 'prh2-probe', 'aab-', 'toktest-', 'p11-', 'plan-e2e-', 'resume-', 'seg-', 'b2-']
+// —— 样本：真实自然工具调用（排除名单的权威在 evals/gate/sampleCorpus，与 census 同源） ——
+const {isSynthetic} = await import('../gate/sampleCorpus.mjs')
 const since = new Date(Date.now() - DAYS * 86400000)
 const rows = await Message.find({
     insertTime: {$gte: since}, progress: 'finish', 'extInfo.toolCalls.0': {$exists: true},
 }, {'extInfo.toolCalls': 1, conversationCode: 1}).sort({insertTime: -1}).limit(3000).lean()
 const samples = []
 for (const r of rows) {
-    if (SYNTH_PREFIXES.some((p) => String(r.conversationCode || '').startsWith(p))) {
+    if (isSynthetic(r.conversationCode)) {
         continue
     }
     for (const tc of r.extInfo.toolCalls || []) {
