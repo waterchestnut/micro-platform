@@ -75,9 +75,13 @@ describe('3 await-human 走既有 MRTR 管道', () => {
 })
 
 describe('4 档案面两截链', () => {
-    test('persistTurn 生产 gate 字段且白名单枚举（缺任一半=静默丢，两截链守卫已双保险，这里钉存在性）', () => {
+    test('生产了 gate 字段且白名单枚举（缺任一半=静默丢，两截链守卫已双保险，这里钉存在性）', () => {
         assert.ok(src.includes('gate: gateLedger.decisions.length ?'), '生产侧失踪=extInfo.gate 恒缺，观察档成空承诺')
         assert.ok(src.includes('gate: options.gate,'), '白名单失踪=bundle 算了也丢（b397822 的同款事故形状）')
+    })
+    test('账本逐条带 raw（观察周要靠 raw vs verdict 归因"分类器原判 vs 外包纠正"——开窗首读抓到的缺字段）', () => {
+        assert.ok(src.includes('raw: r.raw || undefined'),
+            'decisions 不带 raw 时，overrode=true 只知道被纠正、不知道被纠了什么——观察档的核心产出瘸一条腿（2026-11-15 gate-observe G3 实录）')
     })
     test('账本有界（40）：观察档不许成为无界内存出口', () => {
         assert.ok(src.includes('gateLedger.decisions.length < 40'))

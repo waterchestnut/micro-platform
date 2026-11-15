@@ -1449,7 +1449,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             }
             if (gateLedger.decisions.length < 40) {
                 gateLedger.decisions.push({tool: tc?.function?.name, source: r.source, verdict: r.verdict,
-                    applied, rule: r.rule || undefined, overrode: r.overrode || undefined})
+                    applied, rule: r.rule || undefined, overrode: r.overrode || undefined, raw: r.raw || undefined})
             }
         }
         return {passed, blocked}
