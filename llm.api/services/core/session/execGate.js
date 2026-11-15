@@ -224,6 +224,60 @@ export function decideLayer2(action, classifierVerdict = '') {
 }
 
 /**
+ * @description 四层门的编排（判据面的最后一块装配图；主循环接线刀拿它当裁决核心）
+ * @param {Object} p 参数
+ * @param {Object} p.action classifyAction 的产物
+ * @param {Object} [p.rules] 层 1 规则（缺省=SEED_GATE_RULES；运维可换）
+ * @param {Function} [p.classifyFn] 分类器调用 (action)=>Promise<'allow'|'block'|'escalate'|其它>；
+ *        **缺失/抛错一律按 unparsable**——没配模型不等于没门，保守方向走 escalate 语义
+ * @param {String[]} [p.recentVerdicts] 本 run 门裁决尾序列（'escalate' 计数触发保险丝）
+ * @param {Number} [p.gateDecisionsThisRun] 本 run 已做的门决策数
+ * @param {Object} [p.budget] {consecutive=3, perRunBudget=20}（§19 草图同值）
+ * @param {Boolean} [p.askAvailable] 人工通道（ask 挂起）是否可用
+ * @returns {Promise<{verdict:String, source:String, reason:String, rule?:String|null, overrode?:Boolean, raw?:String}>}
+ *          verdict: allow|block|await-human；source: layer1|layer2|fuse|no-classifier
+ *
+ * 顺序即 D18：层 1 终局优先（不花分类器的钱）；未到终局先过保险丝（预算满/连续 escalate ⇒ 直接问人，
+ * 不再砸模型）；然后层 2 = 模型+外包。**"人工不可达"的兜底是 block 不是放行**，reason 如实写
+ * human-unavailable——这是过渡语义，接线刀把 await_input 打通后 askAvailable 恒真、该分支只在该挂没挂时显形。
+ * observe/enforce 不在这里——裁决纯度和行动开关分离，mode 归接线方。
+ */
+export async function decideGate({action, rules = SEED_GATE_RULES, classifyFn, recentVerdicts = [], gateDecisionsThisRun = 0, budget = {}, askAvailable = false} = {}) {
+    const l1 = decideLayer1(action, rules)
+    if (l1.final) {
+        return {verdict: l1.verdict === 'allow' ? 'allow' : 'block', source: 'layer1', reason: l1.reason, rule: l1.matchedRule}
+    }
+    const fuse = decideGateFallback({
+        recentVerdicts,
+        consecutive: budget.consecutive ?? 3,
+        perRunBudget: budget.perRunBudget ?? 20,
+        gateDecisionsThisRun,
+    })
+    if (fuse.route === 'human') {
+        return askAvailable
+            ? {verdict: 'await-human', source: 'fuse', reason: fuse.reason}
+            : {verdict: 'block', source: 'fuse', reason: `${fuse.reason};human-unavailable`}
+    }
+    let raw = 'unparsable'
+    if (typeof classifyFn === 'function') {
+        try {
+            raw = String(await classifyFn(action) ?? '')
+        } catch {
+            raw = 'unparsable'
+        }
+    }
+    const l2 = decideLayer2(action, raw)
+    const source = typeof classifyFn === 'function' ? 'layer2' : 'no-classifier'
+    if (l2.verdict === 'escalate' && !askAvailable) {
+        return {verdict: 'block', source, reason: `${l2.reason};human-unavailable`, overrode: l2.overrode, raw}
+    }
+    return {
+        verdict: l2.verdict === 'escalate' ? 'await-human' : l2.verdict,
+        source, reason: l2.reason, overrode: l2.overrode, raw,
+    }
+}
+
+/**
  * @description 第 2 层分类器的版本化 prompt——**权威住判据家**（2026-11-15 收编：这句话在
  * cost 探针与评测集已各有一份拷贝，第三次出生前掐掉；词表/prompt/动词族同一族规矩）。
  * 版本纪律：改这句话=改分类器行为，必须同步重跑 classifierBench 的 live 分。

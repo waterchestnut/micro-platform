@@ -675,6 +675,17 @@ export default {
         recitationMaxChars: parseInt(process.env['plan_recitationMaxChars'] || '1200'),
     },
     /**
+     * PR-I 执行门（判据在 `session/execGate.js`；D18）。两道默认关：
+     * enabled 关=主循环不咨询；enforce 关=观察模式（裁决照跑不施加）。分类器=P-11 选型档。
+     */
+    gateConfig: {
+        enabled: process.env['gate_enabled'] === 'true',
+        enforce: process.env['gate_enforce'] === 'true',
+        classifierModel: process.env['gate_classifierModel'] || 'relay_qwen_low',
+        consecutive: Number(process.env['gate_consecutive']) || 3,
+        perRunBudget: Number(process.env['gate_perRunBudget']) || 20,
+    },
+    /**
      * run 退出前的收尾（PR-M 完成性反问接这里）。`selfCheck` 默认关：
      * 关 ⇒ 模型自称做完就照常结束；开 ⇒ 若计划仍有未结项，复用无工具收尾那条路追加一次反问。
      */

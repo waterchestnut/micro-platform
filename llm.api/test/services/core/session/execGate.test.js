@@ -14,7 +14,7 @@
 import {test, describe} from 'node:test'
 import * as assert from 'node:assert'
 
-const {GATE_SURFACES, VERB_FAMILIES, classifyAction, matchRule, decideLayer1, decideGateFallback} =
+const {GATE_SURFACES, VERB_FAMILIES, classifyAction, matchRule, decideLayer1, decideGateFallback, decideGate} =
     await import('../../../../services/core/session/execGate.js')
 
 describe('0 词表单源（execGate 是普查与门的共同权威）', () => {
@@ -145,5 +145,52 @@ describe('3 decideGateFallback：第 4 层保险丝（§19 fallback:consecutive/
     })
     test('recentVerdicts 非数组不炸（兜底判据自己先不能是故障源）', () => {
         assert.equal(decideGateFallback({recentVerdicts: null}).route, 'classifier')
+    })
+})
+
+describe('5 decideGate 编排：顺序的钱要花在刀刃上', () => {
+    const mkClassify = (verdict) => {
+        const calls = []
+        return {fn: async (action) => { calls.push(action.toolName); return verdict }, calls}
+    }
+    test('层 1 命中即终局：分类器一次都不调（能白名单解决的不砸模型钱）', async () => {
+        const {fn, calls} = mkClassify('block')
+        const action = classifyAction({toolName: 'search_web', argsText: '{"query":"x"}'})
+        const r = await decideGate({action, classifyFn: fn, askAvailable: true})
+        assert.deepEqual({verdict: r.verdict, source: r.source}, {verdict: 'allow', source: 'layer1'})
+        assert.equal(calls.length, 0)
+    })
+    test('保险丝先于模型：预算满时连分类器都不问', async () => {
+        const {fn, calls} = mkClassify('allow')
+        const action = classifyAction({toolName: 'run_code', argsText: '{"code":"curl http://x"}'})
+        const r = await decideGate({action, classifyFn: fn, recentVerdicts: ['escalate', 'escalate', 'escalate'], askAvailable: true})
+        assert.equal(r.source, 'fuse')
+        assert.equal(r.verdict, 'await-human')
+        assert.equal(calls.length, 0, '预算耗尽还砸模型=成本闸形同虚设')
+    })
+    test('层 2 unknown+放行 ⇒ 外包纠正；人工可达=await-human，不可达=block 带 human-unavailable', async () => {
+        const action = classifyAction({toolName: 'brand_new_tool', argsText: '{}'})
+        const {fn} = mkClassify('allow')
+        const a = await decideGate({action, classifyFn: fn, askAvailable: true})
+        assert.deepEqual({v: a.verdict, s: a.source, o: a.overrode}, {v: 'await-human', s: 'layer2', o: true})
+        const b = await decideGate({action, classifyFn: fn, askAvailable: false})
+        assert.equal(b.verdict, 'block')
+        assert.match(b.reason, /human-unavailable/, '人工够不到时保守 block 并把原因写进 reason——过渡语义要能自我显形')
+    })
+    test('没配分类器：unparsable 走 escalate 语义，绝不因"没模型"放行', async () => {
+        const action = classifyAction({toolName: 'run_code', argsText: '{"code":"pip install x"}'})
+        const r = await decideGate({action, askAvailable: true})
+        assert.equal(r.source, 'no-classifier')
+        assert.equal(r.verdict, 'await-human')
+    })
+    test('classifyFn 抛错同 unparsable（分类器故障=仪器的故障，不是动作的赦免）', async () => {
+        const action = classifyAction({toolName: 'memory_get', argsText: '{"atomCode":"a"}'})
+        // memory_get 在层 1 allow（读-only）——先确认层1命中不走分类器
+        const r1 = await decideGate({action, classifyFn: async () => { throw new Error('炸') }, askAvailable: true})
+        assert.equal(r1.source, 'layer1')
+        const act2 = classifyAction({toolName: 'run_code', argsText: '{"code":"x"}'})
+        const r2 = await decideGate({action: act2, classifyFn: async () => { throw new Error('炸') }, askAvailable: false})
+        assert.equal(r2.verdict, 'block')
+        assert.match(r2.reason, /human-unavailable/)
     })
 })
