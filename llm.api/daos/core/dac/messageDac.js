@@ -51,6 +51,26 @@ export class MessageDac extends BaseDac {
         }
         return params
     }
+/**
+     * @description 取本会话**最近一条**已落库消息的 `extInfo`（只投影 `extInfo.plan`，不拉整个 extInfo）
+     * @author xianyang
+     * @param {String} conversationCode 会话标识
+     * @returns {Promise<Object|null>} 该消息的 extInfo（只含 plan 字段），无历史时 null
+     *
+     * 服务于 PR-M B1 跨轮 recitation：新一轮开始时，从上一轮档案里把计划捡回来。
+     * 三条刻意的约束，都是为了"这点用处不值得多扛一份现网风险"：
+     * - 投影只取 `extInfo.plan`：`extInfo` 里有 segments/toolOverflows 这类大块（`getMessages` 默认 `extInfo:0` 就是把它们挡在上下文外），
+     *   不能为了读一个计划把整坨拉进内存；
+     * - 只取最近一条（`sort:{insertTime:-1}` + limit1 语义）：跨轮只需要"上一轮结束时的计划"，不是事件流；
+     * - **调用方必须自己按 `plan_enabled` 门控**：关掉时根本不该发这次查询（见 llmChat 里包在 `if (planOn)` 内）。
+     */
+    async getLatestExtInfoPlan(conversationCode) {
+        if (!conversationCode) {
+            return null
+        }
+        const row = await this.getOneByFilter({conversationCode}, {'extInfo.plan': 1}, {sort: {insertTime: -1}})
+        return row?.extInfo || null
+    }
 }
 
 export default new MessageDac(Message)

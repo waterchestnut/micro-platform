@@ -99,8 +99,14 @@ export function classifyAction({toolName, argsText} = {}) {
             }
         }
     }
-    return {toolName: name, surface: GATE_SURFACES[name] || 'unknown', families, malformed}
+    /** text 随 action 走（分类器消费的正文——**必须与评测集打分用的是同一形状**：
+     *  bench 验的是 `toolName + argsText` 原文，生产若喂 surface/families 摘要，
+     *  那个 25/27 就是给另一个分类器打的（两处一份输入理解分家）。截断位见 GATE_ARGS_MAX） */
+    return {toolName: name, surface: GATE_SURFACES[name] || 'unknown', families, malformed, text: text.slice(0, GATE_ARGS_MAX)}
 }
+
+/** 分类器入参正文上限（评测集与生产分类器共用；比存档 toolArgsChars 更小的门内预算——只判危险不需全文） */
+export const GATE_ARGS_MAX = 1200
 
 /**
  * @description 单条规则命中判定（tools/surfaces/families 三条件 AND；空条件=any）

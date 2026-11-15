@@ -29,6 +29,8 @@ import {recallForPrompt, applyRecallToQuery} from './memory/recall.js'
 import {buildMemoryTools, executeMemoryTool, isMemoryTool, memoryToolsEnabled} from './memory/tools.js'
 import {buildOverflowTools, isOverflowTool, readOverflow, OVERFLOW_TOOL_NAME} from '../../tools/overflow.js'
 import {buildCodeTools, isCodeTool, executeCodeTool, codeToolEnabled} from '../sandbox/codeTool.js'
+import {classifyAction as gateClassifyAction, decideGate, SEED_GATE_RULES} from './session/execGate.js'
+import {makeGateClassifyFn} from './session/gateClassifier.js'
 import {buildPlanTools, isPlanTool, planToolEnabled, executePlanTool} from './session/planTool.js'
 import {buildSaveArtifactTools, isSaveArtifactTool, saveArtifactToolEnabled, executeSaveArtifactTool} from './artifact/saveArtifactTool.js'
 import {buildReadArtifactTools, isReadArtifactTool, executeReadArtifactTool} from './artifact/readArtifactTool.js'
@@ -575,6 +577,17 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     const toolOverflows = []
     /** PR-D commit 2：本轮实际注入过的插话（含注入时刻）。没注入过 ⇒ 落档 null 而不是空壳数组（同 plan 的裁定） */
     const steeringsArchive = []
+    /**
+     * PR-I 执行门（D18 四层门；判据与编排纯件在 `session/execGate.js`）。
+     * gate_enabled 默认关 ⇒ 关着时一次都不咨询（与 plan/steer/ask 同款"关着不可见"，零成本零延迟）；
+     * enforce 关而 enabled 开 ⇒ 观察模式（裁决照跑、全档落 extInfo.gate，但一个都不拦）。
+     * gateLedger：decisions=档案面（界 40）；verdicts=保险丝尾计数；approvals=人工裁决计数。
+     */
+    const gateCfg = config.gateConfig || {}
+    const gateOn = gateCfg.enabled === true
+    const gateEnforce = gateCfg.enforce === true
+    const gateLedger = {decisions: [], verdicts: [], approvals: 0}
+    let gateClassifyFn = null
 
     /**
      * 过程分段账本（PR-B）：把"被 reset 抹掉的中间正文"留住。
@@ -1109,6 +1122,12 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
              * null=本轮没有 ask 投递（同 steerings 的"不是空壳"裁定）。
              */
             awaitings: options.answerRouter?.ackSnapshot?.()?.length ? options.answerRouter.ackSnapshot() : null,
+            /**
+             * PR-I 门观察账（档案面）：enabled/enforce 位 + 有界 40 条裁决。null=门没开过（不是空壳，
+             * 同 steerings/awaitings 语义）。观察模式下这是它存在的全部理由——plans 读"如果 enforce 会拦什么"。
+             */
+            gate: gateLedger.decisions.length ? {enabled: gateOn, enforce: gateEnforce, decisions: gateLedger.decisions, approvals: gateLedger.approvals} : null,
+
             /** 异常路径的归因（`describeError` 的 kind:message）；正常路径为 null */
             error: errorMessage || null,
             /**
@@ -1382,6 +1401,100 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     }
 
     /**
+     * PR-I 门筛查（接线刀的单点）：除 ask_user 外全部动作进门——读-only 面也一律走层 1
+     * （规则短路是层 1 的职责，这里不预设哪个面"肯定安全"）。观察模式下三态全部放行只记账——
+     * enforce 施加与否是接线方的行动开关，裁决纯度归编排（decideGate）。
+     */
+    async function gateScreenCalls(calls) {
+        const passed = []
+        const blocked = []
+        for (const tc of calls) {
+            const action = gateClassifyAction({toolName: tc?.function?.name, argsText: tc?.function?.arguments})
+            if (!gateClassifyFn) {
+                gateClassifyFn = makeGateClassifyFn({modelKey: gateCfg.classifierModel || 'relay_qwen_low', modelsCfg: config.models})
+            }
+            const r = await decideGate({
+                action,
+                rules: gateCfg.rules || SEED_GATE_RULES,
+                classifyFn: gateClassifyFn,
+                recentVerdicts: gateLedger.verdicts,
+                gateDecisionsThisRun: gateLedger.decisions.length,
+                budget: {consecutive: gateCfg.consecutive, perRunBudget: gateCfg.perRunBudget},
+                askAvailable: askOn && !!options.answerRouter,
+            })
+            gateLedger.verdicts.push(r.verdict === 'await-human' ? 'escalate' : r.verdict)
+            let applied
+            if (!gateEnforce) {
+                applied = 'observed:' + r.verdict
+                passed.push(tc)
+            } else if (r.verdict === 'allow') {
+                applied = 'allow'
+                passed.push(tc)
+            } else if (r.verdict === 'block') {
+                applied = 'blocked'
+                blocked.push({tool_call_id: tc?.id, role: 'tool',
+                    content: JSON.stringify({success: false, gated: true,
+                        error: `执行门拦截（${r.source}:${r.reason}），请换安全路径或向用户说明`})})
+            } else {
+                const ok = await gateAwaitApproval(tc, r)
+                if (ok) {
+                    applied = 'approved'
+                    passed.push(tc)
+                } else {
+                    applied = 'human-deny'
+                    blocked.push({tool_call_id: tc?.id, role: 'tool',
+                        content: JSON.stringify({success: false, gated: true,
+                            error: `人工裁决未放行执行（门判定：${r.reason}）`})})
+                }
+            }
+            if (gateLedger.decisions.length < 40) {
+                gateLedger.decisions.push({tool: tc?.function?.name, source: r.source, verdict: r.verdict,
+                    applied, rule: r.rule || undefined, overrode: r.overrode || undefined})
+            }
+        }
+        return {passed, blocked}
+    }
+
+    /**
+     * await-human 复用 awaitAskUser 的 MRTR 管道（合成一道 approval 题）：
+     * kind:'approval' 走 §2F.4 已裁的既有 admission（只接受发起人）——审批政策不为门另开第二条路；
+     * askId 前缀 gate- 让档案可分辨这是门确认而非用户提问。ask 未开时到不了这里
+     * （decideGate 的 askAvailable=false 已给 block;human-unavailable——过渡语义自显形）。
+     */
+    async function gateAwaitApproval(toolCall, r) {
+        gateLedger.approvals++
+        const synth = {
+            id: `gate-${messageCode}-${gateLedger.approvals}`,
+            function: {
+                name: 'ask_user',
+                arguments: JSON.stringify({
+                    kind: 'approval',
+                    inputRequests: [{mode: 'form',
+                        message: `执行门：工具 ${toolCall?.function?.name} 需人工裁决（${r.source}:${r.reason}）。允许本次执行吗？`,
+                        requestedSchema: {type: 'object', properties: {gate: {type: 'string', enum: ['allow', 'deny']}}, required: ['gate']}}],
+                }),
+            },
+        }
+        const msg = await awaitAskUser({
+            toolCall: synth, router: options.answerRouter, secret: answerSecret(),
+            askConfig: askCfg, checkpointSeq: iterationCount, signal: options.signal,
+            streamEvent: (type, payload) => {
+                if (options.streamCallback) {
+                    try {
+                        options.streamCallback(JSON.stringify(payload), type)
+                    } catch { /* 同 ask 主站点：事件失败不反噬挂起，账在 router */ }
+                }
+            },
+        })
+        try {
+            const c = JSON.parse(msg.content)
+            return c.resultType === 'complete' && c.inputResponses?.gate === 'allow'
+        } catch {
+            return false
+        }
+    }
+
+    /**
      * 主循环与其收尾（含退出方式判定、无工具收尾补落、落库与缓存）整体受 try/catch 保护。
      * 用整段包裹而不是逐处 try：需要兜住的抛点有 create、流消费、四类工具分派、技能检测、预算压缩等多处，
      * 逐个包必然会漏，而漏掉的那个恰好会让 persistTurn 被跳过。
@@ -1632,9 +1745,21 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                     // 添加助手的消息到对话历史（包含工具调用请求）
                     messages.push(buildAssistantToolCallMessage(toolCalls))
 
+                    /**
+                     * PR-I 门 choke point：分派前筛查。ask_user 豁免——escalate 的人工通道正是 ask 本身，
+                     * 给它再过门是循环等待（豁免的理由是循环性，不是"它安全"）。
+                     * 关闭时（!gateOn）一次调用都不做，连筛查函数都不进——"关着不可见"的实现形态。
+                     */
+                    let gateBlockedResults = []
+                    let gatePassedCalls = toolCalls
+                    if (gateOn) {
+                        const screened = await gateScreenCalls(askOn ? toolCalls.filter((tc) => !isAskTool(tc?.function?.name)) : toolCalls)
+                        gatePassedCalls = screened.passed
+                        gateBlockedResults = screened.blocked
+                    }
                     /** 记忆、溢出取回、沙箱代码执行、计划更新、产物登记、人机提问都要单独分派：否则会被当成 MCP 工具丢给 mcpToolManager 而找不到实现 */
                     const {memoryCalls, overflowCalls, codeCalls, planCalls, artifactCalls, askCalls, otherCalls} =
-                        classifyToolCalls(toolCalls, {isMemoryTool, isOverflowTool, isCodeTool, isPlanTool, isArtifactTool: (n) => isSaveArtifactTool(n) || isReadArtifactTool(n), ...(askOn ? {isAskTool} : {})})
+                        classifyToolCalls(gatePassedCalls, {isMemoryTool, isOverflowTool, isCodeTool, isPlanTool, isArtifactTool: (n) => isSaveArtifactTool(n) || isReadArtifactTool(n), ...(askOn ? {isAskTool} : {})})
                     const memoryToolContext = {
                         userCode: curUserInfo?.userCode, channel, workspaceId: memoryWorkspace,
                         conversationCode, messageCode,
@@ -1767,7 +1892,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                             ? await skillChat.executeSkillToolCalls(otherCalls, skillContext)
                             : await mcpToolManager.executeToolCalls(channel, otherCalls))
                         : []
-                    const toolResults = [...memoryResults, ...overflowResults, ...codeResults, ...planResults, ...artifactResults, ...askResults, ...otherResults]
+                    const toolResults = [...gateBlockedResults, ...memoryResults, ...overflowResults, ...codeResults, ...planResults, ...artifactResults, ...askResults, ...otherResults]
 
                     /*工具结果只带 tool_call_id，前端无法据此显示调用了哪个工具，这里补上名称*/
                     const nameById = buildToolNameIndex(toolCalls)
@@ -2219,6 +2344,9 @@ async function saveMessage(query, messageCode, messages, conversationCode, chann
             /** b397822 起入白名单：此前 error/upstream 在生产侧写了、这里没枚举 ⇒ 全库恒缺（守卫 llmChatExtInfoWhitelist 钉住两截链） */
             error: options.error,
             upstream: options.upstream,
+            /** PR-I 门观察账落库位（两截链守卫 llmChatExtInfoWhitelist 盯这条的存在性） */
+            gate: options.gate,
+
         },
         messageTokens: options.messageTokens,
         answerTokens: options.answerTokens,

@@ -101,7 +101,7 @@ describe('5 ask_user/answer 装配面（commit 3）', () => {
     })
     test('执行分支：未启用的兜底回错误给模型（到不了也要可见）；toolResults 合并含 askResults', () => {
         assert.ok(chat.includes("'ask_user 未启用'"), '兜底分支不许静默吞调用')
-        assert.ok(chat.includes('const toolResults = [...memoryResults, ...overflowResults, ...codeResults, ...planResults, ...artifactResults, ...askResults,'), 'askResults 不并入 toolResults ⇒ tool 消息缺应答，下一轮 API 直接 400')
+        assert.ok(chat.includes('...planResults, ...artifactResults, ...askResults,'), 'askResults 不并入 toolResults ⇒ tool 消息缺应答，下一轮 API 直接 400（锚定中段，不锁首位变量名——门 choke 点在最前面加了 gateBlockedResults，锁头部会误报）')
         assert.ok(chat.includes('checkpointSeq: iterationCount'), 'await_input 的断点号取本轮迭代数')
     })
     test('root：router 三件套建挂传 + /answer 判序（开签→账本→kind 预检→投递，被拒三情形同一条 403）', () => {
