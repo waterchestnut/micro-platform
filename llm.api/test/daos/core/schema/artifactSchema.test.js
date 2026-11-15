@@ -51,6 +51,14 @@ describe('2 必填与默认（登记时刻的口径）', () => {
         assert.ok(body, 'createStarted 的 $setOnInsert 块必须存在（重构不许悄悄换形态）')
         assert.match(body[1], /state:\s*'started'/, 'createStarted 必须显式写 state（本用例即 2026-11-15 实锤的固化）')
     })
+    test('挂载位只在登记步落笔：setRegisterResult 写 messageCode、createStarted 不写（时序钉——崩在登记前的行必须仍可被对账回收）', () => {
+        const src = fs.readFileSync(path.join(SRC, 'daos/core/dac/artifactDac.js'), 'utf8').replace(/\r/g, '')
+        const created = /async createStarted[\s\S]*?\$setOnInsert:\s*\{([\s\S]*?)\}/.exec(src)
+        assert.ok(created && !/messageCode/.test(created[1]),
+            'started 行不带挂载位：它还没被任何 message 引用；写了它，孤儿回收会把崩溃行误判成 PROTECTED')
+        const reg = /async setRegisterResult[\s\S]*?\$set:\s*\{([\s\S]*?)\}/.exec(src)
+        assert.ok(reg && /messageCode/.test(reg[1]), '登记=引用成立的那一刻，挂载位必须在这里落账')
+    })
     test('非法 state/integrity 被拒（词表不是装饰）', () => {
         const M = mongoose.model('T_artifact_enum', artifactSchema)
         assert.ok(new M({artifactCode: 'a', state: 'half-done'}).validateSync())

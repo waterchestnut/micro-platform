@@ -122,7 +122,7 @@ export function makeIntakeDeps({client, dac, docApiConfig = {}, artifactConfig =
             onSlice,
         }),
         beginUpload: ({task}) => makeDocApiUploader({task, config: docApiConfig, userInfo}),
-        finalizeRegister: (task, meta) => dac.setRegisterResult(task.artifactCode, meta),
+        finalizeRegister: (task, meta) => dac.setRegisterResult(task.artifactCode, {...meta, messageCode: task.messageCode || ''}),
         emitArtifactReady: async (doc) => {
             try {
                 await dac.stampReadyAt(doc.artifactCode)

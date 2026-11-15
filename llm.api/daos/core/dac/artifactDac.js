@@ -79,8 +79,11 @@ export class ArtifactDac extends BaseDac {
 
     /**
      * @description §9.5 第 3 步"登记"：把 doc.api 把手与实测内容事实写进行（状态推进由 casState 负责）
+     * **messageCode 的挂载也在这一步**：登记=产物成为被 message 引用的事实，引用保护从此刻起生效；
+     * 崩在登记前的行（started/pulled/uploaded）不带挂载位——它们没被任何东西引用，
+     * 若挂载写在 createStarted，崩溃行会被对账读成"被引用⇒保护"，孤儿回收就死了（时间要挂对）。
      * @param {String} artifactCode 产物标识
-     * @param {Object} meta {fileCode,fileUrl,sizeBytes,sha256}
+     * @param {Object} meta {fileCode,fileUrl,sizeBytes,sha256,messageCode?}
      * @returns {Promise<Object>} 更新后的行
      */
     async setRegisterResult(artifactCode, meta = {}) {
@@ -91,6 +94,7 @@ export class ArtifactDac extends BaseDac {
                 fileUrl: meta.fileUrl || '',
                 sizeBytes: Number(meta.sizeBytes) || 0,
                 sha256: meta.sha256 || '',
+                messageCode: meta.messageCode || '',
                 readyAt: null,
                 updateTime: new Date(),
             }},

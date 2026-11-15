@@ -94,7 +94,7 @@ export async function runArtifactReconcile(params = {}) {
             opts: {graceMs: plan.graceMs, now, enforce: plan.enforce},
             deps: {
                 verifyDocFile: deps.verifyDocFile,
-                // 引用面当前只有行上的挂载列（跨消息引用未接线）；挂载接线落地后这里自然升级，判据不动
+                // 引用面=行上的挂载列（登记时落笔，值=生产者 message；跨消息引用仍未接线，届时也只升级这一行、判据不动）
                 isReferenced: (row) => Boolean(row?.messageCode),
                 markIntegrity: (artifactCode, mark) => deps.setIntegrity(artifactCode, mark),
                 deleteDocFile: (artifactCode, fileCode) => deps.tombstoneDocFile({fileCode, artifactCode}),

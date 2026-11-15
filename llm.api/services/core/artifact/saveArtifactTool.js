@@ -146,6 +146,9 @@ export function deriveIntakeTask({value, context = {}, genCode, limits = {}} = {
         userCode: context.userCode || '',
         runCode: context.runCode,
         toolCallId: context.toolCallId,
+        /** 挂载位：本轮回答的 message 就是产物的首个引用者（run 身份=messageCode 的既有等式，
+         *  不向 llmChat 新-parameter）。写空的那段日子对账的"被引用⇒保护"是死语义——现在活了 */
+        messageCode: context.runCode,
         idempotencyKey: `${context.runCode}:${context.toolCallId}`,
         sandboxId: context.sandboxId,
         path: value.path,

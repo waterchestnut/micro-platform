@@ -113,6 +113,13 @@ describe('3 deriveIntakeTask：幂等键与分配即锚', () => {
         assert.equal(t.sliceBytes, 256)
         assert.equal(seq - before, 2, '恰好烧两个标识：art + docfile')
     })
+    test('挂载位 messageCode 从 runCode 导出：本轮产物即被本轮 message 引用（对账"被引用⇒保护"的抓手，写空它就是死语义）', () => {
+        const t = deriveIntakeTask({
+            value: {path: '/workspace/a.bin', name: 'a.bin', kind: 'file'},
+            context: {...CTX, toolCallId: 'tc-m'}, genCode, limits: {},
+        })
+        assert.equal(t.messageCode, CTX.runCode, 'run 身份=messageCode 的既有等式，不新引参数')
+    })
 })
 
 describe('4 executeSaveArtifactTool：全失败路径 success:false，不抛', () => {
