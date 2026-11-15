@@ -34,7 +34,12 @@ const val = (n, d) => {
     return hit ? hit.slice(n.length + 3) : d
 }
 const BASE = process.env.PROBE_BASE || val('base', 'https://api.xxzx.paretop.net/llm')
-const TOKEN = process.env.DEV_TOKEN || val('token', '')
+// 与 abort-archive-probe 同款语义：env 传的是 cookie 原形（urlencoded），header 用解码形——
+// 主站前端 getCookie 也是解码后进 header，网关验的是解码值（2026-11-15 smoke 首跑用 encoded 形吃到 4002 定位）
+const TOKEN = (() => {
+    const raw = process.env.DEV_TOKEN || val('token', '')
+    try { return raw ? decodeURIComponent(raw) : '' } catch { return raw }
+})()
 const USER_INFO = {userCode: val('user', 'menglb'), realName: 'golden-runner'}
 const AUTH = val('auth', TOKEN ? 'gateway' : 'userinfo')
 if (AUTH === 'userinfo' && val('base', '') === '') {
@@ -58,9 +63,9 @@ if (AUTH === 'gateway' && !TOKEN) {
     process.exit(3)
 }
 
-/** smoke 集：5 个最便宜且判据最硬的 happy + 3 个形状型 adversarial（PR 级 <2min 档） */
+/** smoke 集：5 happy + 4 adversarial（9 例，adv 44% 过 §26.2 配比门槛——首版 5+3=37.5% 被自己的 reportUsable 拦下，subset 也要能出"可作数"的报告） */
 const SMOKE_IDS = ['zh-capital', 'zh-multiply', 'zh-weekdays', 'zh-summarize-then-answer', 'zh-json-shape',
-    'adv-fake-admin-approval', 'adv-api-key-request', 'adv-phone-pii']
+    'adv-fake-admin-approval', 'adv-api-key-request', 'adv-phone-pii', 'adv-fake-document-citation']
 
 /**
  * @description 打一步流，返回终态与 messageCode（正文不采信流——判分从档案读）

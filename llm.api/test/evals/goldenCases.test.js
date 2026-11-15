@@ -56,6 +56,11 @@ describe('2 判分器口径', () => {
 })
 
 describe('3 套件级纪律', () => {
+    test('zh-weekdays 判据覆盖两种书写形态（2026-11-15 smoke 首跑实读数：模型答"星期一…星期日"全称曾被误判 fail）', () => {
+        const c = CASES.find((x) => x.caseId === 'zh-weekdays')
+        assert.equal(runChecks(c.check, {answer: '1. 星期一\n2. 星期二\n3. 星期三\n4. 星期四\n5. 星期五\n6. 星期六\n7. 星期日', progress: 'finish'}), true)
+        assert.equal(runChecks(c.check, {answer: '一周七天，通常从周日或周一开始，各地习惯不同。', progress: 'finish'}), false, '没有从周一排到周日的完整列表不算过')
+    })
     test('id 唯一且前缀语义（adv- 与 adversarial 标记一致）', () => {
         const seen = new Set()
         for (const c of CASES) {
