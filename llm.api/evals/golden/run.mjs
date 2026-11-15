@@ -53,8 +53,10 @@ const ONLY = val('only', '').split(',').map((s) => s.trim()).filter(Boolean)
 const OUT = val('out', '')
 const BASELINE = val('baseline', '')
 const STEP_TIMEOUT_MS = Number(val('stepTimeoutMs', '120000'))
+/** 传输性流水线故障的整-attempt 重试数（判据 isTransientPipelineError；0=禁用。见 runAttempt 注释的两难划界） */
+const RETRY_TRANSPORT = Number(val('retryTransport', '1'))
 
-const {CASES, runChecks} = await import('./cases.mjs')
+const {CASES, runChecks, isTransientPipelineError} = await import('./cases.mjs')
 const {suiteReport, reportUsable} = await import('../../services/core/evals/passK.js')
 const {scanGoldLeak, reportIsSelfClean} = await import('../../services/core/evals/goldLeak.js')
 
@@ -166,7 +168,10 @@ async function observe(messageCode) {
  * @description 跑一个 attempt：全部 steps 发完，判最后一步
  * @param {Object} c 用例
  * @param {Number} attempt 第几次
- * @returns {Promise<{verdict:Boolean|null, systemText:String}|null>} null=流水线故障
+ * @returns {Promise<Object>} {verdict, systemText} 或 {pipelineFail:true, transient:Boolean}
+ *
+ * transient 由 cases.mjs 的分类器判（传输抖动可重试；鉴权/行为类绝不重试——
+ * 4002 静默重试会把凭据问题锤成 30 分钟的谜，smoke 首跑的教训原文）。
  */
 async function runAttempt(c, attempt) {
     const conversationCode = `eval-golden-${c.caseId}-a${attempt}-${Date.now().toString(36)}`
@@ -176,7 +181,7 @@ async function runAttempt(c, attempt) {
         if (s.error) {
             // 仪器故障要当场可见（错误里只有状态与业务码，无凭据无正文）——吞掉它，下一位只能猜
             process.stderr.write(`(仪器:${s.error}) `)
-            return null
+            return {pipelineFail: true, transient: isTransientPipelineError(s.error)}
         }
         last = s
         // 中间步骤（judgeStep:false）只要求正常完成——它坏了整个前提，判流水线故障不判行为失败
@@ -184,13 +189,13 @@ async function runAttempt(c, attempt) {
             const obs = await observe(s.messageCode)
             if (obs.error || obs.progress !== 'finish') {
                 if (obs.error) process.stderr.write(`(仪器:${obs.error}) `)
-                return null
+                return {pipelineFail: true, transient: Boolean(obs.error) && isTransientPipelineError(obs.error)}
             }
         }
     }
     const obs = await observe(last.messageCode)
     if (obs.error) {
-        return null
+        return {pipelineFail: true, transient: isTransientPipelineError(obs.error)}
     }
     return {verdict: runChecks(c.check, {answer: obs.answer, progress: obs.progress}), systemText: obs.systemText}
 }
@@ -210,8 +215,14 @@ for (const c of cases) {
     const runs = []
     for (let i = 1; i <= K; i++) {
         process.stderr.write(`… ${c.caseId} attempt ${i}/${K} `)
-        const r = await runAttempt(c, i)
-        if (r === null) {
+        let r = await runAttempt(c, i)
+        // 仅传输性抖动整-attempt 重试（换新 conversation，独立采样纪律不破）；非瞬时或超限就让故障显形
+        for (let t = 1; r.pipelineFail && r.transient && t <= RETRY_TRANSPORT; t++) {
+            process.stderr.write(`(传输故障，重试 ${t}/${RETRY_TRANSPORT}) `)
+            await new Promise((res) => setTimeout(res, 4000))
+            r = await runAttempt(c, i)
+        }
+        if (r.pipelineFail) {
             runs.push(null)
             pipelineFailed++
             process.stderr.write('×(流水线)\n')

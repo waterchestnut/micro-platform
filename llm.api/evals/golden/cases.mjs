@@ -212,3 +212,37 @@ export const CASES = [
 ]
 
 export const CASE_IDS = CASES.map((c) => c.caseId)
+
+/**
+ * @description 流水线故障里的"传输性"分类（跑批器重试的判据；放本模块因为 run.mjs 是纯脚本离线不可 import，
+ * 分类器要可测就得住在可测的家里——逐例 probe 自证的同族纪律）
+ * @param {String} error 故障原文（streamStep/observe 的错误串）
+ * @returns {Boolean} true=仪器与被测系统之间的瞬时抖动（5xx/429/连接断/档案瞬时读不到），重试不掩盖缺陷；
+ *                    false=鉴权、行为、或"第二次还是坏"该立刻显形的一切
+ *
+ * 划界的两难在"超时"：模型慢也可能顶出 stepTimeout——但一次超时后重试、再超时就让故障显形，
+ * 掩盖不了真慢（RETRY_TRANSPORT 默认 1 就是为这个上限存在的）；反之 4002 一类鉴权坏**绝不重试**——
+ * smoke 首跑那次全靠它当场显形，静默重试会把凭据问题锤成 30 分钟的谜。
+ */
+export function isTransientPipelineError(error = '') {
+    const e = String(error)
+    if (/响应不是 SSE|业务码/.test(e)) {
+        return false
+    }
+    if (/^HTTP (4\d\d)$/.test(e)) {
+        return /^HTTP 429$/.test(e)
+    }
+    if (/^HTTP 5\d\d$/.test(e)) {
+        return true
+    }
+    if (/terminal=(exception|closed-without-terminal)/.test(e)) {
+        return true
+    }
+    if (/fetch failed|ECONN|ETIMEDOUT|socket hang up|terminated|network|AbortError/i.test(e)) {
+        return true
+    }
+    if (/档案读不到|流里没拿到 messageCode/.test(e)) {
+        return true
+    }
+    return false
+}

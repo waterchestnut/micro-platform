@@ -56,6 +56,19 @@ describe('2 判分器口径', () => {
 })
 
 describe('3 套件级纪律', () => {
+    test('isTransientPipelineError：只放瞬时抖动过重试门，鉴权/行为类一律 false（4002 静默重试=30 分钟谜团的预防）', async () => {
+        const {isTransientPipelineError} = await import('../../evals/golden/cases.mjs')
+        const transient = ['HTTP 503', 'HTTP 502', 'HTTP 429', 'terminal=exception', 'terminal=closed-without-terminal',
+            'fetch failed', 'ECONNRESET', 'socket hang up', '档案读不到（流水线故障）', '流里没拿到 messageCode（流水线故障）']
+        const never = ['HTTP 400', 'HTTP 403', 'HTTP 404',
+            '响应不是 SSE（业务码 4002，多半是鉴权/入口问题）', 'terminal=abort', 'terminal=error', '', '随便什么其它错']
+        for (const e of transient) {
+            assert.equal(isTransientPipelineError(e), true, `${e} 应判瞬时（部署滚动的典型形态）`)
+        }
+        for (const e of never) {
+            assert.equal(isTransientPipelineError(e), false, `${e} 绝不重试（要当场显形）`)
+        }
+    })
     test('zh-weekdays 判据覆盖两种书写形态（2026-11-15 smoke 首跑实读数：模型答"星期一…星期日"全称曾被误判 fail）', () => {
         const c = CASES.find((x) => x.caseId === 'zh-weekdays')
         assert.equal(runChecks(c.check, {answer: '1. 星期一\n2. 星期二\n3. 星期三\n4. 星期四\n5. 星期五\n6. 星期六\n7. 星期日', progress: 'finish'}), true)
