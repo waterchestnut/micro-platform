@@ -5,12 +5,10 @@
  */
 
 import {OpenAI} from 'openai'
-import {withUpstreamRetry, parseRetryAfterMs, buildToolArgsIndex, clipTraceArgs} from './llmLoop.js'
-import {getBreaker, breakerKeyFor} from './upstreamBreaker.js'
 import retSchema from '../../daos/retSchema.js'
 import conversationDac from '../../daos/core/dac/conversationDac.js'
 import llmChannelDataSet, {getChannelMemory} from '../../conf/llmChannel.js'
-import {pickModelKey} from '../../conf/llmModel.js'
+import {pickModelKey, defaultModelKey, defaultVisionModelKey} from '../../conf/llmModel.js'
 import tmplParse from 'json-templates'
 import {llmRagSearch} from '../../grpc/clients/resourceRag.js'
 import messageDac from '../../daos/core/dac/messageDac.js'
@@ -31,32 +29,43 @@ import {recallForPrompt, renderRecall} from './memory/recall.js'
 import {buildMemoryTools, executeMemoryTool, isMemoryTool, memoryToolsEnabled} from './memory/tools.js'
 import {buildOverflowTools, isOverflowTool, readOverflow, OVERFLOW_TOOL_NAME} from '../../tools/overflow.js'
 import {buildCodeTools, isCodeTool, executeCodeTool, codeToolEnabled} from '../sandbox/codeTool.js'
+import {buildPlanTools, isPlanTool, planToolEnabled, executePlanTool} from './session/planTool.js'
+import {buildSaveArtifactTools, isSaveArtifactTool, saveArtifactToolEnabled, executeSaveArtifactTool} from './artifact/saveArtifactTool.js'
+import {buildReadArtifactTools, isReadArtifactTool, executeReadArtifactTool} from './artifact/readArtifactTool.js'
+import {withRecitation, planForPersistence, seedPlanFromPrior} from './session/planAssembly.js'
+import {decideCompletionSelfCheck, buildSelfCheckHint, interpretSelfCheckReply} from './session/planState.js'
 import {peekSharedSandboxId} from '../sandbox/runner.js'
 import {scheduleCheckpoint, flushCheckpoints} from './session/checkpoint.js'
 /**
- * 停机三件套（接线自源仓 §25 v1.40–v1.43）：
- * isClosing 用来区分"用户按停止"与"发版拆连接"（HTTP 层两者都是 destroyed=true，无法分辨）；
- * attachArchive 让关闭序列能主动抢救，而不是等一个**可能永远不来**的断开事件
- * ——源仓实测：真实滚动里网关只拆客户端侧，应用侧连接一直活着，所以被动等必然落空。
+ * 停机状态与停机抢救表。
+ * `isClosing` 用来区分"用户按停止"与"发版拆连接"（两者在 HTTP 层不可分辨）；
+ * `attachArchive` 让关闭序列能主动把在途 run 落档，而不是等一个**可能永远不来**的断开事件。
  */
 import {isClosing} from './session/shutdownState.js'
-import {attachArchive, detachArchive} from './session/runRegistry.js'
+/** 抢救的等待预算：必须小于 `archiveAllInflight` 的单条超时，否则两边都没落成 */
 import {CLOSE_ARCHIVE_WAIT_FOR_RUN_MS, PERSIST_VIA} from './session/shutdownPolicy.js'
+import {attachArchive, detachArchive} from './session/runRegistry.js'
 import {normalizeRegeneratedFrom, allowsAnswerCache, regeneratedFromForArchive} from './session/regeneration.js'
+import {renderSteeringBlock, steerAckPayload} from './session/steerMailbox.js'
+import {buildAskTools, isAskTool, askToolEnabled, awaitAskUser, answerSecret} from './session/askUserTool.js'
 import {cacheIntentForArchive} from './session/cacheIntent.js'
+import {decideThinking, thinkingForArchive} from './session/thinkingMode.js'
 import {truncateToolMessage} from '../../tools/truncate.js'
 import {resolveMemory, safeWorkspaceId} from './memory/policy.js'
 /**
- * 主循环的纯决策逻辑（协议协商、流式消费、tool_calls 聚合与分派、trace 截断、迭代退出方式）。
- * 抽到 `llmLoop.js` 是为了让它能被离线单测覆盖——`execChat` 此前零单测，而主循环要连续被改多轮。
- * 行为与抽取前逐字一致，包括"没有 index 的增量被丢弃"这类现状。
+ * 主循环的纯决策逻辑（协议协商、tool_calls 聚合与分派、trace 截断）。
+ * 抽到 `llmLoop.js` 是为了让它能被离线单测覆盖——`execChat` 此前零单测（§2.10），
+ * 而 PR-A/B/C/D/E 都要改它。行为与抽取前逐字一致，包括"没有 index 的增量被丢弃"这类现状。
  */
+import {createSegmentLedger, SEGMENT_KINDS, needsCancelledSegment} from './segments.js'
 import {
     resolveProtocol,
     pruneToolCalls,
     buildAssistantToolCallMessage,
     classifyToolCalls,
     buildToolNameIndex,
+    buildToolArgsIndex,
+    clipTraceArgs,
     buildToolCallTraceEntry,
     findTraceShapeGaps,
     drainAssistantStream,
@@ -65,29 +74,38 @@ import {
     exitReasonForPersist,
     describeError,
     createBudgetMeter,
-    deriveUsageMetrics,
-    usageCallAlert,
     createEmptyUsage,
     addUsage,
+    deriveUsageMetrics,
+    usageCallAlert,
     resolveMaxIterations,
     finalizationDecision,
     buildFinalizeBody,
     exhaustedFallback,
+    withUpstreamRetry,
+    canFallbackTo,
+    parseRetryAfterMs,
+    steerAction,
 } from './llmLoop.js'
-/** 过程分段（PR-B）：把被 reset 抹掉的中间正文留住 */
-import {createSegmentLedger, SEGMENT_KINDS, needsCancelledSegment} from './segments.js'
+import {getBreaker, breakerKeyFor} from './upstreamBreaker.js'
 
 const tools = llm.tools
 const logger = llm.logger
 const config = llm.config
-/** 全局默认档位由 conf/llmModel.js 读取（LLM_DEFAULT_CONFIG_KEY / LLM_DEFAULT_VL_CONFIG_KEY） */
+/**
+ * 默认档位不再在本文件里写死字符串：与 `conf/llmModel.js` 用同一份定义（v1.27）。
+ * 值不变（relay_common_pro / relay_qwen_vl_pro），改的是"谁说了算"——
+ * 两处各写一遍时，改一处就会让"选中的模型"和"记录的模型"悄悄分家。
+ */
+const defaultLlmConfigKey = defaultModelKey
+const defaultLlmVLConfigKey = defaultVisionModelKey
 /**
  * 缺省频道与缺省分组。
  * **刻意 export**：路由层的补写档案（`session/errorTurnArchive.js`）也要算出同一个 `channel`，
- * 各写一份字面量的话，"哪天改缺省"就会变成只改一半的老问题。
- * 这一份保留底座自己的 env 覆盖口径（母本那份是固定值，不要把两边压成一个字面量）。
- * 两侧一致性由 `test/services/core/session/errorTurnArchive.test.js` 的源码断言钉住。
+ * 各写一份字面量的话，"哪天改缺省"就会变成只改一半的老问题（§2E-2 两份同值分家）。
+ * 两侧一致性由 `test/services/core/errorTurnArchive.test.js` 里那条源码断言钉住。
  */
+/** 底座 fork：缺省频道键是 llm.api 频道表的 micro_common（源侧的 xxzx_common 在本侧不存在），且允许 env 覆盖 */
 export const defaultChannel = process.env['LLM_DEFAULT_CHANNEL'] || 'micro_common'
 export const defaultChannelGroup = 'none'
 
@@ -114,40 +132,45 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     options.streamCallback('done')
     return 'done'*/
 
-    const channel = options.channel || defaultChannel
-    const channelGroup = options.channelGroup || defaultChannelGroup
-    const llmChannelData = llmChannelDataSet[channel] || {}
     /**
-     * 选档：请求的 llmModel > 频道声明（带图只认 visionModel，文本认 model）> 全局默认；
-     * 历史供应商名（qwenPlus 等）统一归一到「族×档」。
+     * v1.27：档位选择走 `conf/llmModel.js` 的 `pickModelKey`（请求 > 频道声明 > 全局默认）。
+     * 本项目频道目前**都没有声明** model/visionModel，所以这条与改造前的
+     * `config.models[options.llmModel] || config.models[defaultKey]` 等价；
+     * 差别只有一处、但是往好的方向：**非法的 `options.llmModel` 现在会被归一成真正使用的档位**，
+     * 于是 `llmUsage.llmModel` 记的就是这一轮真正花钱的那个模型，而不是调用方传来的废值
+     * （以前记废值、却用默认档跑，账本与实况分家）。
      */
     const llmModel = pickModelKey({
         llmModel: options.llmModel,
-        channelConfig: llmChannelData,
+        channelConfig: llmChannelDataSet[options.channel || defaultChannel] || {},
         hasInputs: Boolean(options?.inputs?.length),
     })
     const llmConfig = config.models[llmModel]
+    const channel = options.channel || defaultChannel
+    const channelGroup = options.channelGroup || defaultChannelGroup
+    const llmChannelData = llmChannelDataSet[channel] || {}
     /** 频道灰度与请求级逃生门在入口一次性合成，下游召回/采集/工具读同一份，避免各处漏判 */
     const channelMemory = resolveMemory(getChannelMemory(channel), options.memory)
     /** PR-16 ③：工作区分区（严格隔离）。schema 已挡非法形态，这里二次防御；缺省 null=全局分区=现状 */
     const memoryWorkspace = safeWorkspaceId(options?.memory?.workspaceId)
     const tokenizerOptions = getTokenizerOptions(llmConfig)
-    /** 本仓 models 表未配 contextWindow 时预算取 Infinity（不裁剪，等于迁移前行为）；配了即自动生效 */
+    /** 底座 fork 保护：config.models 人工维护、档位可能没有 contextWindow，源实现在缺字段时把预算算成 0 ⇒ 压空会话；缺字段 ⇒ Infinity（不压） */
     const contextBudget = llmConfig?.contextWindow
         ? calcContextBudget(llmConfig, {slackTokens: config.context?.slackTokens})
         : Infinity
-    let contextUsage = null
     /**
      * 本 run 的起点（§14 账本的 latencyMs 基准）。
-     * 放在函数入口而不是循环前：装配、RAG、记忆召回都算这一轮的成本。
+     * 必须放在函数入口而不是循环前：装配、RAG、记忆召回都算这一轮的成本。
      */
     const turnStart = Date.now()
     /**
-     * 归属日（UTC yyyy-mm-dd）。定义紧挨 turnStart：
-     * ① 开局落账与收尾落账共用同一个口径，两处各算一遍会在跨日界时把同一条 run 记进两个 day；
-     * ② 位置必须早于使用点，否则 const 箭头函数踩 TDZ。
+     * 归属日（UTC yyyy-mm-dd）。**定义紧挨 turnStart**：
+     * ① 开局落账与收尾落账必须共用同一个口径——两处各算一遍，跨日界的那条 run 就会被记进两个 day
+     *    （账本的主聚合维度，与 D66"同一个数存两处就会分叉"是同一类问题）；
+     * ② 位置必须早于使用点，否则 const 箭头函数会踩 TDZ。
      */
     const usageDay = () => new Date().toISOString().slice(0, 10)
+    let contextUsage = null
 
     let conversationInfo = await conversationDac.getByCode(conversationCode)
     if (!conversationInfo) {
@@ -169,8 +192,9 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
 
     let messageCode = options.messageCode || tools.getUUID()
     /**
-     * run 级 trace（PR-0.3）。**traceId 就是 messageCode**：不引入第三个标识符——
-     * 同一个数存两处就会分叉（本项目在 usage 上真发生过），所以 traceId 只做传播，不新增存储列。
+     * run 级 trace（PR-0.3）。**traceId 就是 messageCode**——不引入第三个标识符，
+     * 因为同一个数存两处就会分叉（`extInfo.usage` 与 `llmUsage` 账本实测打过这个架，见 D66）。
+     * 这里只做传播：日志绑定、上游请求头、SSE meta 载荷。
      */
     const trace = buildTrace({
         messageCode,
@@ -181,7 +205,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         reqId: options.reqId,
         inboundTraceId: options.inboundTraceId,
     })
-    /** 本轮 run 级日志都走这个 child logger：没有 traceId 的日志等于没有日志 */
+    /** 本轮所有 run 级日志都走这个 child logger：没有 traceId 的日志等于没有日志 */
     const tlog = withTrace(logger, trace)
     let messages = []
 
@@ -192,12 +216,22 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
 
     const emitMeta = (meta) => {
         /**
-         * `>= 2` 而不是 `=== 2`：协议 3 是在 2 之上追加，不是替换。
-         * `protocol: clientProtocol` 而不是字面量 2：写死会让协议 3 的流一边发段事件、一边自报 2，
-         * 前端按 meta.protocol 选渲染分支就永远选不到 3。两处都是 dev 逐帧数出来的，不是推出来的。
+         * `>= 2` 而不是 `=== 2`：协议 3 是在 2 之上**追加**事件，不是替换。
+         * 这里原来是严格相等，加档位 3 之后 `meta` 直接不发了——714 条单测全绿也没抓到，
+         * 因为 llmChat 的发射顺序没有离线用例覆盖，是我按协议 3 实发一次逐帧看才发现的。
+         * 同类问题由 `test/services/core/segmentEvents.test.js` 的源码守卫盯着（不许再出现 `=== 2`）。
          */
         if (clientProtocol >= 2 && options.streamCallback) {
-            /** meta 里带 traceId（值就是 messageCode）：前端报错卡片可以显示"反馈请附这串号" */
+            /**
+             * meta 里带上 traceId（值就是 messageCode）：前端报错卡片可以显示"反馈请附这串号"，
+             * 用户报障时我们拿到它就能同时命中日志、账本行与上游请求头。
+             */
+            /**
+             * `protocol: clientProtocol` 而不是字面量 2：这里原来是硬编码的，
+             * 于是协议 3 的流会在 `meta` 里自报 `protocol:2`。
+             * 前端按 `meta.protocol` 选渲染分支的话，段事件**永远走不到那个分支**——
+             * 而"后端在发、客户端被告知没有"正是最难查的那种不一致。
+             */
             options.streamCallback(JSON.stringify({type: 'meta', messageCode, traceId: trace.traceId, conversationCode, protocol: clientProtocol, ...meta}), 'meta')
         }
     }
@@ -250,14 +284,16 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         }
     }
 
-    const systemMessages = []
     /**
-     * 开局就把这一轮写进账本（v1.33）。原来这一行只在 persistTurn 里写，
-     * 于是被 SIGKILL 的 run 在 llmUsage 里也不存在——"发版丢了几轮"在数据上查不出来，
-     * 而恢复扫描也没有对象：**没有行，就没有未终态**。
+     * **开局就把这一轮写进账本**（v1.33，P-10 的直接后果）。
+     * 原来这一行只在 persistTurn 里写，于是被 SIGKILL 的 run 在 `llmUsage` 里也不存在——
+     * "发版到底丢了几轮"在数据上查不出来。我一开始是拿探针日志数的，还数错了两回
+     * （一次漏计最关键的对照，一次把 4 次真蒸发全划成仪器故障）。
+     * 现在它是一行可查的记录：`progress:'processing'` + 谁、哪档、发起了几次。
+     * PR-E 的恢复扫描也以此为数据源——**没有行就没有"未终态"**。
      *
      * 位置在缓存命中分支之后：命中缓存根本不发起模型调用，落 processing 只会制造假的中途行。
-     * 失败不阻断主链路，但必须留 warn——账本缺行比多花几毛钱严重得多。
+     * 失败不阻断主链路，但必须留 warn——账本缺行比多花几毛钱严重得多（与收尾落账同口径）。
      */
     if (config.llmUsageLive?.enabled !== false) {
         try {
@@ -274,6 +310,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         }
     }
 
+    const systemMessages = []
     const fixedMessages = []
 
     if (llmChannelData.sysPrompt) {
@@ -392,39 +429,57 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         tlog.warn(`历史预算 ${historyBudget} / 总预算 ${contextBudget}，历史丢弃 ${historyDropped.length} 轮，装配再丢弃 ${assembled.dropped.length} 条`)
     }
 
-    /**
-     * 上游容错（与源仓同一份判据：`llmLoop.withUpstreamRetry` + `upstreamBreaker`）。
-     * 默认全关：`upstreamRetry_enabled`/`upstreamBreaker_enabled` 不为 true 时行为与改造前逐字一致。
-     */
-    const upstreamCfg = config.upstreamRetry || {}
-    const upstreamBreaker = getBreaker({
-        cfg: config.upstreamBreaker || {},
-        /** 熔断是进程级状态，事件走 llm.logger；绑在 tlog 上会让单例一直握着第一条请求的 trace */
-        log: (e) => logger.warn(`upstreamBreaker ${JSON.stringify(e)}`),
-    })
-    /**
-     * SDK 的隐式重试（默认 2 次）必须在我方退避开启时显式设 0——它在 SDK 内部、首字节之前，
-     * 我方 `markFirstByte` 拦不住，两层相乘会让"最多几次"变成乘法。
-     */
-    const sdkRetries = upstreamCfg.enabled === true ? 0 : undefined
     const openai = new OpenAI({
         apiKey: llmConfig.apiKey,
         baseURL: llmConfig.baseURL,
-        /** 上游请求头带 traceId：relay/网关侧的日志才能与我们这一侧对上 */
+        /**
+         * `maxRetries`：**这里必须显式，不能留给 SDK 的默认值**。
+         * SDK 默认 `maxRetries=2`，并且自己有一套重试判定（408/409/429/5xx 与连接错误都算可重试，
+         * 见 `node_modules/openai/client.js` 的 `shouldRetry`）——也就是说**现网一直存在一层隐式的上游重试**：
+         * 一次 `create()` 内部最多打 relay 三次，而我们的日志与账本只看到 1 次调用
+         * （实测证据：`upstream-retry-probe` 场景 2/4，关掉我们这层之后 relay 仍收到 3 次请求）。
+         *
+         * 这层重试对我们是不可见的，也就**不受我们的次数上限、退避与换档策略管**：
+         * 我们的 `markFirstByte` 拦不住它（它在 SDK 内部、首字节之前），于是两层相乘最坏是
+         * `maxAttempts × 3` 次真实请求（实测 3×3=9，见场景 5）。
+         *
+         * 所以策略只能有一处说话：
+         * - 我们的重试**开着** ⇒ SDK 侧置 0，由 `withUpstreamRetry` 一个人决定重试与换档；
+         * - 我们的重试**关着** ⇒ 保持 SDK 默认（`undefined`），与改造前逐字一致，
+         *   不借这个 PR 顺手改变现网的重试语义。
+         */
+        maxRetries: (config.upstreamRetry && config.upstreamRetry.enabled === true) ? 0 : undefined,
+        /**
+         * 上游请求头带 traceId：relay/网关侧的日志才能和我们这一侧对上——
+         * 现网最常见的"超时但 200"、"缓存折扣对不上"这类问题，缺的就是这一根线。
+         */
         defaultHeaders: traceHeaders(trace),
-        maxRetries: sdkRetries,
     })
 
     // 检查当前频道是否启用了MCP工具
     const hasMcpTools = await mcpToolManager.hasTools(channel)
+    /**
+     * 深度思考的决策（D44：**不得由 bug 默认决定，且必须留痕**）。
+     * 2026-11-13 实测到的是三层默认值叠出来的静默关闭：
+     * ① 本行原来的 `options.enableThinking && llmConfig.enableThinking` 把请求侧排在前面短路；
+     * ② dev 没有任何 `*_enableThinking` 变量 ⇒ 档位侧恒空；
+     * ③ 三端前端硬编码 `enableThinking: 0` ⇒ 运维就算配好档位，聊天界面仍然关着。
+     * 判据与真值语义都在 `session/thinkingMode.js`（那里有与改造前那句的逐值等价用例），
+     * 这里只负责用它，并把结果留给 `persistTurn` 落档。
+     */
+    const thinkingDecision = decideThinking({
+        requested: options.enableThinking,
+        profile: llmConfig.enableThinking,
+        modelKey: llmModel,
+    })
     let createBody = {
         model: llmConfig.model,
         messages,
         max_tokens: llmConfig.maxTokens,
         temperature: llmConfig.temperature,
         stream: true, // 启用流式输出
-        // 深度思考
-        ...(options.enableThinking && llmConfig.enableThinking ? llmConfig.enableThinking : {enable_thinking: false}),
+        // 深度思考：参数只能由 thinkingMode 这一处给，别在这里再写一个 `&&`
+        ...thinkingDecision.params,
     }
 
     // 合并所有可用工具（MCP工具 + Skill工具 + 记忆工具）
@@ -460,6 +515,53 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         allTools.push(...buildOverflowTools())
     }
 
+    /**
+     * PR-M：计划工具默认关（`plan_enabled`）。开 ⇒ 下发 `update_plan`，模型可把计划外置成结构化状态；
+     * 关 ⇒ 这里一行都不做、`planOn=false` 让后面 recitation 也原路返回，主循环与加它之前逐字一致。
+     */
+    const planCfg = config.planConfig || {}
+    const planOn = planToolEnabled(planCfg)
+    if (planOn) {
+        allTools.push(...buildPlanTools())
+    }
+    /**
+     * PR-H2：save_artifact 默认关（`artifact_enabled`，且要求 `sandbox_enabled`——没有沙箱它无意义）。
+     * 关 ⇒ 这里一行都不做；开 ⇒ 字节由服务端经 execd 自取（模型只申报路径，见 saveArtifactTool 头注释）。
+     */
+    const artifactCfg = config.artifactConfig || {}
+    const artifactOn = saveArtifactToolEnabled(artifactCfg, config.sandboxConfig || {})
+    if (artifactOn) {
+        allTools.push(...buildSaveArtifactTools())
+        /** §9.5 line 813 配对件：能存还要能取回，"压缩≠丢信息"才成立 */
+        allTools.push(...buildReadArtifactTools())
+    }
+    /**
+     * PR-E：ask_user 默认关（`control_askEnabled`）。双闸：配置开 **且** 本 run 有答复路由器
+     * （root.js 只在同一条配置下建 router）——只开一侧时模型根本看不见这个工具，
+     * "能问不能答=挂死 run"的错配面从注册点就关死。
+     */
+    const askCfg = config.controlConfig || {}
+    const askOn = askToolEnabled(askCfg) && !!options.answerRouter
+    if (askOn) {
+        allTools.push(...buildAskTools())
+    }
+    /**
+     * 本轮计划：初值从上一轮档案 seed（跨轮 recitation），之后由 update_plan 整份替换。
+     * recitation 与落档都读它。null = 既没有上一轮计划、本轮也还没调用 update_plan。
+     */
+    let currentPlan = null
+    /**
+     * PR-M B1 跨轮 seed：只在开了计划时才读上一轮档案（关着连这次查询都不发 ⇒ 默认关对现网零成本）。
+     * seed 失败绝不阻断这一轮——没有上一轮计划可续，就当本轮从零开始，与"从没开过计划"同一条路径。
+     */
+    if (planOn) {
+        try {
+            currentPlan = seedPlanFromPrior(await messageDac.getLatestExtInfoPlan(conversationCode))
+        } catch (e) {
+            tlog.warn(`跨轮计划 seed 失败，按无历史计划继续: ${String(e?.message || e).slice(0, 160)}`)
+        }
+    }
+
     // 如果有工具，添加到请求体
     if (allTools.length > 0) {
         createBody.tools = allTools
@@ -469,61 +571,35 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     let answerContent = ''
     let answerReasoning = ''
     let answerList = []
-    /**
-     * 停机抢救需要的实时正文与停止位（接线自源仓 §25 v1.40–v1.43）。
-     *
-     * 为什么必须有 `liveAnswer`：已累计的正文只存在于 `drainAssistantStream` 的局部变量里，
-     * `answerContent` 要等 drain **返回**才累加；而抢救发生在它返回之前 ⇒
-     * 不加这三个变量，兜底就只能写出 **0 字 abort**，而那条档一旦落下，
-     * `persistTurn` 的幂等保护会把随后真正的 `finish` 永久挡在门外（源仓实测：客户端拿到 6,898 字，档案 0 字）。
-     * 这里只做引用赋值（字符串不可变），不复制、不额外分配。
-     */
-    let liveAnswer = ''
-    let liveReasoning = ''
-    let liveAnswerMerged = false
-    /** 停机抢救的本地停止位：由 `shouldStop` 在帧间检查，命中即带着已生成的正文早退 */
-    let shutdownStopRequested = null
-    /**
-     * @description 把实时正文并进 answerContent（幂等：并过一次就不再并）
-     * @returns {Boolean} 本次是否真的并了
-     */
-    const mergeLiveAnswer = () => {
-        if (liveAnswerMerged || !liveAnswer) {
-            return false
-        }
-        answerContent = liveAnswer
-        answerReasoning = liveReasoning
-        liveAnswerMerged = true
-        return true
-    }
-    /**
-     * @description 打断来源：只由"进程是否已在关闭"区分
-     * @returns {String} process-lost（发版/关机拆连接）或 client-disconnect（用户或网络）
-     */
-    const interruptReason = () => (isClosing() ? 'process-lost' : 'client-disconnect')
     /** 被裁剪掉的工具全文，随消息留档，避免上下文爆炸同时不丢信息 */
     const toolOverflows = []
+    /** PR-D commit 2：本轮实际注入过的插话（含注入时刻）。没注入过 ⇒ 落档 null 而不是空壳数组（同 plan 的裁定） */
+    const steeringsArchive = []
 
     /**
      * 过程分段账本（PR-B）：把"被 reset 抹掉的中间正文"留住。
-     * 现状实测分布里 40% 的轮次存在被抹掉的内容，抽取前它们只在流里出现过一次，
-     * 落库只剩最后一句或干脆空串，回放看不出这一轮到底查了什么、说过什么，评测也没有轨迹可算。
+     * dev 实测 `answerList` 段数分布 ⇒ **230/574（40%）的轮次存在被抹掉的内容**，
+     * 抽取前这些内容只在流里出现过一次，落库只剩最后一句或干脆空串，回放与评测都没有轨迹。
      */
     const segments = createSegmentLedger({
         textChars: config.limits?.segmentTextChars,
         maxSegments: config.limits?.segmentsMaxCount,
         totalChars: config.limits?.segmentsTotalChars,
         /**
-         * 协议 3：段的边界下发给客户端。start/end 刻意成对出现在**封段时刻**而非开段时刻——
-         * 一轮最终是 tool-round / skill-reload / finalize / answer，在开段那一刻不可知，
-         * 那时发 start 就只能猜 kind/title，前端会拿到一张标题与结尾度量不符的卡（源仓 D63 ① 禁止的事）。
+         * 协议 3：段的**边界**下发给客户端（`segment_start`/`segment_end`）。
+         * 现在成对出现在封段时刻，而不是开段时刻——这是刻意的：
+         * 一轮最终是 tool-round / skill-reload / finalize / answer，**在开段那一刻是不可知的**，
+         * 若那时就发 start，载荷里的 `kind`/`title` 只能是猜的，
+         * 于是前端会拿到一张标题"调用工具"、结尾却是 finalize 度量的卡——
+         * 那正是 D63 ① 要禁止的"让前端反推阶段"，只是换了个位置发生。
+         * 实时开段要等"开段时刻能给出什么 kind"有明确结论之后再做。
          */
         events: emitSegments,
         onEvent: (event, payload) => {
             try {
                 options.streamCallback(JSON.stringify(payload), event)
             } catch (e) {
-                /** 下发失败不能把整轮打挂：段的权威副本仍在 extInfo.segments 里 */
+                /** 下发失败不能把整轮打挂：段的权威副本仍在 extInfo.segments 里，回放看得见 */
                 tlog.warn(`段事件下发失败（不影响落库）: ${event} ${e.message}`)
             }
         },
@@ -531,16 +607,15 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     /** 每轮的起始时刻，用于段耗时 */
     let roundStartedAt = Date.now()
     /**
-     * 上下文预算测量器：迭代内只测新增消息。
-     * `measureOne` 复用与全量同一个函数（`calcMessagesTokenCount` 传单条数组），
-     * 因为它的实现是逐条 reduce ⇒ 总量严格等于各条之和，**增量与全量等价**（等价性由用例钉住）。
-     * 越界时的安全网原样保留：真越界仍会 `compactToBudget`，压完必须 `invalidate()`。
+     * 上下文预算测量器（PR-K1）：迭代内只测新增消息。
+     * `measureOne` 用与全量同一个函数（`calcMessagesTokenCount` 传单条数组），
+     * 这样"逐条相加"与"整体一次算"用的是同一套口径，不会有第二条估算路径偷偷漂移。
      */
     const budgetMeter = createBudgetMeter({
         measureOne: (m) => calcMessagesTokenCount([m], tokenizerOptions),
     })
 
-    // 最多迭代多少次：原为硬编码 6，现按 请求 > 频道 > 全局配置 > 6 解析
+    // 最多迭代多少次：原为硬编码 6，现按 请求 > 频道 > 全局配置 > 6 解析（§2E-3 修法第 3 条）
     let iterationCount = 0
     const maxIterations = resolveMaxIterations({
         requestValue: options.maxIterations,
@@ -556,74 +631,233 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     let modelCalls = 0
 
     /**
-     * @description 计一次模型调用：**在发起请求处调，不是拿到 usage 之后**
+     * @description 计一次模型调用：**在发起请求之前调，不是拿到结果之后**
      * @returns {Number} 累计调用次数
      * @description
-     * 这个位置是成本账的命门：客户端中途断开时 usage 帧永远到不了，
-     * 只在"拿到 usage"时计数，一次确实花了钱的调用就会记成 0 次 0 token。
-     * 计数与量测分开后，`modelCalls` 记次数、`hasUsage:false` 记"这次没量到"，
-     * 两者的差额正是"花了钱但量不出来"的量——那正是账本要暴露的东西。
+     * 这个位置是成本账的命门。客户端中途断开时 usage 帧永远到不了，
+     * 如果只在收到 usage 时计数，一次"打了但被打断"的调用就会记成 0 次 0 token
+     * ——而它确实花了钱。实测：`abort` 场景下打断在 2.5s，drain 未完成，旧计数点给出 `modelCalls:0`。
      */
     const trackCall = () => {
         modelCalls++
-        /**
-         * 在途刷新：每次真正发起上游调用，就把"到目前为止发起了几次、花了多少"写回同一行。
-         * 挂在 trackCall 定义内（而不是某个调用点）：本文件有两个发起点（主循环、无工具收尾），
-         * 只挂一处就会让另一处被杀的 run 重新变隐形；挂在自增之后，也避开
-         * "刷新早于计数"导致同一行里 modelCalls 比 attempts 少 1 的自相矛盾（主仓实测踩过）。
-         *
-         * 只写计数与 token：不写 progress（归收尾管，两处都写就互相覆盖，谁赢看时序），
-         * 也不写 latencyMs（终态字段，在途写它就变成"最后心跳的时刻"，一个字段两义）。
-         * 底座这条尚未接 PR-0.5 的 callUpstream，故暂不写 estPromptTokens；接线时补上 ——
-         * 遗弃行的成本量级靠它，且**不能塞进 billablePromptTokens**（那列必须只表示上游实测值）。
-         */
-        if (config.llmUsageLive?.enabled !== false) {
-            llmUsageDac.touchInflight({
-                messageCode,
-                modelCalls,
-                promptTokens: runUsage.promptTokens,
-                completionTokens: runUsage.completionTokens,
-                totalTokens: runUsage.totalTokens,
-                cachedTokens: runUsage.cachedTokens,
-                reasoningTokens: runUsage.reasoningTokens,
-                billablePromptTokens: Math.max(0, runUsage.promptTokens - runUsage.cachedTokens),
-                hasUsage: runUsage.promptTokens > 0 || runUsage.completionTokens > 0,
-            }).catch((e) => tlog.warn(`在途刷新账本失败: ${String(e?.message || e).slice(0, 160)}`))
-        }
         return modelCalls
     }
 
     /**
-     * @description 合并一次调用回传的 usage（只并量，不计数）
+     * @description 合并一次调用回传的 usage（只并 token，不计数）
      * @param {Object} usage `drainAssistantStream` 返回的 usage
-     * @returns {void}
+     * @returns {Number} 当前的累计调用次数
      */
     const trackUsage = (usage) => {
         runUsage = addUsage(runUsage, usage)
+        return modelCalls
+    }
+
+    /* ---------- PR-0.5：上游调用的重试与换档 ---------- */
+
+    /**
+     * 重试配置。**默认 `enabled: false`** ⇒ 不配就与改造前逐字一致（一次失败直接抛给上层）。
+     * 打开之后也只覆盖"首字节前的失败"，理由见 `upstreamRetryDecision` 规则 1。
+     */
+    const upstreamCfg = config.upstreamRetry || {}
+    /** 备选档位：配了不存在的 key 等于没配，但不能让主流程因此崩掉 */
+    const fallbackCfg = upstreamCfg.fallbackModel ? (config.models?.[upstreamCfg.fallbackModel] || null) : null
+    if (upstreamCfg.fallbackModel && !fallbackCfg) {
+        tlog.warn(`upstreamRetry.fallbackModel=${upstreamCfg.fallbackModel} 不是有效档位 key，换档功能关闭`)
+    }
+    /**
+     * 上游熔断（§2B/PR-0.5 剩余项③）。**进程级单例**：它衡量的是"这个出口现在死没死"，
+     * 属于服务健康而不是某一轮的状态 ⇒ 观测只能走 `llm.logger`，
+     * 不能绑在 `tlog` 上——单例会把第一次调用时的那个 run 日志器一直握着，
+     * 后面的熔断事件就全写进了一条早已结束的 trace。
+     */
+    const upstreamBreaker = getBreaker({
+        cfg: config.upstreamBreaker || {},
+        log: (e) => logger.warn(`upstreamBreaker ${JSON.stringify(e)}`),
+    })
+    /** 出口键：取**当次真正使用的那一档**的 baseURL。12 档同出口时它们收敛成同一个键（D39 要的就是这个） */
+    const breakerKeyOf = ({usingFallback}) => breakerKeyFor({
+        baseURL: (usingFallback ? fallbackCfg : llmConfig)?.baseURL,
+        modelKey: usingFallback ? upstreamCfg.fallbackModel : llmConfig.key,
+    })
+    if (upstreamBreaker.config.enabled) {
+        tlog.info(`上游熔断已启用: threshold=${upstreamBreaker.config.failureThreshold} openMs=${upstreamBreaker.config.openMs}`
+            + (upstreamBreaker.config.notes?.length ? ` 参数归一提示=${JSON.stringify(upstreamBreaker.config.notes)}` : ''))
+    }
+    /** 本轮换档过程的留痕（进 message.extInfo 与 llmUsage，供看板区分"慢"与"抖"） */
+    const upstreamStats = {attempts: 0, retried: 0, fallbackFrom: '', fallbackTo: '', lastReason: ''}
+    /** 换过档之后，账本与 SSE meta 里记的都必须是**真正回答了这个字的那个档位**（v1.27 同一条原则） */
+    let llmModelUsed = llmModel
+    /** 备选档位要单独建 client：baseURL 与 apiKey 都可能不同 */
+    const fallbackClients = new Map()
+
+    /**
+     * @description 打一次上游：创建流 + 消费到结束，期间跟踪"有没有吐过字"
+     * @param {Object} params 参数
+     * @param {Object} params.body 请求体
+     * @param {Function} params.onDelta 每条增量回调
+     * @param {Number} [params.promptTokens] 本次请求的 prompt token 估算（换档可行性要用）
+     * @param {String} params.tag 日志标记
+     * @returns {Promise<Object>} `drainAssistantStream` 的结果
+     */
+    /**
+     * 实时正文三件套。存在的原因是 2026-11-10 那次真实滚动验收抓到的硬伤：
+     * 抢救落档时档案写成了 **0 字 abort**，而客户端其实收到了 6,898 字。
+     * 根因不在"要不要落档"，在**正文在哪**：已累计的正文只存在于 `drainAssistantStream` 的局部变量里，
+     * `answerContent` 要等 drain **返回**才累加，而抢救恰恰发生在它返回之前。
+     *
+     * `onDelta` 的第二参数就是 drain 的 snapshot（`content` 是它的累计值），
+     * 这里只做**引用赋值**（字符串不可变），不复制、不额外分配。
+     */
+    let liveAnswer = ''
+    let liveReasoning = ''
+    let liveAnswerMerged = false
+    /**
+     * @description 把实时正文并进 `answerContent`（幂等：并过一次就不再并）
+     * @returns {Boolean} 本次是否真的并了
+     */
+    const mergeLiveAnswer = () => {
+        if (liveAnswerMerged || !liveAnswer) {
+            return false
+        }
+        answerContent = liveAnswer
+        answerReasoning = liveReasoning
+        liveAnswerMerged = true
+        return true
+    }
+
+    const callUpstream = async ({body, onDelta, promptTokens = 0, tag}) => {
+        const ret = await withUpstreamRetry({
+            cfg: {...upstreamCfg, fallbackModel: fallbackCfg ? upstreamCfg.fallbackModel : ''},
+            /** 熔断：默认关（`upstreamBreaker_enabled` 不为 true 时 `allow()` 一律放行，行为与改造前一致） */
+            breaker: upstreamBreaker,
+            breakerKeyOf,
+            invoke: async ({usingFallback, markFirstByte}) => {
+                const cfg = usingFallback ? fallbackCfg : llmConfig
+                /**
+                 * 换档时 `model` 与 `max_tokens` 必须一起换：
+                 * 只换 `model` 会拿着主档的 60000 输出上限去打一个 16384 窗口的备选档，
+                 * 那不是重试是必然失败。
+                 */
+                const sendBody = usingFallback
+                    ? {...body, model: cfg.model, max_tokens: Math.min(Number(body.max_tokens) || cfg.maxTokens, cfg.maxTokens)}
+                    : body
+                upstreamStats.attempts++
+                if (usingFallback) {
+                    upstreamStats.fallbackTo = cfg.key
+                }
+                if (upstreamStats.attempts > 1) {
+                    upstreamStats.retried++
+                }
+                trackCall()
+                /**
+                 * 在途刷新：把"到目前为止真的发起了几次、花了多少"写回账本行。
+                 * **只写计数与 token，不写 progress**（dac 的 touchInflight 里还会再挡一道）：
+                 * 进度归收尾管，两处都能写就会互相覆盖，谁赢取决于时序
+                 * ——那是 §2E-2"两份同值分家"的复发形状。
+                 * 不 await：刷新账本不该拖住一次生成；但失败要看得见。
+                 * 不写 latencyMs：那是终态字段（整轮墙钟）。在途写它，一个字段就变成两义——
+                 * 实测留下的行是 latencyMs=180 而这条流实际活了 12.2s，谁拿它算时长都会短一个量级。
+                 *
+                 * **这行能读出什么、读不出什么要写死在注释里**（免得下一个人又去声明它）：
+                 * 能读出 `insertTime`=开局时刻、`updateTime`=最后一次心跳、以及已发起的调用数与已花的 token；
+                 * **读不出这轮死了多久**——硬杀不会补写最后一笔，所以它没有"结束时间"。
+                 * 想拿到在途时长就得周期性心跳（每 N 秒一笔写），那是"写放大 vs 可观测"的另一个决定，
+                 * 现在先不做：`listAbandoned` 要的是"这轮被遗弃了、花了多少"，不是"它精确活了多久"。
+                 */
+                if (config.llmUsageLive?.enabled !== false) {
+                    llmUsageDac.touchInflight({
+                        messageCode,
+                        modelCalls,
+                        promptTokens: runUsage.promptTokens,
+                        completionTokens: runUsage.completionTokens,
+                        totalTokens: runUsage.totalTokens,
+                        cachedTokens: runUsage.cachedTokens,
+                        reasoningTokens: runUsage.reasoningTokens,
+                        billablePromptTokens: Math.max(0, runUsage.promptTokens - runUsage.cachedTokens),
+                        hasUsage: runUsage.promptTokens > 0 || runUsage.completionTokens > 0,
+                        /** 估算输入 token：给被硬杀的 run 留一个量级（真值仍由收尾写 billablePromptTokens） */
+                        estPromptTokens: promptTokens || 0,
+                        upstreamAttempts: upstreamStats.attempts,
+                        upstreamRetried: upstreamStats.retried,
+                        fallbackFrom: upstreamStats.fallbackFrom,
+                        fallbackTo: upstreamStats.fallbackTo,
+                    }).catch((e) => tlog.warn(`在途刷新账本失败: ${String(e?.message || e).slice(0, 160)}`))
+                }
+                let client = openai
+                if (usingFallback) {
+                    const ck = `${cfg.baseURL}|${cfg.apiKey}`
+                    if (!fallbackClients.has(ck)) {
+                        /** `maxRetries` 与主 client 同口径：开着我们的重试就不让 SDK 再叠一层 */
+                        const sdkRetries = upstreamCfg.enabled === true ? 0 : undefined
+                        fallbackClients.set(ck, new OpenAI({
+                            apiKey: cfg.apiKey, baseURL: cfg.baseURL,
+                            defaultHeaders: traceHeaders(trace), maxRetries: sdkRetries,
+                        }))
+                    }
+                    client = fallbackClients.get(ck)
+                }
+                const stream = await client.chat.completions.create(sendBody, {signal: options.signal})
+                return await drainAssistantStream(stream, {
+                    onDelta: (delta, snapshot) => {
+                        /** 吐过字就打上标记：这一步决定了"这次失败还能不能安全重来" */
+                        markFirstByte()
+                        /**
+                         * 记下 drain 的实时累计值（引用，不复制）。
+                         * 抢救路径要靠它——那时 `answerContent` 还是空的。
+                         */
+                        liveAnswer = snapshot?.content || liveAnswer
+                        liveReasoning = snapshot?.reasoning || liveReasoning
+                        onDelta(delta)
+                    },
+                    /**
+                     * 每帧问一次"还要不要继续"。
+                     * 没有这一条时，`options.signal.aborted` 只在 drain **返回之后**才被检查
+                     * （`:888`、`:1138`），于是客户端断开后生成会一路跑到底：
+                     * 实测断开之后又送出 45 秒 / 10,772 字，而档案一行没写、账本停在 `processing`。
+                     * 早停之后 `:1138` 的那条路径就能立刻执行，把已有正文落成 `progress:'abort'`。
+                     *
+                     * PR-D 2b 加了第三档停止位（hard 插话），**顺序是语义**：
+                     * `aborted`（终态）> `shutdownStopRequested`（终态）> `hard-steer`（非终态）。
+                     * 用户断开时绝不许先消费掉 hard 旗——那会把"客户端已走"的 abort 落档
+                     * 变成"插话注入后继续生成"，钱照烧、档没落、连接还不存在。
+                     */
+                    shouldStop: async () => {
+                        if (options.signal?.aborted) {
+                            return 'aborted'
+                        }
+                        if (shutdownStopRequested) {
+                            return shutdownStopRequested
+                        }
+                        return options.hardSteer?.active === true && options.hardSteer.flag ? options.hardSteer.flag : null
+                    },
+                })
+            },
+            /** 换档前核一次窗口：装不下就不换，宁可失败也不换成必然失败的 400 */
+            fallbackUsable: () => canFallbackTo({
+                tokens: promptTokens,
+                target: fallbackCfg,
+                slackTokens: config.context?.slackTokens,
+            }),
+            retryAfterMsOf: (e) => parseRetryAfterMs(e?.headers),
+            log: (o) => {
+                upstreamStats.lastReason = String(o.reason || o.action || '')
+                tlog.warn(`上游调用(${tag}) ${o.note}: action=${o.action}, reason=${o.reason}, delayMs=${o.delayMs}`)
+            },
+        })
+        if (ret.usingFallback && fallbackCfg) {
+            llmModelUsed = fallbackCfg.key
+            upstreamStats.fallbackFrom = llmModel
+        }
+        return ret.value
     }
 
     /**
-     * @description 账本归属日：UTC 的 yyyy-mm-dd，与 day 索引一致
+     * @description 账本归属日：用 UTC 的 yyyy-mm-dd，与 day 索引一致
+     *
+     * 为什么不用本地时区：账本要跨 worker、跨环境对账，本地日期会让"今天"在不同机器上不是同一天。
      * @returns {String} yyyy-mm-dd
      */
-
-    /**
-     * @description 取当前这一轮的用量快照：派生指标 + 告警判定
-     * @returns {{metrics: Object, alert: Object}} 见 `deriveUsageMetrics` 与 `usageCallAlert`
-     * @description
-     * 坚持**每次调用现算**，不读"稍后由收尾代码赋值"的外层变量：
-     * 异常与中断路径根本不经过收尾代码，读外层变量会拿到初始值，
-     * 结果同一轮里 `extInfo.usage.modelCalls` 是 0、账本行是 1，两个数字打架。
-     */
-    const usageSnapshot = () => ({
-        metrics: deriveUsageMetrics(runUsage, modelCalls),
-        alert: usageCallAlert({
-            modelCalls,
-            maxIterations,
-            warnAt: config.limits?.runModelCallsWarn,
-            hardAt: config.limits?.runModelCallsHardLimit,
-        }),
-    })
 
     /**
      * @description 上限打满时补一次"无工具收尾调用"：只带 messages 与提示，产出结论并照常流式下发
@@ -633,49 +867,44 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         try {
             /** 预算重核与主循环每轮同口径：这一步也要求解，否则补落反而撑爆上下文 */
             compactToBudget(messages, contextBudget, {tokenizerOptions})
-            /** 压缩会就地改写已有消息 ⇒ 增量测量结果作废，下一轮（若有）重新全量测 */
+            /** 压缩可能就地改写已有消息 ⇒ 增量测量结果作废，下一轮（若有）重新全量测 */
             budgetMeter.invalidate()
             const finalizeBody = buildFinalizeBody(createBody, messages)
             tlog.info(`无工具收尾调用开始: messages=${finalizeBody.messages.length}, maxIterations=${maxIterations}`)
-            /**
-             * `trackCall()` 放在 invoke **里面**：一次真实上游尝试就该记一次调用，
-             * 否则重试过的 run 在账本上看起来只打了一次，成本与"循环告警"口径都会偏。
-             */
-            const {value: drained} = await withUpstreamRetry({
-                cfg: {...upstreamCfg, fallbackModel: ''},
-                breaker: upstreamBreaker,
-                breakerKeyOf: () => breakerKeyFor({baseURL: llmConfig.baseURL, modelKey: llmConfig.key}),
-                invoke: async ({markFirstByte}) => {
-                    trackCall()
-                    const finalizeStream = await openai.chat.completions.create(finalizeBody, {signal: options.signal})
-                    return drainAssistantStream(finalizeStream, {
-                        onDelta: (delta, snapshot) => {
-                            /** 首字节护栏：一旦向客户端吐过字，本次失败就不许再重发（否则用户看到两份正文） */
-                            markFirstByte()
-                            liveAnswer = snapshot?.content || liveAnswer
-                            liveReasoning = snapshot?.reasoning || liveReasoning
-                            options.streamCallback(JSON.stringify({role: 'assistant', ...delta, messageCode}))
-                        },
-                        /** 每帧之前问一次：客户端断开（aborted）或抢救下了停止位都要立刻停，别再花钱 */
-                        shouldStop: async () => (options.signal?.aborted ? 'aborted' : shutdownStopRequested),
-                    })
+            const drained = await callUpstream({
+                body: finalizeBody,
+                promptTokens: budgetMeter.check(messages),
+                tag: 'finalize',
+                onDelta: (delta) => {
+                    options.streamCallback(JSON.stringify({role: 'assistant', ...delta, messageCode}))
                 },
-                retryAfterMsOf: (e) => parseRetryAfterMs(e?.headers),
-                log: (e) => tlog.warn(`chat 上游退避(收尾) ${JSON.stringify(e)}`),
             })
             /**
-             * 早停就是终态：判据必须是**真值**（源仓就错过一次——写死 `=== 'aborted'`
-             * 把抢救的 `'shutdown-archive'` 整个漏掉，于是 finish 被幂等挡住、档案停在 0 字 abort）。
-             * `liveAnswerMerged` 为真时抢救已经并过正文，不能再累加一次（会变两份）。
+             * 收尾调用也会被打断：同样先并入正文、封存这一段，然后**不谎报"拿到正文"**，
+             * 让主循环出口用同一条 abort 路径落档（`persistTurn` 是幂等的，不会写两行）。
              */
             if (drained.stopped) {
-                if (!liveAnswerMerged) {
+                /**
+                 * 与主循环同一套判据：真值，不是等值。
+                 * `liveAnswerMerged` 为真时抢救已经把正文并进 `answerContent` 了，
+                 * 这里再加一次就会出现"档案里同一篇正文写了两遍"。
+                 */
+                const rescuedFin = liveAnswerMerged
+                if (!rescuedFin) {
                     answerContent += drained.content
                     answerReasoning += drained.reasoning
                 }
                 trackUsage(drained.usage)
+                if (drained.content && !rescuedFin) {
+                    segments.seal({
+                        kind: SEGMENT_KINDS.FINALIZE,
+                        text: drained.content,
+                        startedAt: roundStartedAt,
+                        now: Date.now(),
+                    })
+                }
                 finalizeInterrupted = true
-                tlog.warn(`无工具收尾调用被打断: reason=${drained.stopped}, answerLen=${answerContent.length}`)
+                tlog.warn(`无工具收尾调用被打断: 已保留 ${drained.content.length} 字，走 abort 落档`)
                 return false
             }
             answerContent += drained.content
@@ -698,11 +927,99 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             return false
         }
     }
-    /** break 与"被上限掐断"是两种退出，抽取前无法区分（空答案缺陷因此不可观测）*/
+
+    /**
+     * PR-M B2 完成性反问（§10.3 决策 (i)(ii)）：模型自称做完（`break` 且已有正文）、但计划仍有未结项时，
+     * 无工具再问一次，按 DONE/CONTINUE 决定"保留原答案"还是"并入补充"。三处刻意与 `runFinalizeCall` 不同：
+     * 1. **不实时流式**——它的输出可能被丢弃，先缓冲，判定 append 才吐给客户端（否则客户端会收到一段档案里不要的字 ⇒ 分家）；
+     * 2. **不置 `forcedFinal`/`finalizeInterrupted`**——那是"空答案被迫补"的语义，这里原答案好好的，借用会污染落库分派；
+     * 3. **被打断或失败 ⇒ 保留原答案**，绝不把已经写好的答案拖成 abort。
+     * @returns {Promise<Boolean>} 是否并入了补充
+     */
+    const runSelfCheckCall = async () => {
+        if (!currentPlan) {
+            return false
+        }
+        compactToBudget(messages, contextBudget, {tokenizerOptions})
+        budgetMeter.invalidate()
+        const selfCheckBody = buildFinalizeBody(createBody, messages, buildSelfCheckHint(currentPlan))
+        tlog.info(`完成性反问开始: messages=${selfCheckBody.messages.length}, 本轮计划项=${currentPlan.items.length}`)
+        try {
+            const drained = await callUpstream({
+                body: selfCheckBody,
+                promptTokens: budgetMeter.check(messages),
+                tag: 'self-check',
+                /** 缓冲不外发：模型可能只回一个 DONE，那段不该出现在客户端 */
+                onDelta: () => {},
+            })
+            trackUsage(drained.usage)
+            if (drained.stopped) {
+                tlog.warn('完成性反问被打断：保留原答案，不并入半截反问结果')
+                return false
+            }
+            const verdict = interpretSelfCheckReply(drained.content)
+            if (verdict.action === 'append' && verdict.supplement) {
+                answerContent += (answerContent ? '\n\n' : '') + verdict.supplement
+                iterationCount++
+                /** 此前刻意没流式；既然决定并入，补吐给客户端，保持客户端与档案一致 */
+                options.streamCallback(JSON.stringify({role: 'assistant', content: verdict.supplement, messageCode}))
+                segments.seal({
+                    kind: SEGMENT_KINDS.SELF_CHECK,
+                    text: verdict.supplement,
+                    startedAt: roundStartedAt,
+                    now: Date.now(),
+                })
+                roundStartedAt = Date.now()
+                tlog.info(`完成性反问补充并入答案: +${verdict.supplement.length} 字`)
+                return true
+            }
+            tlog.info(`完成性反问：模型确认完成或未附补充（marker=${verdict.marker || 'none'}），保留原答案`)
+            return false
+        } catch (e) {
+            /** 反问是锦上添花，失败/超时都不能拖垮已有答案 */
+            tlog.error(`完成性反问调用失败，保留原答案: ${String(e?.message || e).slice(0, 300)}`)
+            return false
+        }
+    }
+
+    /** break 与"被上限掐断"是两种退出，抽取前无法区分（§2E-3 空答案 bug 因此不可观测）*/
     let loopBroke = false
-    /** 无工具收尾调用是否被打断：打断要走 abort 落档，不能当成"补落成功" */
+    /** 无工具收尾调用是否被打断（PR-E0.5：打断要走 abort 落档，不能当成"补落成功"） */
     let finalizeInterrupted = false
-    /** persistTurn 要落这两个字段，必须在定义 persistTurn 之前就初始化（否则 abort 路径撞上 TDZ）*/
+    /**
+     * @description 打断来源：只由"进程是否已在关闭"区分，别用 progress 表达两件事
+     * @returns {String} `process-lost`（发版/关机拆连接）或 `client-disconnect`（用户或网络）
+     */
+    const interruptReason = () => (isClosing() ? 'process-lost' : 'client-disconnect')
+    /**
+     * @description 取"当前这一轮"的用量快照：派生指标 + 告警判定
+     * @returns {{metrics: Object, alert: Object}} 见 `deriveUsageMetrics` 与 `usageCallAlert`
+     * @description
+     * 这里坚持**每次调用现算**，而不是读两个"稍后由收尾代码赋值"的外层变量。
+     * 后者是个真踩过的坑：为了绕 `persistTurn` 的 TDZ 我先给了外层变量初始值，
+     * 结果异常/中断路径根本没走到赋值那一行，落库的 `usage.modelCalls` 停在初始的 0，
+     * 而同一次的账本行里 `modelCalls` 是真实的 1 —— 同一轮两个数字打架。
+     */
+    const usageSnapshot = () => ({
+        metrics: deriveUsageMetrics(runUsage, modelCalls),
+        /**
+         * 告警判的是"循环失控"，所以喂给它的必须是**按循环轮次计的次数**，而不是含重试的总发起数。
+         * PR-0.5 打开后 `modelCalls` 会把退避重试也算进去：`maxAttempts=3` × 6 轮 = 18 次，
+         * 一次纯粹的"relay 在抖"就会踩响 run-away 告警——**那会把最需要看清的两件事搅成一锅**
+         * （"我们的循环出问题了" vs "上游不稳定"）。
+         * 成本仍然按真实的 `modelCalls` 计（见账本），只是告警口径分开。
+         */
+        alert: usageCallAlert({
+            modelCalls: Math.max(0, modelCalls - upstreamStats.retried),
+            maxIterations,
+            warnAt: config.limits?.runModelCallsWarn,
+            hardAt: config.limits?.runModelCallsHardLimit,
+        }),
+        /** 告警用的是扣掉重试的口径，这里把扣了多少留在旁边，便于事后核对 */
+        retried: upstreamStats.retried,
+    })
+
+    /** 上面两个字段供 persistTurn 落库使用，必须先初始化，abort/异常路径才不会撞 TDZ */
     let loopExit = 'unknown'
     let forcedFinal = false
     /** 幂等标记：异常路径与正常路径都调 persistTurn，同一轮只能落一条档 */
@@ -713,6 +1030,11 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
      * @description 落库本轮（幂等：同一轮只落一次，异常路径不会造成重复行）
      * @param {String} progress 落库进度：finish/abort/error
      * @param {String} [errorMessage] 异常归因文本，写进 message.error 供历史与排障使用
+     * @param {Object} [extra] 附加落档字段
+     * @param {String} [extra.interruptedBy] 打断来源：client-disconnect / process-lost。
+     *        **单独一列**是刻意的：`progress:'abort'` 必须同时表达"用户按停止"与"发版拆连接"两种事，
+     *        而这两种事在运维上是完全不同的问题（前者正常、后者是我们的损失）。
+     *        把它们压进一个字段，就等于把 P-10 重新变回"查不出来"。
      * @returns {Promise<void>}
      */
     const persistTurn = async (progress, errorMessage, extra = {}) => {
@@ -738,20 +1060,24 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                 now: Date.now(),
             })
         }
-
-        /** 现算快照：abort/error 路径不会走到收尾代码，读"稍后赋值"的外层变量会拿到过期初始值 */
+        /** 现算快照：abort/error 路径不会走到收尾代码，读外层"稍后赋值"的变量会拿到初始值 */
         const snap = usageSnapshot()
         /**
-         * 本地 tokenizer 量一次正文 token，两处共用：档案 `answerTokens` 与账本 `estCompletionTokens`。
-         * 为什么账本要多这一列：usage 帧在流的**末尾**，客户端一断或容器一死就永远到不了 ⇒
-         * 被切断的 run 在账本里 `completionTokens` 记 0，而实际生成了几千字 ⇒ 成本报表系统性低估损失。
-         * 归列规矩（源仓 v1.38 定）：**估算归估算列，实测归实测列**，不许互相冒充。
+         * 本地 tokenizer 量一次正文 token，两处共用（档案 `extInfo.answerTokens` 与账本 `estCompletionTokens`）。
+         *
+         * 为什么账本要多这一列：2026-11-10 实测，三条被切断的 run 真实生成了
+         * **10,772 / 1,986 / 1,934 字**，而账本里 `completionTokens` 合计 **1**——
+         * usage 帧在流末尾，客户端一断或容器一死就永远到不了。
+         * ⇒ 成本报表对"发版/断开造成的损失"是**系统性低估**的，而这类损失恰恰最需要被算出来。
+         * 规矩不变（v1.33 定的）：**估算值单独一列，绝不混进 `completionTokens`/`billablePromptTokens`
+         * 这些"上游实测"口径**，否则两种数一旦混在一起就再也分不开谁可信。
          */
         const answerTokensNow = calcTextTokenCount(answerContent + answerReasoning, tokenizerOptions.tokenizer)
         /**
-         * 与 usage 快照同一个道理：`loopExit` 在四个早退点上都还是 `unknown`（源仓 v1.72 的 dev 实测就落在那）。
-         * 这里现算一次，档案 `extInfo.loopExit` 与账本 `llmUsage.loopExit` **共用同一个值**——
-         * 只补一张表就会出现"同一个问题在两张表里两个答案"，那比两边都 unknown 更难查。
+         * 与上面同一个道理：**"稍后赋值"的 `loopExit` 在四个早退点上都还是 `unknown`**
+         * （v1.72 dev 实测落在 `progress:abort` + `loopExit:unknown` 的那条记录就是证据）。
+         * 在这里现算一次，档案 `extInfo.loopExit` 与账本 `llmUsage.loopExit` **共用同一个值**——
+         * 只补其中一张表，就会出现"同一个问题在两张表里给出不同答案"，那比 unknown 更难查。
          */
         const loopExitNow = exitReasonForPersist({progress, loopExit, via: extra.via, closing: isClosing()})
         /** 落一条终态检查点（finish/abort），续跑与审计都以此为准 */
@@ -760,52 +1086,42 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             answer: answerContent,
             toolState: {pendingCalls: [], completedCalls: toolCallTrace.map(t => t.id)},
         })
-        await saveMessage(query, messageCode, messages, conversationCode, channel, channelGroup, llmModel, answerContent, answerReasoning, curUserInfo, {
+        /** `llmModelUsed`：换过档就记真正回答这一轮的那个档位，与账本同一口径 */
+        await saveMessage(query, messageCode, messages, conversationCode, channel, channelGroup, llmModelUsed, answerContent, answerReasoning, curUserInfo, {
             ...options,
             answerList,
+            /**
+             * PR-M：本轮计划落 `extInfo.plan`。`planForPersistence` 在没有计划时给 null ⇒
+             * 装配清单里写 `plan: options.plan` 后，"本轮没有计划"是 null、不是 `{items:[]}` 空壳
+             * （下一轮回读时两者含义不同：一个是没调 update_plan，一个是清空了计划）。
+             * 与 `cache`/`channelCacheKey` 同一取向：审计/回读字段，**刻意不进 messageView**（无界面消费方）。
+             */
+            plan: planForPersistence(currentPlan),
+            /**
+             * PR-D commit 2：本轮注入过的插话清单（含注入时刻）。与 plan 同取向——
+             * "注入过哪些插话"是审计口径（前端从 steer_ack 已经实时拿到过），刻意不进 messageView。
+             * null=没有（不是空壳数组：同"没调 update_plan"与"清空了计划"的区分）。
+             */
+            steerings: steeringsArchive.length ? steeringsArchive : null,
             /** 异常路径的归因（`describeError` 的 kind:message）；正常路径为 null */
             error: errorMessage || null,
-            /** 同上：与账本共用 `loopExitNow`（abort 路径不再带 unknown 落库） */
+            /**
+             * §2E-3：把"循环怎么退出的"和"是否补过收尾调用"落进 extInfo，空答案从此可解释、可统计。
+             * v1.72：`abort` 落库时循环还没给出原因（四个早退点都在赋值之前），dev 实测就落在
+             * `loopExit:unknown` 上——所以这里统一补成 `aborted:<via>` / `shutdown:<via>`，
+             * 规则只在这一份，不在四个站点各写一遍（写四遍必然漂移）。
+             */
             loopExit: loopExitNow,
             forcedFinal,
-            /**
-             * 打断来源单独一列。`progress:'abort'` 必须同时表达"用户按停止"与"发版切连接"两件事，
-             * 而这两件事在运维上是完全不同的问题（前者正常、后者是我们的损失）——
-             * 压进一个字段就等于把 P-10 重新变回查不出来。
-             *
-             * 与源仓对齐的一处修正（2026-11-12）：这里原来**只**调 `interruptReason()`，
-             * 于是五个站点显式传进来的 `extra.interruptedBy` 全是死参数——
-             * 今天不出错纯属巧合（各站点算的是同一个函数、RESCUE 发生在 closing 期内）。
-             * 现在站点显式传值优先，缺省时才现场计算：既保留特殊来源的能力，
-             * 也不会有"忘了接线就落成标签"的静默出口（源仓那种 `unspecified` 默认值在这里从来不该存在）。
-             */
-            interruptedBy: progress === 'abort' ? (extra.interruptedBy || interruptReason()) : null,
-            /**
-             * 这条档由哪条路径写下（取值见 PERSIST_VIA）。
-             * 与 interruptedBy 是两个问题：后者是"为什么被打断"，前者是"谁把这段字写下来的"。
-             * 循环入口/出口那两处检查故意留 unattributed —— 给一个看似合理的假来源比留空更坏。
-             */
-            writtenBy: extra.via || PERSIST_VIA.UNATTRIBUTED,
-            /**
-             * P5：发起这一轮时同一会话的上一轮还没终态 ⇒ **本轮上下文不可能包含它**。
-             * 这是本轮开始前的一个读数，不是推测的告警，所以必须进档案：
-             * 用户遇到的症状是"它怎么不记得我上一句"，而档案里没这句话时，
-             * 我们排查只能看到"两轮都成功"，于把一个可核对的事实读成模型质量问题。
-             * 没有重叠时是 `null`（显式空值，不是缺键——缺键与"确认没有"是两件事）。
-             */
-            runOverlap: options.runOverlap || null,
-            /**
-             * P3：这一轮是"重新生成"出来的，值是被替换那条的 messageCode；不是重跑时写**显式 null**。
-             * 旧答案不删（可能已被引用），所以这条来源是"哪两条是同一问的重跑"的唯一依据。
-             * 重生成既不读也不写答案缓存（见 `regeneration.js`）。
-             */
-            regeneratedFrom: regeneratedFromForArchive(regeneratedFrom),
             /** PR-B：过程分段。中间正文从此不再只存在于已经断开的那条 SSE 连接里 */
             segments: segments.list(),
             segmentSummary: segments.summary(),
-            /** §14/G-6：本 run 的模型用量与调用次数（非缓存 token 为主指标） */
+            /** §14/G-6：每 run 用量与调用次数（非缓存 token 为主指标），落进 extInfo 便于逐条下钻 */
             usage: {...runUsage, ...snap.metrics, callAlert: snap.alert.level},
+            /** PR-0.5：这一轮重试/换档的现场（没开重试时 attempts 就等于真实轮次、其余字段为空） */
+            upstream: {...upstreamStats},
             messageTokens: calcMessagesTokenCount(messages, tokenizerOptions),
+            /** 复用 persistTurn 里算好的那一次（同一篇正文量两遍会随正文变长而白烧 CPU） */
             answerTokens: answerTokensNow,
             tokenizerVersion: TOKENIZER_VERSION,
             tools: createBody.tools,
@@ -814,7 +1130,12 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             skills: skillContext ? skillChat.getSkillStats(skillContext) : null,
             contextUsage,
             sources: ragSources,
-            /** 含 result：已在 trace 侧截到 4000 字符，历史回放的 ProcessPanel 靠它显示返回内容 */
+            /**
+             * 含 result（trace 侧按 4000 字符截断）与 **args（入参，按 `limits.toolArgsChars` 截断）**。
+             * 入参这一份是 PR-H H1 新增的：此前这里只有 id/name/result，
+             * 实测 148/148 条调用记录都没有入参 ⇒ "模型这一轮到底查了什么"在档案与流里都是空白。
+             * `argsChars`/`argsTruncated` 与 `args` 并列，是为了让"被截了"与"截到多少"不互相污染。
+             */
             toolCalls: toolCallTrace.map(t => ({
                 id: t.id,
                 name: t.name,
@@ -835,13 +1156,57 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             })),
             recallStats,
             progress,
+            /**
+             * 打断来源（只有 abort 路径会有值）：审计与"发版丢了几个"都靠它，见 `persistTurn` 注释。
+             *
+             * 兜底从 `'unspecified'` 改成**现场计算**（底座教的那一步：它的默认分支一直调
+             * `interruptReason()`，所以它根本不会产生我 2026-11-12 在源仓抓到的那类漏点）。
+             * 理由不是"名称好听"，而是**静默的默认值会把缺陷藏成数据**：站点忘接线时，
+             * 档案里留下的是一条看起来正常的 `unspecified`，
+             * 于是"用户按停止"与"发版切连接"的统计从此少算，而且没有任何地方会报错。
+             * 现在忘接线的后果是"归因由同一个 `isClosing()` 判据补上"——
+             * 站点显式传值仍然优先（RESCUE 之类的特殊来源不能被覆盖）。
+             */
+            interruptedBy: progress === 'abort' ? (extra.interruptedBy || interruptReason()) : null,
+            /**
+             * 这条档由哪条路径写下（判据见 `PERSIST_VIA`）。
+             * 与 `interruptedBy` 是两个问题：后者说"为什么被打断"，前者说"**谁**把这段字写下来的"——
+             * v1.40 那次 0 字 abort 正是"抢救先落档、run 随后跑完却被幂等挡住"，
+             * 只有 writtenBy 能把这种顺序事故从日志里读出来。
+             */
+            writtenBy: extra.via || PERSIST_VIA.UNATTRIBUTED,
+            /**
+             * P5：发起这一轮时同一会话的上一轮还没终态 ⇒ **本轮上下文不可能包含它**。
+             * 这条不是推测出来的告警，是本轮开始前的一个读数，所以它必须进档案：
+             * 用户遇到的症状是"它怎么不记得我上一句"，而如果档案里没有这句话，
+             * 我们排查时只能看到"两轮都成功"，于是把一个可核对的事实读成模型质量问题。
+             * 没有重叠时这里是 `null`（显式空值，不是缺键——缺键与"确认没有"是两件事，同 H1 的教训）。
+             */
+            runOverlap: options.runOverlap || null,
+            /**
+             * P3：这一轮是"重新生成"出来的，值是被替换那条的 messageCode；不是重跑时写 **显式 null**。
+             * 旧答案不删（产品口径：可能已被引用），所以这条来源就是"哪两条是同一问的重跑"的唯一依据。
+             * 重生成既不读也不写答案缓存（见 `regeneration.js`）：
+             * 把重跑结果静默覆盖成后续普通请求的答案，是另一个未定的产品决定，不在这一刀里。
+             */
+            regeneratedFrom: regeneratedFromForArchive(regeneratedFrom),
+            /**
+             * D44 的留痕：这一轮**到底有没有开深度思考**，以及是被哪一层关掉的。
+             * 没有它，"全站聊天一直在无思考模式下运行"就只能靠读代码 + 读 env 反推；
+             * 有了它，`extInfo.thinking.effective` 一条查询就能回答，
+             * 而且能区分两种"关"：用户明确不要（`requested:'off'`）与档位根本没配（`profileConfigured:false`）。
+             * 拿不到决策的路径（回填、抢救）写 **null**——"确认没开"与"这一行还不知道这件事"是两件事。
+             */
+            thinking: thinkingForArchive(thinkingDecision),
         })
         /** 落库成功才算"已有档案"：放在 saveMessage 之后，这样 saveMessage 自己失败时异常路径还能再补一次 */
         persisted = true
+        /** 已经落过档就不再让关闭序列来抢这一条（`persistTurn` 本身幂等，摘掉只是让表不长大） */
+        detachArchive(messageCode)
         /**
-         * §14 自有账本：一行一个 run 的模型用量。
-         * 记账失败**绝不影响聊天主链路**（与沙箱成本核算、记忆采集同口径），
-         * 但必须留 error 级日志——账本缺行比多花几毛钱严重得多。
+         * §14 自有账本（G-6）：一行一个 run 的模型用量。
+         * 记账失败**绝不影响聊天主链路**（与 totalPrice 沙箱核算、记忆采集同口径），
+         * 但必须留下 error 级日志——账本缺行比多花几毛钱严重得多。
          */
         try {
             await llmUsageDac.upsertByMessageCode({
@@ -849,7 +1214,15 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                 conversationCode,
                 userCode: curUserInfo?.userCode || '',
                 channel,
-                llmModel,
+                /**
+                 * 记**真正回答了这一轮的档位**，不是请求要的那个：换档发生后两者不同，
+                 * 而账本要能回答"这一轮的钱花在哪个模型上"。与 v1.27 归一非法 llmModel 是同一条原则。
+                 */
+                llmModel: llmModelUsed,
+                upstreamAttempts: upstreamStats.attempts,
+                upstreamRetried: upstreamStats.retried,
+                fallbackFrom: upstreamStats.fallbackFrom,
+                fallbackTo: upstreamStats.fallbackTo,
                 day: usageDay(),
                 modelCalls,
                 promptTokens: runUsage.promptTokens,
@@ -859,10 +1232,13 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                 billablePromptTokens: snap.metrics.billablePromptTokens,
                 reasoningTokens: runUsage.reasoningTokens,
                 hasUsage: snap.metrics.hasUsage,
-                /** 估算输出（非上游回传）：被切断的 run 唯一的成本量级来源，与实测列分开存 */
+                /**
+                 * 本地估算的输出 token。**与 `completionTokens` 分列**：后者只有上游回传才有值，
+                 * 而被掐断的 run 永远拿不到回传 ⇒ 只有估算列能回答"这次损失实际生成了多少"。
+                 */
                 estCompletionTokens: answerTokensNow,
                 callAlert: snap.alert.level,
-                /** 与档案同一个现算值：两张表对同一个问题必须给同一个答案 */
+                /** 与档案 `extInfo.loopExit` 同一个现算值：两张表对同一个问题必须给同一个答案 */
                 loopExit: loopExitNow,
                 progress,
                 latencyMs: Date.now() - turnStart,
@@ -891,16 +1267,35 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     }
 
     /**
-     * 挂上停机抢救用的落档函数（两张表分开的理由见源仓 §25 v1.38：闸默认关着时
-     * 登记表恒空，复用那张表会让"待抢救集合"在默认配置下永远是空的）。
+     * 停机抢救的本地停止位：`archiveAllInflight` 落档时置真，由 `shouldStop` 在下一帧停下生成。
      *
-     * 两步、顺序不能反（源仓被真机读数纠正过两次）：
-     *  1. 只下停止位 ⇒ run 在下一帧早退，由上面的 `drained.stopped` 分支带着正文自己落档；
-     *  2. 等 CLOSE_ARCHIVE_WAIT_FOR_RUN_MS 仍未落档才兜底；**没正文就什么都不写**，
-     *     留给回填扫描——写一条 0 字 abort 会挡住随后真正的 finish，比留着 processing 更坏。
+     * 为什么落档与停止**必须一起来**：只落一条 `abort` 档而让生成继续跑到自然结束，
+     * 结果是档案停在抢救那一刻的内容、上游又白生成几十秒，而 `persistTurn` 的幂等保护
+     * 又会把真正的结尾丢掉——**两头都错，还都看不出来**。
+     * 取舍要写明：落在"距强制退出只剩 ${CLOSE_ARCHIVE_RESERVE_MS}ms"这个窗口里的 run 会被主动截断，
+     * 宁可它显示成一条可见的 `abort`，也不要一条"其实写完了却查无此轮"的记录。
+     */
+    let shutdownStopRequested = null
+    /**
+     * 停机抢救用的落档函数（`run` 与 `archives` 两张表分开的原因见 `runRegistry` 注释：
+     * 闸默认关着、那张表恒空，复用它就等于默认配置下没人被抢救）。
      */
     attachArchive(messageCode, async () => {
+        /**
+         * 抢救必须**同时停止花钱**：只落一条 abort 档而让生成继续跑到自然结束，
+         * 结果是"档案停在 40 秒的内容、上游又生成到 90 秒"，那份多出来的钱没人认领，
+         * 而 `persistTurn` 幂等又会把真正的结尾丢掉——两头都错。
+         * 所以这里置一个本地停止位，由 `shouldStop` 在下一帧把生成停下来。
+         */
         shutdownStopRequested = 'shutdown-archive'
+        /**
+         * 第二步才是兜底落档，顺序不能反。真实滚动验收（§25 v1.40）证明：
+         * 一上来就 persistTurn 必然写出 **0 字 abort** —— 那一刻正文还锁在
+         * `drainAssistantStream` 的局部变量里，`answerContent` 是空的；
+         * 而这条档一旦落下，`persistTurn` 的幂等保护就会把随后真正完整的收尾**永久挡在门外**
+         * （实测：客户端明明收到了 6,898 字的完整回答，档案却是空的）。
+         * 所以先只下停止位，给 run 自己早退并带正文落档留一整段等待。
+         */
         const tWait = Date.now()
         while (!persisted && Date.now() - tWait < CLOSE_ARCHIVE_WAIT_FOR_RUN_MS) {
             await new Promise(res => setTimeout(res, 50))
@@ -909,9 +1304,24 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             tlog.info(`抢救只下了停止位，run 自己落档完成: 等待ms=${Date.now() - tWait}, answerLen=${answerContent.length}`)
             return
         }
+        /**
+         * 兜底：run 一帧都没再回来（卡在上游或事件循环），此时唯一能拿到的正文就是 liveAnswer。
+         *
+         * **但没内容时绝不写这条档**（§25 v1.41 的读数逼出来的）：上一版在这里无条件落档，
+         * 实测 T+40s 兜底时 relay 还没吐字（正文 0），于是写出一条 `abort` + 0 字，
+         * 而 3.8 秒后真正的 `finish`（5,780 字）被 `persisted` 幂等永久挡在门外 ⇒
+         * **用户拿到了完整回答，档案却是空的**。这比原来"什么都不留"更误导。
+         *
+         * 分工因此要说清：
+         * - 有正文 ⇒ 抢救写 abort（带着能拿到的那部分），这是真损失；
+         * - 没正文 ⇒ 什么都不写，让 `processing` 留着，由回填扫描在**确认进程已死**后补一条
+         *   "你当时问了什么 + 被中断"（它有无档案这道前置检查，本来就该它做）。
+         */
         const mergedLive = mergeLiveAnswer()
-        if (!(answerContent.length > 0 || answerReasoning.length > 0)) {
-            tlog.warn(`抢救未落档: 等待 ${Date.now() - tWait}ms 后仍无正文，留给回填扫描处理（写 0 字 abort 会挡住真正的 finish）`)
+        const hasContent = answerContent.length > 0 || answerReasoning.length > 0
+        if (!hasContent) {
+            tlog.warn(`抢救未落档: 等待ms=${Date.now() - tWait} 后仍无正文（reasoning 也空）。`
+                + '留给回填扫描处理——写一条 0 字 abort 会挡住随后真正的 finish')
             return
         }
         await persistTurn('abort', 'shutdown:process-lost', {interruptedBy: 'process-lost', via: PERSIST_VIA.RESCUE})
@@ -948,18 +1358,19 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         contextBudget: contextUsage?.budget,
         /**
          * P5：同会话重叠的事实必须**在这条流里就说出来**，不能只留在档案里。
-         * 母本 2026-11-13 双标签页实测：档案有 runOverlap，但实时界面什么也没说，
-         * 重新进入会话（走 /core/message/list 回填）之后那句"本轮上下文不含上一轮"才出现——
-         * 最需要它的那一刻（用户正在等这一轮）它不说话。
+         * 2026-11-13 双标签页实测：档案有 `runOverlap`（`prevAgeMs=2582, contextMissing=true`），
+         * 但实时界面什么也没说；**重新进入会话**（走 `/core/message/list` 回填）之后那句
+         * "本轮上下文不含上一轮"才出现。也就是说最需要它的那一刻——用户正在等这一轮——它不说话。
          *
-         * 这里发的是事实（对象或 null），措辞仍由前端判据决定。
-         * provider 的 case 'meta' 是白名单，不收就等于没发：**两侧必须同一轮改**，
-         * 单边改完症状一模一样，最容易被误判成"改了没用"。
+         * 这里发的是**事实**（对象或 null），措辞仍由前端判据决定。
+         * 前端 provider 的 `case 'meta'` 是白名单，**不加一行就收不到**：两侧都要改，
+         * 单边改完症状一模一样，很容易被误判成"改了没用"。
+         * 形状守卫在 `test/services/core/segmentEvents.test.js`，删掉本行会变红（已实测）。
          */
         runOverlap: options.runOverlap || null,
     })
 
-    /** 同上：协议 3 不能丢掉 sources（理由见 meta 那处注释） */
+    /** 同上：`>= 2`，协议 3 不能丢掉 `sources`（理由见 meta 那处的注释） */
     if (clientProtocol >= 2 && ragSources.length && options.streamCallback) {
         options.streamCallback(JSON.stringify({sources: ragSources}), 'sources')
     }
@@ -972,17 +1383,28 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     try {
         while (iterationCount < maxIterations) {
             if (options.signal?.aborted) {
-                /** 入口命中：这次迭代还没开始，钱没花 */
+                /** 入口命中：这次迭代什么都没做，钱没花；与出口的损失量级不同，所以标签也不同 */
                 await persistTurn('abort', null, {interruptedBy: interruptReason(), via: PERSIST_VIA.LOOP_ENTRY})
                 return 'aborted'
             }
 
             iterationCount++
             roundStartedAt = Date.now()
-            /*工具循环会持续往 messages 里塞结果，每轮请求前都要核对预算——但不再每轮全量重算*/
+            /**
+             * 工具循环会持续往 messages 里塞结果，每轮请求前都要核对预算——但**不再每轮全量重算**。
+             *
+             * 这一刀的口径（v1.20，探针 P-15 实测后缩小）：
+             * - dev 96 条带预算的样本里 **越界 0 次、最大 total/budget 只有 5.80%**，
+             *   也就是 `compactToBudget` 在里面**从未真正改写过任何一条消息**；
+             *   所以"每轮重写历史前缀"这个说法不成立，成立的部分只是**每轮一次全量 tokenize 的 CPU**
+             *   （6 轮迭代 = 6 次全量重算，O(n²)）。
+             * - `calcMessagesTokenCount` 是逐条 reduce ⇒ 总量严格等于各条之和 ⇒ **增量测量与全量等价**，
+             *   不是近似（等价性由用例钉住）。
+             * - 越界时的安全网原样保留：真越界仍会压缩，压完 `invalidate()` 让下一轮重算。
+             * - **缓存与前缀稳定性收益为 0**（P-2b 已证上游只隐式缓存 system 段），别按那个理由改这里。
+             */
             let loopTokens = budgetMeter.check(messages)
             if (loopTokens > contextBudget) {
-                /** 越界安全网：与原实现一致，压完丢弃增量结果，下一轮重新全量测 */
                 compactToBudget(messages, contextBudget, {tokenizerOptions})
                 budgetMeter.invalidate()
                 loopTokens = budgetMeter.check(messages)
@@ -997,45 +1419,61 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                 toolState: {pendingCalls: [], completedCalls: toolCallTrace.map(t => t.id)},
             })
             //console.log(`createBody ${JSON.stringify(createBody)}`)
-            const {value: drained} = await withUpstreamRetry({
-                cfg: {...upstreamCfg, fallbackModel: ''},
-                breaker: upstreamBreaker,
-                breakerKeyOf: () => breakerKeyFor({baseURL: llmConfig.baseURL, modelKey: llmConfig.key}),
-                /** 护栏与成本口径同收尾调用处：trackCall 进 invoke，markFirstByte 在吐字之前 */
-                invoke: async ({markFirstByte}) => {
-                    trackCall()
-                    const chatStream = await openai.chat.completions.create(createBody, {signal: options.signal})
-
+            /** 计数点在发起请求处（不是拿到 usage 处）：被打断的调用照样花了钱，见 `trackCall` 注释 */
             /**
-             * 整轮流式响应的消费与聚合在 `llmLoop.drainAssistantStream` 里：
-             * 这样循环级测试可以注入假 stream（不依赖 OpenAI 客户端），且 SSE 下发时机与抽取前逐字一致。
+             * PR-0.5：这里换成 `callUpstream`。
+             * `promptTokens` 传本轮装配后的估算值——它是"能不能换档"的唯一依据：
+             * 备选档窗口比这轮要发的小，换过去就是拿一次 503 换一次必然失败的 400。
              */
-                    return drainAssistantStream(chatStream, {
-                        onDelta: (delta, snapshot) => {
-                            markFirstByte()
-                            liveAnswer = snapshot?.content || liveAnswer
-                            liveReasoning = snapshot?.reasoning || liveReasoning
-                            options.streamCallback(JSON.stringify({role: 'assistant', ...delta, messageCode}))
-                        },
-                        shouldStop: async () => (options.signal?.aborted ? 'aborted' : shutdownStopRequested),
-                    })
-                },
-                retryAfterMsOf: (e) => parseRetryAfterMs(e?.headers),
-                log: (e) => tlog.warn(`chat 上游退避 ${JSON.stringify(e)}`),
-            })
             /**
-             * 早停就是终态（判据写真值，理由见上面收尾调用处那条注释）。
-             * 源仓实测：漏判这一次，用户拿到完整回答而档案是 0 字 abort。
+             * PR-M recitation（§10.1②）：把当前计划重述拼在**这一轮发送副本**的尾部，对抗长循环目标漂移。
+             * 关键：绝不 `push` 进累积历史 `messages`——那样第 N 轮会背着前 N−1 轮的所有 recitation 副本，
+             * 还会把我们注入的提示当成对话内容落档。`withRecitation` 只在有新计划时返回**新数组**，
+             * 关着 / 还没计划时返回同一个 `messages` 引用，于是下面连 body 都能复用 createBody 本体、零额外拷贝。
              */
-            if (drained.stopped) {
-                if (!liveAnswerMerged) {
+            const sendMessages = planOn
+                ? withRecitation(messages, currentPlan, {enabled: planOn, maxChars: planCfg.recitationMaxChars})
+                : messages
+            /**
+             * hard 插话的生成窗：arm 只在这对 try/finally 之间敞开。
+             * finalize / self-check 两处 callUpstream **不 arm**——它们的 stopped 各有终态语义
+             * （前者落 abort、后者保原答案），被 hard 旗误伤就是把收尾/反问掐成孤儿。
+             * disarm 放 finally：create 抛错（网络/配额）时闸必须合上，否则 flag 会漏进下一窗。
+             */
+            if (options.hardSteer) {
+                options.hardSteer.active = true
+            }
+            let drained
+            try {
+                drained = await callUpstream({
+                    body: sendMessages === messages ? createBody : {...createBody, messages: sendMessages},
+                    promptTokens: loopTokens,
+                    tag: `iter=${iterationCount}`,
+                    onDelta: (delta) => {
+                        options.streamCallback(JSON.stringify({role: 'assistant', ...delta, messageCode}))
+                    },
+                })
+            } finally {
+                if (options.hardSteer) {
+                    options.hardSteer.active = false
+                }
+            }
+            /**
+             * PR-D commit 2b：hard 插话的打断现场——四种停止位里**唯一的非终态出口**。
+             * 位置判据（顺序锚钉死）：必须在终态 `if (drained.stopped)` **之前**；
+             * 写反了 hard-steer 会被终态分支吃掉，静默变成一次 abort 落档——用户视角是"我插话它停了"。
+             * 停花钱的机制与 shutdown 抢救同款：drain 的 break 触发 iterator.return ⇒
+             * undici 取消响应体 ⇒ 上游断线自停。不需要 AbortController 去碰重试层的错误分类。
+             */
+            if (drained.stopped === 'hard-steer' && options.hardSteer && options.runMailbox) {
+                options.hardSteer.flag = null
+                const rescuedHS = liveAnswerMerged
+                if (!rescuedHS) {
                     answerContent += drained.content
                     answerReasoning += drained.reasoning
                 }
-                /** 本 run 的用量：早停也要合并，否则账本会显示"跑了但没花钱" */
                 trackUsage(drained.usage)
-                if (drained.content) {
-                    /** 与源仓同义：早停前那段正文要进过程分段，否则 PR-B 的段留存在这条路径上是空的 */
+                if (drained.content && !rescuedHS) {
                     segments.seal({
                         kind: SEGMENT_KINDS.ANSWER,
                         text: drained.content,
@@ -1043,13 +1481,82 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                         now: Date.now(),
                     })
                 }
+                /** 半句是作废的草稿：并段清零（同工具轮的处理），否则新答案会拼在断掉的半句尾巴上 */
+                answerContent && answerList.push(answerContent)
+                answerContent = ''
+                const hsCfg = config.controlConfig || {}
+                const pulled = options.runMailbox.pullBoundary({
+                    expiryMs: Number(hsCfg.steerExpiryMs) || undefined,
+                    limit: Number(hsCfg.steerBoundaryLimit) || undefined,
+                })
+                if (pulled.toInject.length) {
+                    const {block} = renderSteeringBlock(pulled.toInject)
+                    messages.push({role: 'user', content: block})
+                    for (const s of pulled.toInject) {
+                        steeringsArchive.push({...s, injectedAt: Date.now()})
+                        /**
+                         * ack 的决策从 `llmLoop.steerAction(mode, 'generating')` **读**，不写死——
+                         * v1.13 定的判据到这才真正被消费；hard 在这里就是 {immediate, abort:true}，
+                         * 同队蹭到的 soft 如实拿 {boundary, false}（注入现场是边界，哪怕边界是打断造出来的）。
+                         */
+                        if (options.streamCallback) {
+                            options.streamCallback(JSON.stringify({
+                                ...steerAckPayload(s, steerAction(s.mode, 'generating')),
+                                messageCode,
+                            }), 'steer_ack')
+                        }
+                    }
+                } else {
+                    /** 理论不可达：置位方先 push 后进队尾，队尾不会被去重/过期挤掉。真到了就是判据有洞，如实喊 */
+                    tlog.warn('hard 打断现场取件为空（置位与取件的判据分家，排查线索）')
+                }
+                for (const d of pulled.dropped) {
+                    tlog.warn(`插话在打断边界未注入即弃 steerCode=${d.steerCode}: ${d.reason}`)
+                }
+                roundStartedAt = Date.now()
+                /** 客户端的半句必须抹掉重写（同工具轮的 reset），否则前端把新答案接在半句后面 */
+                emitReset()
+                tlog.warn(`hard 插话打断生成: iter=${iterationCount}, chunks=${drained.chunkCount}, `
+                    + `保留半句=${drained.content.length}字, 注入=${pulled.toInject.length}, 弃=${pulled.dropped.length}`)
+                continue
+            }
+            /**
+             * drain 早停 ⇒ **这一轮已经被打断**，必须就地收尾，不能带着半截正文继续往下走。
+             *
+             * 判据必须是**真值**，不能写 `=== 'aborted'`。真实滚动验收（§25 v1.40）就是这么错的：
+             * 抢救路径置的停止位是 `'shutdown-archive'`，被等值判断整个漏掉 ⇒
+             * run 继续跑完、`finish` 又被 `persisted` 幂等挡掉，档案永远停在抢救那条 **0 字 abort** 上，
+             * 而客户端明明收到了 6,898 字完整回答。
+             *
+             * 正文来源也分两种：
+             * - 正常打断：`drained.content` 就是 drain 已累计的全部 ⇒ 直接并入；
+             * - 抢救已经并过（`liveAnswerMerged`）：那时 `answerContent` 已经是同一份内容的引用，
+             *   **再累加一次就会变成两份** ⇒ 跳过。
+             */
+            if (drained.stopped) {
+                const rescued = liveAnswerMerged
+                if (!rescued) {
+                    answerContent += drained.content
+                    answerReasoning += drained.reasoning
+                }
+                trackUsage(drained.usage)
+                if (drained.content && !rescued) {
+                    segments.seal({
+                        kind: SEGMENT_KINDS.ANSWER,
+                        text: drained.content,
+                        startedAt: roundStartedAt,
+                        now: Date.now(),
+                    })
+                }
+                roundStartedAt = Date.now()
                 await persistTurn('abort', null, {interruptedBy: interruptReason(), via: PERSIST_VIA.EARLY_STOP})
-                tlog.warn(`流被打断并就地落档: reason=${drained.stopped}, answerLen=${answerContent.length}, chunkCount=${drained.chunkCount}`)
+                tlog.warn(`流被打断并就地落档: reason=${drained.stopped}, answerLen=${answerContent.length}, `
+                    + `chunkCount=${drained.chunkCount}, 抢救已并过正文=${rescued}`)
                 return 'aborted'
             }
             answerContent += drained.content
             answerReasoning += drained.reasoning
-            /** 本 run 的用量：每一轮 create 合并一次（次数已在发起处计过） */
+            /** 本 run 的用量与调用次数计数点：每一轮 create 都算一次，越往后越能看出是不是在打循环 */
             trackUsage(drained.usage)
             let toolCalls = drained.toolCalls      // 用于收集工具调用
             let receivedToolCall = drained.receivedToolCall
@@ -1066,7 +1573,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
 
             /**
              * 本轮走向：skill-check / tool-round / final。
-             * 抽取前是两条互斥的 if，这里换成一次判定，分支条件与顺序不变，抽出来是为了能离线穷举。
+             * 抽取前是两条互斥的 if（`!receivedToolCall && ...` 与 `receivedToolCall && ...`），
+             * 这里换成一次判定，分支条件与顺序不变，抽出来是为了能离线穷举（见 llmLoop.test.js）。
              */
             const decision = iterationDecision({
                 receivedToolCall,
@@ -1101,7 +1609,6 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                         now: Date.now(),
                         extra: selectedSkill.name,
                     })
-                    // 重置内容并重新请求
                     answerContent && answerList.push(answerContent)
                     answerContent = ''
                     emitReset()
@@ -1119,9 +1626,9 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                     // 添加助手的消息到对话历史（包含工具调用请求）
                     messages.push(buildAssistantToolCallMessage(toolCalls))
 
-                    /** 记忆、溢出取回、沙箱代码执行都要单独分派：否则会被当成 MCP 工具丢给 mcpToolManager 而找不到实现 */
-                    const {memoryCalls, overflowCalls, codeCalls, otherCalls} =
-                        classifyToolCalls(toolCalls, {isMemoryTool, isOverflowTool, isCodeTool})
+                    /** 记忆、溢出取回、沙箱代码执行、计划更新、产物登记、人机提问都要单独分派：否则会被当成 MCP 工具丢给 mcpToolManager 而找不到实现 */
+                    const {memoryCalls, overflowCalls, codeCalls, planCalls, artifactCalls, askCalls, otherCalls} =
+                        classifyToolCalls(toolCalls, {isMemoryTool, isOverflowTool, isCodeTool, isPlanTool, isArtifactTool: (n) => isSaveArtifactTool(n) || isReadArtifactTool(n), ...(askOn ? {isAskTool} : {})})
                     const memoryToolContext = {
                         userCode: curUserInfo?.userCode, channel, workspaceId: memoryWorkspace,
                         conversationCode, messageCode,
@@ -1158,6 +1665,95 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                             toolCall,
                             context: {conversationCode, userCode: curUserInfo?.userCode, channel, messageCode},
                         })))
+                    /**
+                     * PR-M：update_plan 是纯同步工具（不碰 DB/沙箱），执行即把归一后的计划回给模型看；
+                     * 同时把**最后一次成功写入的 items** 记进 `currentPlan`，供本轮后续迭代的 recitation 与收尾落档用。
+                     * 一次批次里若模型调了多次，以最后一条有效为准（与"整份替换"语义一致）。
+                     */
+                    const planResults = planCalls.map(toolCall => {
+                        const msg = executePlanTool({toolCall, planConfig: planCfg})
+                        try {
+                            const parsed = JSON.parse(msg.content)
+                            if (parsed?.success && Array.isArray(parsed.data?.items) && parsed.data.items.length) {
+                                currentPlan = {items: parsed.data.items}
+                            }
+                        } catch { /* 解析失败不影响把原消息回给模型：它自己会看到 success:false 与 error */ }
+                        return msg
+                    })
+
+                    /**
+                     * PR-H2：artifact 通道（save_artifact → intake；read_artifact → 查账+doc.api 读回）。
+                     * 懒 import 是刻意的：artifactCalls 为空就连 runner/intakeWiring 都不加载（默认关路径零副作用）。
+                     * save 侧沙箱复用 run_code 的会话绑定箱（peekSharedSandboxId，进程内语义与其一致）；
+                     * 没有箱就如实回 success:false——产物必先由 run_code 在沙箱里产生，工具不替模型"凭空建箱"。
+                     */
+                    let artifactResults = []
+                    if (artifactCalls.length) {
+                        const [{peekSharedSandboxId}, {makeIntakeRunner, makeArtifactReader, genCode}] = await Promise.all([
+                            import('../sandbox/runner.js'),
+                            import('./artifact/intakeWiring.js'),
+                        ])
+                        const intakeRunner = makeIntakeRunner({
+                            docApiConfig: config.docApiConfig || {},
+                            artifactConfig: artifactCfg,
+                            userInfo: {userCode: curUserInfo?.userCode || '', realName: curUserInfo?.realName || ''},
+                            streamEvent: (type, payload) => {
+                                if (options.streamCallback) {
+                                    try { options.streamCallback(JSON.stringify(payload), type) } catch { /* 事件投递失败不反噬工具结果：账行 ready 才是权威 */ }
+                                }
+                            },
+                        })
+                        /** read 侧只吃 dac+doc.api（不碰沙箱），与 save 同一开关、同一身份 */
+                        const artifactReaderDeps = makeArtifactReader({
+                            docApiConfig: config.docApiConfig || {},
+                            userInfo: {userCode: curUserInfo?.userCode || '', realName: curUserInfo?.realName || ''},
+                        })
+                        artifactResults = await Promise.all(artifactCalls.map(toolCall => isReadArtifactTool(toolCall?.function?.name)
+                            ? executeReadArtifactTool({toolCall, artifactConfig: artifactCfg, deps: artifactReaderDeps})
+                            : executeSaveArtifactTool({
+                                toolCall,
+                                context: {
+                                    conversationCode,
+                                    channel,
+                                    userCode: curUserInfo?.userCode,
+                                    /** 幂等键的 run 段=messageCode：本轮回答即本次 run（llmChat 没有独立 runCode） */
+                                    runCode: messageCode,
+                                    sandboxId: peekSharedSandboxId(conversationCode),
+                                },
+                                artifactConfig: artifactCfg,
+                                sandboxConfig: config.sandboxConfig || {},
+                                runIntake: intakeRunner,
+                                genCode,
+                            })))
+                    }
+
+                    /**
+                     * PR-E：ask_user 通道。挂起发生在**这里**（awaitAskUser 内 await router.register 的 promise），
+                     * 挂起期间上游不计费、SSE 保留、并发闸照常占格——这是"进程内等待"形态的明码标价，
+                     * 换掉它需要 cp 读侧的续跑机制（未建，见 §25 记录）。
+                     * Promise.all 并发等多个问题：各自的 promise 独立 resolve，先到先得在 router 单点裁决。
+                     */
+                    let askResults = []
+                    if (askCalls.length) {
+                        if (!askOn) {
+                            /** 到不了这里（关着时谓词没注入）；真到了就是分类与开关分家，如实回给模型而不是静默吞 */
+                            askResults = askCalls.map(tc => ({tool_call_id: tc.id, role: 'tool', content: JSON.stringify({success: false, error: 'ask_user 未启用'})}))
+                        } else {
+                            askResults = await Promise.all(askCalls.map(toolCall => awaitAskUser({
+                                toolCall,
+                                router: options.answerRouter,
+                                secret: answerSecret(),
+                                askConfig: askCfg,
+                                checkpointSeq: iterationCount,
+                                signal: options.signal,
+                                streamEvent: (type, payload) => {
+                                    if (options.streamCallback) {
+                                        try { options.streamCallback(JSON.stringify(payload), type) } catch { /* 事件失败不反噬挂起：账在 router */ }
+                                    }
+                                },
+                            })))
+                        }
+                    }
 
                     // 执行工具调用（区分 MCP 工具和 Skill 工具）
                     const otherResults = otherCalls.length
@@ -1165,11 +1761,11 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                             ? await skillChat.executeSkillToolCalls(otherCalls, skillContext)
                             : await mcpToolManager.executeToolCalls(channel, otherCalls))
                         : []
-                    const toolResults = [...memoryResults, ...overflowResults, ...codeResults, ...otherResults]
+                    const toolResults = [...memoryResults, ...overflowResults, ...codeResults, ...planResults, ...artifactResults, ...askResults, ...otherResults]
 
                     /*工具结果只带 tool_call_id，前端无法据此显示调用了哪个工具，这里补上名称*/
                     const nameById = buildToolNameIndex(toolCalls)
-                    /** 入参与名字同批反查（两处 trace 写入点都要带，漏一处就是有的调用看得见参数有的看不见） */
+                    /** 入参与名字同批反查：两处 trace 写入点（溢出/普通）都要带上，漏一处就是"有的调用看得见参数有的看不见" */
                     const argsById = buildToolArgsIndex(toolCalls)
                     const argsCap = config.limits?.toolArgsChars
                     const resultCap = config.limits?.toolResultTraceChars
@@ -1234,6 +1830,51 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                         }
                     }
 
+                    /**
+                     * PR-D commit 2：soft 插话的边界注入——mailbox 的唯一消费点。
+                     * 位置判据：工具结果已并入、段将封存、`postTools` 检查点就在几行之后——
+                     * 注入的消息随检查点一起留存，崩溃续跑不会把"已消费过的插话"再当新消息灌一遍。
+                     * 单发答案（无工具轮）**没有这个边界** ⇒ 插话等到过期被弃：soft 的语义是"插话不打断"，
+                     * 不是"为插话再起一轮"——那是 hard/2b 的手术面，别在这里越权。
+                     * 异常整段兜住：注入失败只是少一条输入，把主循环炸了才是丢整轮（治理件不许成为新故障源）。
+                     */
+                    if (options.runMailbox) {
+                        try {
+                            const steerCfg = config.controlConfig || {}
+                            const {toInject, dropped} = options.runMailbox.pullBoundary({
+                                expiryMs: Number(steerCfg.steerExpiryMs) || undefined,
+                                limit: Number(steerCfg.steerBoundaryLimit) || undefined,
+                            })
+                            /**
+                             * hard 的停止位语义是"队里有条 hard 想掐当前生成"——**任何清队的 pull
+                             * 都必须连旗一起清**，否则本边界消费了那条 hard、旗却漏到下一个生成窗，
+                             * 把下一轮的首帧凭空打断（self-interrupt 竞态，写这块时推演出来的）。
+                             */
+                            if (options.hardSteer) {
+                                options.hardSteer.flag = null
+                            }
+                            for (const d of dropped) {
+                                tlog.warn(`插话未注入即弃 steerCode=${d.steerCode}: ${d.reason}`)
+                            }
+                            if (toInject.length) {
+                                const {block} = renderSteeringBlock(toInject)
+                                messages.push({role: 'user', content: block})
+                                for (const s of toInject) {
+                                    steeringsArchive.push({...s, injectedAt: Date.now()})
+                                    /** steer_ack 只承诺"已在 postTools 边界注入"，不承诺模型照办——文案与通道同一诚实度 */
+                                    if (options.streamCallback) {
+                                        options.streamCallback(JSON.stringify({
+                                            ...steerAckPayload(s, {injectAt: 'postTools', abortCurrentStream: false}),
+                                            messageCode,
+                                        }), 'steer_ack')
+                                    }
+                                }
+                            }
+                        } catch (e) {
+                            tlog.error(`插话注入异常（本轮继续）: ${String(e?.message || e).slice(0, 160)}`)
+                        }
+                    }
+
                     /** 段留存：本轮的半句正文到此为止，下一轮会被 reset 抹掉（PR-B 的主目标） */
                     segments.seal({
                         kind: SEGMENT_KINDS.TOOL_ROUND,
@@ -1269,7 +1910,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         /**
          * 退出方式只有在这里才可知（必须在 aborted 提前 return 之后判，否则一次正常打断会被报成异常退出）：
          * `exhausted` 表示循环是被 maxIterations 掐断的，而每一轮 `continue` 都执行过 reset
-         * （`answerContent` 已清空），于是落库 answer 为空、progress 仍是 `finish`。
+         * （`answerContent` 已清空），于是落库 answer 为空、progress 仍是 `finish`
+         * ——即 §2E-3 的现网缺陷（v1.6 与 v1.13 各复现一次，`test/services/core/llmLoopStream.test.js` 已能离线复现）。
          */
         loopExit = loopExitReason({broke: loopBroke, iterationCount, maxIterations})
         if (loopExit !== 'break') {
@@ -1277,7 +1919,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         }
 
         /**
-         * **到顶不清空**：打满时补一次不带工具的收尾调用，让模型基于已取回的工具结果给出结论，
+         * §2E-3 修法第 1 条：**到顶不清空**。
+         * 打满时补一次不带工具的收尾调用，让模型基于已取回的工具结果给出结论，
          * 而不是把已经花掉的钱和已经查到的信息丢成一条空白回答。
          */
         const fin = finalizationDecision({
@@ -1300,11 +1943,30 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
             return 'aborted'
         }
 
-
+        /**
+         * PR-M B2 完成性反问：只在开了 `finalize.selfCheck`、且计划仍有未结项时才可能触发（判据在
+         * `decideCompletionSelfCheck`：`exhausted` 交回 finalization、没计划/没正文/中断都不触发）。
+         * 位置是算过的：在"收尾被打断已 abort 返回"之后（别对半截 abort 再反问），
+         * 在 `exhaustedFallback` 之前（补充要并进最终答案、不能落进空答案兜底）。
+         * 开关关 ⇒ 整段不执行 ⇒ 现有退出路径逐字不变。
+         */
+        if (config.finalize?.selfCheck === true) {
+            const sc = decideCompletionSelfCheck({
+                plan: currentPlan,
+                loopExit,
+                hasAnswer: Boolean(answerContent),
+                aborted: false,
+                selfCheckEnabled: true,
+            })
+            if (sc.action === 'self-check') {
+                await runSelfCheckCall()
+            }
+        }
 
         /**
-         * **空答案不得记 `finish`**：收尾调用也没拿到正文时，把被 reset 抹掉的分段保住（能救多少救多少）
-         * 并附上可读原因，progress 记 `error`——不为此扩 `MessageProgressEnum`（会波及 schema 校验与前端分派）。
+         * §2E-3 修法第 2 条：**空答案不得记 `finish`**。
+         * 收尾调用也没拿到正文时，把被 reset 抹掉的分段保住（能救多少救多少）并附上可读原因，
+         * progress 记 `error`——`MessageProgressEnum` 里没有 truncated，也不为此扩枚举（会波及 schema 校验与前端分派）。
          */
         const fb = exhaustedFallback({loopExit, answerContent, answerList})
         if (fb.notice) {
@@ -1317,9 +1979,11 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
 
         /**
          * 最终回答成段（全文已在 `message.answer`，这里只留字数与耗时）。
-         * 即使补过收尾调用也照样要封这一段：`finalize` 段记的是"那次调用产出多少字"，
-         * `answer` 段记的是"最终落库的答案是多少字"，两者在兜底路径上并不相等。
-         * 重复计数的问题在账本的 `summary()` 里按 `ref==='answer'` 不计入来解决。
+         * **`answer` 段是最终正文的权威计数**：即使刚补过收尾调用也要封这一段——
+         * 收尾失败走兜底时 `answer` 是"部分正文 + 原因"，与 `finalize` 段的产出字数并不相等，
+         * 少了这一段就没有任何地方记录"最终落库的答案有多长"。
+         * 同一篇正文可能被 `finalize` 与 `answer` 各记一次，重复计数的风险在账本侧解决
+         * （`createSegmentLedger.summary()` 只累加**有正文**的段，不计 `ref:'answer'` 的）。
          */
         segments.seal({
             kind: SEGMENT_KINDS.ANSWER,
@@ -1329,8 +1993,9 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         })
 
         /**
-         * §14 观测先行：出"每 run 模型调用次数"与"每 run token 数"。
-         * 主指标是**非缓存 token**（`prompt - cached`，这部分全价），命中率只作旁证。
+         * §14 观测先行（G-6）：出"每 run 模型调用次数"与"每 run token 数"。
+         * 主指标是**非缓存 token**（D41：`prompt_tokens - cached_tokens`，这部分全价），
+         * 命中率只作为派生量看；上游没回 usage 时 `hasUsage:false`，绝不猜 0。
          * 告警口径是**严格大于上限**：打满但正常收尾不报（那是"活多"），超出上限才报（那才是"在打循环"）。
          */
         const tailSnap = usageSnapshot()
@@ -1339,7 +2004,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                 + `maxIterations=${maxIterations}, loopExit=${loopExit}, conversationCode=${conversationCode}, messageCode=${messageCode}`)
         }
         if (!tailSnap.metrics.hasUsage) {
-            /** 单独一条：账本没数据时，"0 token" 与"没读到 usage"是两种完全不同的故障 */
+            /** 这条必须单独存在：账本没数据时，"0 token" 与"没读到 usage"是两种完全不同的故障 */
             tlog.warn(`本轮未取到 usage（上游未回传或帧序异常）: conversationCode=${conversationCode}, modelCalls=${modelCalls}`)
         }
 
@@ -1350,7 +2015,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         if (cacheEligible && fb.progress === 'finish') {
             /*缓存大模型回答*/
             /**
-             * 缓存是附属能力：它失败不该让一整轮已经流完、已经落库的回答对外变成 error
+             * 缓存是附属能力：它失败不该让一整轮已经落库、已经流完的回答对外变成 error
              * （与 totalPrice 核算、记忆采集同口径）。
              */
             try {
@@ -1374,9 +2039,9 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     } catch (e) {
         /**
          * 抽取前主循环那一段没有任何 try/catch：上游一抛（网络错误、relay 5xx、SDK 行为变更，
-         * 或客户端打断以异常形态冒出来）就整段跳过 persistTurn，那一轮除了半截 SSE 什么都不留。
+         * 或客户端断开引发的 AbortError）就整段跳过 persistTurn，那一轮除了半截 SSE 什么都不留（§2E-2 第 2 条）。
          * 现在**先落库再决定对外形态**：中断仍走 abort 语义（客户端断开不是故障，
-         * 记成 error 会让监控里的错误率被用户行为污染）；真异常把原始错误继续抛给路由，由它下发 event:error。
+         * 记成 error 会让监控的错误率被用户行为污染）；真异常把原始错误继续抛给路由，由它下发 event:error。
          */
         const turnErr = describeError(e)
         tlog.error(`主循环异常: kind=${turnErr.kind}, status=${turnErr.status ?? '-'}, message=${turnErr.message.slice(0, 300)}`)
@@ -1384,9 +2049,12 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         if (!persisted) {
             try {
                 /**
-                 * 错误路径同样要说明"是谁打断的"（与源仓 `232d1ca` 对齐）：客户端掐流会让 SDK 抛错走到这里，
-                 * 以前这条只带 `via`，来源要靠默认值——默认值一旦是写死的标签就会静默少算
-                 * （见上面 `interruptedBy` 的注释）。
+                 * 错误路径也要说清"是谁打断的"（2026-11-12 修的漏点）。
+                 * 此前这里只带 `via`，于是 SDK 抛回的 AbortError（客户端掐流）在档案里落成
+                 * `unspecified`，而 `client-disconnect` 那一类永远看不到它——
+                 * 用 `interruptedBy` 统计"用户主动打断"因此**少算这一类**（实测 dev 有 2 行）。
+                 * 归因函数与其他四个中断路径**完全同一个**，不是在这里新造一套判断：
+                 * `isClosing()` 为真就是发版拆连接（process-lost），否则是客户端断开。
                  */
                 await persistTurn(errProgress, `${turnErr.kind}:${turnErr.message}`, {via: PERSIST_VIA.ERROR, ...(errProgress === 'abort' ? {interruptedBy: interruptReason()} : {})})
             } catch (e2) {
@@ -1439,17 +2107,17 @@ async function saveMessage(query, messageCode, messages, conversationCode, chann
      * 后者不依赖日志级别，生产把 `debug` 关掉时探测器仍然说话。两处都不写任何正文，
      * 这条线的外泄边界跟工具结果全文一样严格。
      */
-    /**
-     * 「这一轮允不允许用答案缓存、按什么键分组」的落档值。
-     * 归一必须发生在**这里（唯一出口）**而不是某个调用点：缓存命中支与 `persistTurn` 两支都调 `saveMessage`，
-     * 写在任一支上都会缺一支。
-     */
-    const cacheIntent = cacheIntentForArchive(options)
     const traceShapeGaps = findTraceShapeGaps(options.toolCalls)
     if (traceShapeGaps.length) {
         logger.warn(`trace 形状缺入参声明 messageCode=${messageCode} writtenBy=${options.writtenBy || '-'} `
             + `条目=${(options.toolCalls || []).length} 缺=${traceShapeGaps.length} ids=${traceShapeGaps.join(',').slice(0, 160)}`)
     }
+    /**
+     * 「这一轮允不允许用答案缓存、按什么键分组」的落档值。
+     * 归一必须发生在**这里（唯一出口）**而不是各个调用点：缓存命中支与 `persistTurn` 两支都调 `saveMessage`，
+     * 写在上面任何一处都会缺一支——那正是 2026-11-13 那两个键全库 0 行的成因之一（另一个成因是压根没进白名单）。
+     */
+    const cacheIntent = cacheIntentForArchive(options)
     await messageDac.add({
         messageCode,
         conversationCode,
@@ -1479,43 +2147,19 @@ async function saveMessage(query, messageCode, messages, conversationCode, chann
             tools: options.tools,
             toolChoice: options.toolChoice,
             iterationCount: options.iterationCount,
-            /** 循环退出方式（break/exhausted/…）与是否做过无工具收尾补落，空答案从此可解释、可统计 */
+            /** §2E-3：循环退出方式（break/exhausted/…）与是否做过无工具收尾补落，空答案从此可解释、可统计 */
             loopExit: options.loopExit,
             forcedFinal: options.forcedFinal,
             /** PR-B：过程分段与它的体积摘要（丢过段、留存多少字） */
             segments: options.segments,
             segmentSummary: options.segmentSummary,
-            /** §14/G-6：本 run 的模型用量与调用次数 */
+            /** §14/G-6：本 run 的模型用量与调用次数（非缓存 token 为主），逐条下钻用 */
             usage: options.usage,
             skills: options.skills,
             contextUsage: options.contextUsage,
             sources: options.sources,
             toolCalls: options.toolCalls,
             recallStats: options.recallStats,
-            /**
-             * 打断来源。注意它是 message.extInfo 里的字段，前端只读 `progress`（三端已能正确渲染 abort），
-             * 这一列是给我们自己审计用的：事后要能分清当场落的档与补的档。
-             */
-            interruptedBy: options.interruptedBy,
-            /** 写下这条档的路径：normal / early-stop / rescue / error / backfill / unattributed */
-            writtenBy: options.writtenBy,
-            /**
-             * P5/P3 的两个新键必须在这里也出现：`persistTurn` 那边算出来只是半成品，
-             * **这份装配清单才是 extInfo 的唯一出口**。
-             * 源仓实测踩过：两键在上游都写了、接线测试全绿，库里却都不存在——因为这里没列，
-             * 而守卫只看了一侧。现在由 `test/services/core/extInfoPassthrough.test.js` 钉住"两侧必须齐"。
-             */
-            runOverlap: options.runOverlap,
-            regeneratedFrom: options.regeneratedFrom,
-            /**
-             * 这两个是**请求侧的表态**，以前从不落档：母本实测 dev 库 `message` 1490 行里两个键各 0 行，
-             * 因为这份白名单没列它们（"这份装配清单才是 extInfo 的唯一出口"）。
-             * 缺它们的后果是少一条排查口径：只能从顶层 `answerFromCache` 与账本 `modelCalls` 反推"命中没命中"，
-             * 推不出"当时允不允许命中、按什么键分组"。值走 `cacheIntentForArchive` 归一：
-             * `false` 是"明确不允许"，`null` 才是"没有表态"。刻意不进视图（没有界面消费方）。
-             */
-            cache: cacheIntent.cache,
-            channelCacheKey: cacheIntent.channelCacheKey,
             toolOverflows: options.toolOverflows,
             /**
              * 形状探测结果**必须同时走数据通道**，不能只走日志。
@@ -1526,6 +2170,45 @@ async function saveMessage(query, messageCode, messages, conversationCode, chann
              * 旧行没有这个键 ⇒ 那是探测器存在之前写的，不与"0 个缺口"混读。
              */
             traceShapeGaps: traceShapeGaps.length,
+            /**
+             * 打断来源（`client-disconnect` / `process-lost` / `unspecified`）。
+             * 存进 extInfo 而不是新开顶层列：这一条是审计字段，读它的是我们不是前端；
+             * 前端只需要 `progress:'abort'` 就能画出既有的"本轮回答已被中断，内容不完整"。
+             */
+            interruptedBy: options.interruptedBy,
+            /** 写下这条档的路径（normal / early-stop / rescue / error / backfill / unattributed） */
+            writtenBy: options.writtenBy,
+            /**
+             * P5/P3 的两个新键必须在这里也出现：`persistTurn` 那边算出来只是半成品，
+             * 这份装配清单才是 extInfo 的**唯一出口**。
+             * 2026-11-13 实测踩过：`runOverlap` 与 `regeneratedFrom` 在上游都写了、接线测试全绿，
+             * 但库里两键都不存在——因为这里没列，而源码级守卫只看了一侧。
+             * 现在由 `test/services/core/extInfoPassthrough.test.js` 把"两侧必须齐"钉住。
+             */
+            runOverlap: options.runOverlap,
+            regeneratedFrom: options.regeneratedFrom,
+            /**
+             * 这两个是**请求侧的表态**，以前从不落档：2026-11-13 实测 dev 库 `message` 1490 行里，
+             * 顶层有 `cache` 键 0 行、`extInfo.cache` 0 行、`extInfo.channelCacheKey` 0 行
+             * （9 条重跑行与 400 条对照行也都是 0）——因为这份白名单没列它们。
+             * 缺它们的后果不是"少两个字段"，而是**少一条排查口径**：今天只能从结果性字段
+             * （顶层 `answerFromCache` + 账本 `modelCalls`）反推"命中没命中"，
+             * 推不出"当时允不允许命中、按什么键分组"。
+             * 值走 `cacheIntentForArchive` 归一：`false` 是"明确不允许"，`null` 才是"没有表态"。
+             * 刻意**不进 `messageView`**：这两个键读的人是排障的我们，不是前端（同 `interruptedBy` 的先例）。
+             */
+            cache: cacheIntent.cache,
+            channelCacheKey: cacheIntent.channelCacheKey,
+            /** D44 留痕：思考开关的实际生效形态（`thinkingMode.js` 给），缺决策时为 null */
+            thinking: options.thinking,
+            /**
+             * PR-M：本轮计划（`planForPersistence` 归一后给，无计划为 null）。
+             * 与 cache/channelCacheKey 同属"落档但不进视图"的审计字段——
+             * 读它的是下一轮的 recitation 种子与排查的我们，前端没有消费方，进视图只会多一个没人读的承诺。
+             */
+            plan: options.plan,
+            /** PR-D commit 2：注入过的插话清单（来源与去向的裁定见 persistTurn 处注释） */
+            steerings: options.steerings,
         },
         messageTokens: options.messageTokens,
         answerTokens: options.answerTokens,

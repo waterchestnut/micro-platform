@@ -16,9 +16,11 @@ import {PERSIST_VIA} from '../../../services/core/session/shutdownPolicy.js'
 /**
  * `fb.progress` 这类**属性表达式进度**能不能不带 `interruptedBy`，唯一的合法理由是"它取不到 abort"。
  * 这句话必须是跑出来的值域，不能是我读 `llmLoop` 注释读出来的结论——
- * 上一版守卫就是因为式子匹配不上 `fb.progress`（里面有个点号）而**巧合地**全绿，
- * 那属于把盲区伪装成覆盖。所以这里把 `loopExit` 的真实字母表（含 `aborted:*` 各形态）
- * 连同正文/分段的空与非空一起枚举，取它可能落下的全部 progress。
+ * 2026-11-12 我把守卫从"只匹配字面量"补成 `[A-Za-z_$][\w$]*` 时自认为已经覆盖参数化站点，
+ * 但 `persistTurn(fb.progress, …)` 里有个点号，式子匹配不上，于是它"没带来源"是**巧合绿**：
+ * 盲区藏在我声称已经补强的那条用例里，比原来的漏点更难发现。
+ * 所以这里把 `loopExit` 的真实字母表（含 `aborted:*` 各形态）连同正文/分段的空与非空一起枚举，
+ * 取它可能落下的全部 progress；下面的用例允许属性表达式站点凭这个证明豁免。
  */
 const FB_PROGRESS_DOMAIN = (() => {
     const exits = ['break', 'continue', 'exhausted', 'unknown', '', 'aborted:error', 'aborted:unattributed', 'aborted:loop-exit', 'aborted:shutdown:process-lost', undefined]
@@ -74,11 +76,14 @@ describe('exitReasonForPersist：只有 abort 才允许被补', () => {
 
     test('补出的值必须带前缀且可聚合（统计要按来源分组，不能是自由文本）', () => {
         const seen = new Set()
-        /** 遍历**枚举本身**：抄一份名单会在下次加 via 时悄悄少测一个值 */
+        /**
+         * 遍历**枚举本身**而不是我抄一份名单：抄的名单会在下次加 via 时悄悄少测一个值
+         * ——而这条用例的意义恰恰是"任何来源标签都必须被补成合规形状"。
+         */
         for (const via of Object.values(PERSIST_VIA)) {
             for (const closing of [false, true]) {
                 const v = exitReasonForPersist({progress: 'abort', loopExit: 'unknown', via, closing})
-                assert.match(v, /^(aborted|shutdown):[a-z-]+$/, `形状不合约定：${v}`)
+                assert.match(v, /^(aborted|shutdown):[a-z-]+$/, `形状不合约定（via=${via}, closing=${closing}）：${v}`)
                 assert.ok(!/unknown/.test(v), `补齐后不许还留着 unknown：${v}`)
                 seen.add(v.split(':')[0])
             }
@@ -118,7 +123,10 @@ describe('落库点的接线（llmChat 离线跑不起来，所以守形状）',
          * 同一个问题在两张表里两个答案，比两边都 unknown 更难查（会有一种看起来是对的）。
          */
         const bare = src.filter(l => /^\s*loopExit,\s*$/.test(l))
-        assert.equal(bare.length, 1, `只剩 finalizationDecision 那处该用原始内存值，实际剩 ${bare.length} 处`)
+        // 两处判定都该用原始内存值：finalizationDecision（"到顶没正文要不要补"）与
+        // decideCompletionSelfCheck（"自称做完但计划还有未结要不要反问"）——都读"循环怎么退的"，
+        // 绝不能读落库口径的 loopExitNow（那会把 abort/shutdown 归因倒灌进动作判定）。
+        assert.equal(bare.length, 2, `finalizationDecision 与 decideCompletionSelfCheck 各一处读原始 loopExit，实际剩 ${bare.length} 处：${JSON.stringify(bare.map(s => s.trim()))}`)
     })
 
     test('finalizationDecision 仍用原始 loopExit（它判的是"循环怎么退的"，不是"怎么落的库"）', () => {
@@ -131,34 +139,41 @@ describe('落库点的接线（llmChat 离线跑不起来，所以守形状）',
     })
 
     test('每个 abort 落库点都必须自带来源（新增站点忘了接线就要红）', () => {
-        const calls = lines().filter(l => /persistTurn\('abort'/.test(l) && !/^\s*(\*|\/\/)/.test(l))
+        /**
+         * v1.73 之前有三处 `persistTurn('abort', ...)` 没传 `via`，
+         * 于是档案里 `writtenBy` 与 `loopExit` 都收敛成 `unattributed`/`unknown`。
+         * 这条守卫守的就是"别再出现第四个"：**归因必须是接线的默认结果，而不是靠人记得**。
+         */
+        const calls = lines().filter(l => /persistTurn\(\s*'abort'/.test(l) && !/^\s*(\*|\/\/)/.test(l))
         assert.ok(calls.length >= 4, `至少应有 4 个 abort 落库点，实际 ${calls.length}：接线可能整体丢了`)
         const naked = calls.filter(l => !/via:\s*PERSIST_VIA\./.test(l))
         assert.deepEqual(naked, [], `这些 abort 落库点没有来源标签：${JSON.stringify(naked.map(s => s.trim().slice(0, 70)))}`)
     })
 
-    test('站点用的是各自的标签，不是同一个笼统值', () => {
-        const s2 = lines().join('\n')
+    test('三个站点用的是各自的标签，不是同一个笼统值', () => {
+        const src = lines().join('\n')
         for (const k of ['LOOP_ENTRY', 'LOOP_EXIT', 'FINALIZE_INTERRUPTED']) {
-            assert.ok(s2.includes(`PERSIST_VIA.${k}`), `站点 ${k} 的接线不见了`)
+            assert.ok(src.includes(`PERSIST_VIA.${k}`), `站点 ${k} 的接线不见了`)
         }
+        /** 兜底值不许再被站点直接用（它只该出现在 `writtenBy` 的默认分支里） */
         const direct = lines().filter(l => /persistTurn\([^)]*PERSIST_VIA\.UNATTRIBUTED/.test(l))
-        assert.deepEqual(direct, [], `仍有 abort 站点直接落 unattributed：${JSON.stringify(direct.map(x => x.trim().slice(0, 70)))}`)
+        assert.deepEqual(direct, [], `仍有 abort 站点直接落 unattributed：${JSON.stringify(direct.map(s => s.trim().slice(0, 70)))}`)
     })
 
     test('每个 abort 落库点都必须说明"是谁打断的"（interruptedBy 不许漏）', () => {
         /**
-         * 这条正是底座原来缺的东西：RESCUE 与 EARLY_STOP 站点只带了 via，
-         * 于是 `extInfo.interruptedBy` 落成默认值——而"用户按停止"与"发版切连接"
-         * 恰恰是这一列要分的两件事。**只能靠人工对比发现的不变量，等于没有不变量。**
+         * 这条是搬运对照时捞出来的：底座的 RESCUE 与 EARLY_STOP 站点只带了 `via`，
+         * 于是 `extInfo.interruptedBy` 落成默认值——
+         * 而"用户按停止"与"发版切连接"恰恰是这一列要分的两件事（v1.40 的教训）。
+         * **一个只能靠人工对比发现的不变量，等于没有不变量**，所以钉成用例。
          *
          * 2026-11-12 连着补两次，第二次的理由更要紧：
-         * ① 只匹配字面量 `persistTurn('abort'` 会漏掉**变量进度**的站点（`errProgress`）；
-         * ② 补成 `[A-Za-z_$][\w$]*\s*,` 之后仍然漏——`persistTurn(fb.progress, …)` 里有个点号，
-         *   式子匹配不上，于是"它没带来源"看起来是绿的，其实**从没进过断言**。
-         *   巧合正确比错误更糟：盲区藏在我声称已经补强的那条用例里。
-         * 现在按进度实参的**形态**分三类各自处置：字面 'abort'、裸标识符、属性表达式；
-         * 属性表达式只能凭"值域不含 abort"豁免，且豁免表不许留死项。
+         * ① 只匹配字面量 `persistTurn('abort'` 会漏掉变量进度（`errProgress`，错误路径）；
+         * ② 补成 `[A-Za-z_$][\w$]*\s*,` 之后仍然漏 `fb.progress`——点号让式子直接匹配不上，
+         *   那个站点从没进过断言，用例却是绿的。
+         * 现在按进度实参的**形态**分三类各自处置，并要求三类把站点分完（新写法不许悄悄落在分类之外）：
+         * 字面 'abort' 与裸标识符必须自带来源；属性表达式只能凭"值域不含 abort"豁免，
+         * 且豁免表不许留死项。
          */
         const argOf = (l) => (/persistTurn\(\s*([^,)]+)/.exec(l) || [])[1]?.trim() || ''
         const calls = lines().filter((l) => /persistTurn\(/.test(l) && !/^\s*(\*|\/\/)/.test(l))
@@ -170,13 +185,12 @@ describe('落库点的接线（llmChat 离线跑不起来，所以守形状）',
             return a && !/^'/.test(a) && !/[.[]/.test(a)
         })
         const dotted = calls.filter((l) => /[.[]/.test(argOf(l)))
-        /** 三类必须真的把全部站点分完：新出现的写法（三元、函数调用）不能悄悄落到任何一类之外 */
         assert.equal(literal.length + bare.length + dotted.length, calls.length,
             `站点分类没覆盖全部：${JSON.stringify(calls.filter((l) => ![...literal, ...bare, ...dotted].includes(l)).map((l) => argOf(l)))}`)
 
         assert.ok(literal.length >= 5, `字面 'abort' 站点应不少于 5 处，实际 ${literal.length}`)
         assert.ok(bare.some((l) => /errProgress/.test(l)),
-            '参数化进度（errProgress）的站点必须被本条覆盖，否则又退回只匹配字面量的假绿')
+            '参数化进度（errProgress）的站点必须被本条覆盖，否则又回到只匹配字面量的假绿')
         const naked = [...literal, ...bare].filter((l) => !/interruptedBy/.test(l))
         assert.deepEqual(naked, [], `这些 abort 落库点没写打断来源：${JSON.stringify(naked.map((s) => s.trim().slice(0, 80)))}`)
 
@@ -197,9 +211,9 @@ describe('落库点的接线（llmChat 离线跑不起来，所以守形状）',
 
     test('豁免的地基：exhaustedFallback 在任何 loopExit 形态下都落不出 abort', () => {
         /**
-         * 上一条用例允许属性表达式进度不带来源，靠的是这条。
-         * 值域写成字面量数组会被"改函数返回值但不改这里"绕过，所以两头都钉：
-         * 跑出来的值域 = 期望值域，且不含 abort。
+         * 上一条允许属性表达式进度不带来源，靠的就是这条。
+         * 只把值域写成字面量会被"改了函数返回值、没改这里"绕过，所以两头都钉：
+         * 跑出来的值域必须等于期望值域，且不含 abort。
          */
         assert.deepEqual(FB_PROGRESS_DOMAIN, ['error', 'finish'],
             `progress 值域变了：${JSON.stringify(FB_PROGRESS_DOMAIN)}；若真出现 abort，`
@@ -209,22 +223,23 @@ describe('落库点的接线（llmChat 离线跑不起来，所以守形状）',
         assert.equal(exhaustedFallback({loopExit: 'exhausted', answerContent: '', answerList: []}).progress, 'error')
     })
 
-    test('中断来源不许有静默兜底，也不许忽略站点显式传值', () => {
+    test('中断来源不许有静默兜底值：默认分支必须现场计算，unspecified 不得出现在任何代码行', () => {
         /**
-         * 底座原来有两个方向的问题，各来自一次跨仓对照：
-         * ① 源仓的默认值是写死的 'unspecified' ⇒ 站点漏接线时缺陷变成"看起来正常的数据"；
-         * ② 底座的默认值只调 `interruptReason()`，从不读 `extra.interruptedBy`
-         *   ⇒ 五个站点传进来的来源**全是死参数**（今天没错纯属巧合：算的是同一个函数）。
-         * 现在两边同形：站点显式值优先，缺省时现场计算；这个用例把"两者都必须存在"钉住。
+         * 2026-11-12 连着学到两件事：
+         * ① 站点漏接线时，`|| 'unspecified'` 会把缺陷变成一条"看起来正常"的档案（没人会去查它）；
+         * ② 底座的做法是默认分支直接调 `interruptReason()`，所以它从一开始就产生不了那种行。
+         * 所以这里同时钉三件事：兜底值是计算得来的、代码里不再有那个字符串、
+         * 并且站点显式传值仍然优先（不能被默认覆盖掉 RESCUE 之类的特殊来源）。
          */
-        const codeLines = lines().filter(l => l.includes('unspecified') && !/^\s*(\*|\/\/)/.test(l.trim()))
+        const codeLines = lines().filter((l) => l.includes('unspecified') && !/^\s*(\*|\/\/)/.test(l.trim()))
         assert.deepEqual(codeLines, [],
-            `来源不该有写死的标签值，却出现在：${JSON.stringify(codeLines.map(l => l.trim().slice(0, 70)))}`)
-        const defaults = lines().filter(l => /interruptedBy:\s*progress === 'abort'/.test(l))
+            `中断来源不该有静默兜底字符串，却出现在：${JSON.stringify(codeLines.map((l) => l.trim().slice(0, 70)))}`)
+        const defaults = lines().filter((l) => /interruptedBy:\s*progress === 'abort'/.test(l))
         assert.equal(defaults.length, 1, `默认分支应恰好一处，实际 ${defaults.length}`)
-        assert.ok(defaults[0].includes('extra.interruptedBy ||'), '站点显式传值必须优先，不能被默认覆盖')
-        assert.ok(defaults[0].includes('interruptReason()'), '缺省时必须现场计算，不写死标签')
+        assert.ok(defaults[0].includes('extra.interruptedBy ||'), '站点显式传值必须优先于默认计算')
+        assert.ok(defaults[0].includes('interruptReason()'), '默认必须是现场计算，不是任何写死的标签')
     })
+
     test('cancelled 段只在唯一落库点封，且必须排在段列表被读走之前', () => {
         /**
          * 两个失败模式都静默：
@@ -247,15 +262,15 @@ describe('落库点的接线（llmChat 离线跑不起来，所以守形状）',
     })
 
     test('llmLoop 里"理论上不可达"那句话只能以被证伪的形式存在', () => {
-        const src = fs.readFileSync(new URL('../../../services/core/llmLoop.js', import.meta.url), 'utf8')
-        const hits = src.split(/\r?\n/).filter(l => l.includes('理论上不可达'))
+        const src2 = fs.readFileSync(new URL('../../../services/core/llmLoop.js', import.meta.url), 'utf8')
+        const hits = src2.split(/\r?\n/).filter(l => l.includes('理论上不可达'))
         /**
          * 允许出现，但必须与"证伪"同行——上一版我写成"整文件不许出现"，
-         * 结果新注释里那句"这句原来写的是…证伪了"自己触发了断言。
+         * 结果自己新写的解释注释触发了它。
          * **守卫也要能被自己的读数打回**，不然它只是在证明作者当时的心情。
          */
         assert.equal(hits.length, 1, `出现 ${hits.length} 次`)
         assert.match(hits[0], /证伪|已证伪/, '留着这句必须同时说明它已被实测推翻')
-        assert.match(src, /exitReasonForPersist/, '不可达性的处理者要在场')
+        assert.match(src2, /exitReasonForPersist/, '不可达性的处理者要在场')
     })
 })
