@@ -110,6 +110,16 @@ export default {
         sleepTimeMaxNamespaces: Number(process.env['cron_sleepTimeMaxNamespaces']) || 20,
         sleepTimeLockTtlSeconds: Number(process.env['cron_sleepTimeLockTtlSeconds']) || 3000,
         /**
+         * artifact 对账（`tasks/artifactReconcile.js`）。两道开关默认都关——动手侧会 tombstone
+         * 覆盖 doc.api 用户内容；只开注册=分类+HEAD 核验的干跑。graceMs 有 10 分钟地板（runPlan 安全阀）。
+         */
+        artifactReconcilePattern: process.env['cron_artifactReconcilePattern'] || '15 5 * * *',
+        artifactReconcileEnabled: process.env['cron_artifactReconcileEnabled'] === 'true',
+        artifactReconcileEnforce: process.env['cron_artifactReconcileEnforce'] === 'true',
+        artifactReconcileGraceMs: Number(process.env['cron_artifactReconcileGraceMs']) || 600000,
+        artifactReconcileLimit: Number(process.env['cron_artifactReconcileLimit']) || 200,
+        artifactReconcileLockTtlSeconds: Number(process.env['cron_artifactReconcileLockTtlSeconds']) || 1800,
+        /**
          * agentTask 中断恢复（`tasks/agentTaskRecover.js`）。
          *
          * **模板这边默认不注册**（`recoverEnabled === 'true'`），与本文件里 retentionEnabled /

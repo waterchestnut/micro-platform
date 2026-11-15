@@ -192,3 +192,39 @@ describe('6 纯件纪律', () => {
         assert.ok(!/\bllm\s*\./.test(code), '不读 llm 全局')
     })
 })
+
+describe('7 矛盾行贯通（born-registered 的映射与执行面，2026-11-15 实锤固化）', () => {
+    test('rowToClassifyInput: state=registered 且无 fileCode ⇒ handleMissing=true；有把手的行不带此旗', () => {
+        const ghost = rowToClassifyInput({state: 'registered', insertTime: oldInsert}, {now: NOW, graceMs: 1000}, {})
+        assert.equal(ghost.handleMissing, true)
+        assert.equal(ghost.allocated, false)
+        const good = rowToClassifyInput({state: 'ready', fileCode: 'fc', insertTime: oldInsert}, {now: NOW, graceMs: 1000}, {})
+        assert.equal(good.handleMissing, false)
+        const mid = rowToClassifyInput({state: 'uploaded', insertTime: oldInsert}, {now: NOW, graceMs: 1000}, {})
+        assert.equal(mid.handleMissing, false, 'uploaded 还没到登记步，缺把手是正常在途')
+    })
+    test('ghost 行（registered+无把手）干跑：分类 inconsistent-record，mark-broken 挂 dry-run、unregister? 永远 deferred、无删除', async () => {
+        const {log, deps} = mkDeps()
+        const rows = [{artifactCode: 'gh1', state: 'registered', fileCode: '', insertTime: oldInsert}]
+        const r = await runReconcilePass({rows, opts: {now: NOW, graceMs: 1000}, deps})
+        assert.equal(r.plans[0].klass, RECONCILE_CLASS.INCONSISTENT_RECORD)
+        assert.ok(r.plans[0].deferred.some((d) => d.startsWith('mark-broken(dry-run)')))
+        assert.ok(r.plans[0].deferred.includes('unregister-artifact?'), '判断类动作在 enforce 之外还有一道 ? 的门')
+        assert.equal(log.del.length, 0, '矛盾账没有文件可删')
+    })
+    test('ghost 行 enforce：mark-broken 执行、unregister? 依旧 deferred（两重白名单都过一遍）', async () => {
+        const {log, deps} = mkDeps()
+        const rows = [{artifactCode: 'gh2', state: 'registered', fileCode: '', insertTime: oldInsert}]
+        const r = await runReconcilePass({rows, opts: {now: NOW, graceMs: 1000, enforce: true}, deps})
+        assert.equal(r.plans[0].klass, RECONCILE_CLASS.INCONSISTENT_RECORD)
+        assert.deepEqual(log.mark, [['gh2', 'broken']])
+        assert.ok(r.plans[0].executed.includes('mark-broken'))
+        assert.ok(r.plans[0].deferred.includes('unregister-artifact?'), 'enforce 也不许自动注销——注销是产品判断')
+    })
+    test('ghost 行不带把手 ⇒ verify 根本不该被调用（没有 fileCode 就没有"文件在不在"这回事）', async () => {
+        const {log, deps} = mkDeps()
+        const rows = [{artifactCode: 'gh3', state: 'ready', fileCode: '', insertTime: oldInsert}]
+        await runReconcilePass({rows, opts: {now: NOW, graceMs: 1000, enforce: true}, deps})
+        assert.deepEqual(log.verify, [], 'runner 的 `row.fileCode &&` 前置守卫必须留着：给空把手发 HEAD 是白打网络')
+    })
+})

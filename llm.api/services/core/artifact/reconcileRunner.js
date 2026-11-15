@@ -13,9 +13,10 @@
  * 3. **行级故障隔离**：一行的核验/执行抛错只脏那一行（记 errors、存在性按 unknown 判据走——
  *    "未知不武断"是 classifyArtifact 的既有纪律），批次继续。
  *
- * 生产接线（dac 取数 + doc.api 存在性核验的真实现 + cron 部署块）**不在本模块**：
- * doc.api 的存在性核验方法我们**尚未实测**（download 是否支持 Range/HEAD 未知），没有实测就不写"默认实现"——
- * 这正是要害处留注入的理由。对账 cron 那刀拿到窗口后：传 dac.scanStalled 的行 + 实测过的 verify 进来即可。
+ * 生产接线（dac 取数 + doc.api 存在性核验 + cron 部署块）**不在本模块**，在 `tasks/artifactReconcile.js`。
+ * 核验方法 2026-11-15 已实测定型（artifact-e2e L2 读数）：**HEAD 状态码**——200⇒在、404⇒不在、
+ * 其余/异常⇒未知（unknown 在判据端本就不武断，HEAD 行为怪异只会进 deferred，不会误判）；
+ * Range 0-0 被忽略返回 200 全文——"廉价"核验反而搬整个文件，**不许用作 verify**。
  */
 
 import {classifyArtifact, RECONCILE_CLASS} from './artifactReconcile.js'
@@ -41,6 +42,9 @@ export function rowToClassifyInput(row = {}, {now = Date.now(), graceMs = 0} = {
     return {
         registered,
         allocated,
+        /** 矛盾账的直接读出：state 说登记了、把手位却是空的（§9.1"登记在传完之后"被违反）。
+         *  2026-11-15 born-registered 实锤的固化——这类行在旧映射下会隐身成 CONSISTENT。 */
+        handleMissing: registered && !allocated,
         docFilePresent: verified.docFilePresent, // undefined=核验不了 ⇒ 判据端"未知不武断"
         referencedByMessage: Boolean(verified.referencedByMessage),
         ageMs: Math.max(0, now - insertedAt),

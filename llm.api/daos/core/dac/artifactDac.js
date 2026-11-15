@@ -144,6 +144,24 @@ export class ArtifactDac extends BaseDac {
     }
 
     /**
+     * @description 对账回写完整性标记（mark-broken/mark-dangling 的落库位；只动 integrity，不碰 state——
+     * 状态推进归 intake 状态机管，对账是观测方，观测方改写被观测对象的生命周期就是越权）
+     * @param {String} artifactCode 产物标识
+     * @param {String} mark broken|dangling
+     * @returns {Promise<Object|null>} 更新后的行
+     */
+    async setIntegrity(artifactCode, mark) {
+        if (!['broken', 'dangling', 'ok', 'unknown'].includes(mark)) {
+            throw new Error(`非法 integrity 标记: ${mark}`)
+        }
+        return await Artifact.findOneAndUpdate(
+            {artifactCode},
+            {$set: {integrity: mark, updateTime: new Date()}},
+            {new: true},
+        )
+    }
+
+    /**
      * @description 对账扫描①：非终态且超宽限的账行（在途→孤儿的候选面，只取数不动手）
      * @param {Date} olderThan 宽限线
      * @param {Number} [limit] 批量上限
@@ -154,6 +172,23 @@ export class ArtifactDac extends BaseDac {
             state: {$in: ['started', 'pulled', 'uploaded']},
             status: 0,
             insertTime: {$lt: olderThan},
+        }).sort({insertTime: 1}).limit(limit).lean()
+    }
+
+    /**
+     * @description 对账扫描②：登记态却没有 fileCode 的矛盾行（born-registered 家族的隐身面——
+     * scanStalled 只捞 started/pulled/uploaded，这类谎称 registered 的行恰好在它的视野外，
+     * 2026-11-15 dev 实锤补上的扫描；fileCode 的空形态有 ''/null/缺列三种，都要认）
+     * @param {Date} olderThan 宽限线
+     * @param {Number} [limit] 批量上限
+     * @returns {Promise<Object[]>} 行
+     */
+    async scanHandleMissing(olderThan, limit = 200) {
+        return await Artifact.find({
+            state: {$in: ['registered', 'ready']},
+            status: 0,
+            insertTime: {$lt: olderThan},
+            $or: [{fileCode: ''}, {fileCode: null}, {fileCode: {$exists: false}}],
         }).sort({insertTime: 1}).limit(limit).lean()
     }
 

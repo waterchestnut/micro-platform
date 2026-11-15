@@ -44,6 +44,52 @@ export function interpretDocApiReply({status, json}) {
 }
 
 /**
+ * @description doc.api 存在性核验（对账 verify 的生产实现；2026-11-15 artifact-e2e L2 实测定型）
+ * 判据只用 **HEAD 状态码**：200⇒在、404⇒不在、其余/超时/异常⇒**未知**（null）——
+ * unknown 在对账判据端本就不武断（CONSISTENT+verify-doc-api 延期），所以 HEAD 哪怕行为怪异也只
+ * 会多一轮延期，不会误判。Range 0-0 实测被忽略返回 200 全文，**不许**用作核验（昂贵的"廉价"）。
+ * URL 形态用读回已实测的 query 式（`/file/download?fileCode=`）+ 内网 base + user-info 头
+ * （内网直连的信任链与上传同构，编码倒序复用 buildUserInfoHeader）。
+ * @param {Object} params 参数
+ * @param {Object} params.docApiConfig {baseIntranetUrl, timeoutMs}
+ * @param {Object} params.userInfo 核验身份 {userCode, realName}
+ * @param {Function} [params.fetchImpl] 注入 fetch（测试用）
+ * @returns {Function} async (fileCode) => Boolean|null
+ */
+export function makeDocFileVerifier({docApiConfig = {}, userInfo = {}, fetchImpl} = {}) {
+    const doFetch = fetchImpl || ((...a) => fetch(...a))
+    return async (fileCode) => {
+        if (!fileCode) {
+            return null
+        }
+        const base = docApiConfig.baseIntranetUrl || ''
+        if (!base) {
+            return null
+        }
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), docApiConfig.timeoutMs || 120000)
+        try {
+            const r = await doFetch(`${base}/file/download?fileCode=${encodeURIComponent(fileCode)}`, {
+                method: 'HEAD',
+                headers: {'user-info': buildUserInfoHeader(userInfo)},
+                signal: controller.signal,
+            })
+            if (r.status === 200) {
+                return true
+            }
+            if (r.status === 404) {
+                return false
+            }
+            return null
+        } catch {
+            return null
+        } finally {
+            clearTimeout(timer)
+        }
+    }
+}
+
+/**
  * @description 造一个符合 artifactIntake `beginUpload` 契约的上传器
  * @param {Object} params 入参
  * @param {Object} params.task intake 任务（**必须带 task.fileCode**：分配即重试锚点，同码覆盖）

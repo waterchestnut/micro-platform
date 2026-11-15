@@ -23,6 +23,7 @@ import {CronJob} from 'cron'
 import {runRetention} from '../tasks/retention.js'
 import {runBackfill} from '../tasks/abandonedBackfill.js'
 import {runSleepTimeConsolidate} from '../tasks/sleepTimeConsolidate.js'
+import {runArtifactReconcile} from '../tasks/artifactReconcile.js'
 import {runAgentTaskRecover} from '../tasks/agentTaskRecover.js'
 import {createDrainController, resolveDrainBudget} from '../daos/core/policy/drainPolicy.js'
 
@@ -150,6 +151,40 @@ if (cronConfig.sleepTimeEnabled === true) {
         + `写库开关=${cronConfig.sleepTimeWrite === true ? 'ON' : 'OFF(只出计划)'} nextDate=${String(sleepJob.nextDate?.() ?? '-')}`)
 } else {
     logger.info('cron/sleepTimeConsolidate 未启用（需 cron_sleepTimeEnabled=true；写库另需 cron_sleepTimeWrite=true）')
+}
+
+/**
+ * artifact 对账（`tasks/artifactReconcile.js`）：**默认不注册**。
+ * 双闸比别的任务更直白：这个任务动手时会 tombstone 覆盖 doc.api 上的用户内容——
+ * `artifactReconcileEnabled` 控注册、`artifactReconcileEnforce` 控动手；
+ * 只开注册=完整分类与核验的干跑，plans 里列"如果开闸会做什么"，一个动作都不做。
+ */
+if (cronConfig.artifactReconcileEnabled === true) {
+    const reconcilePattern = cronConfig.artifactReconcilePattern || '15 5 * * *'
+    const reconcileJob = new CronJob(reconcilePattern, () => runGuarded('artifactReconcile', async () => {
+        jobs.artifactReconcile = jobs.artifactReconcile || {executing: false}
+        if (jobs.artifactReconcile.executing) {
+            logger.info('artifactReconcile-任务仍在执行，跳过本次触发')
+            return
+        }
+        jobs.artifactReconcile.executing = true
+        try {
+            const ret = await runArtifactReconcile({})
+            logger.info(`artifactReconcile 触发完成: ${JSON.stringify({
+                模式: ret.dryRun === undefined ? (ret.skipped || '未知') : (ret.dryRun ? '干跑' : '执行'),
+                行: ret.scanned, counts: ret.counts, 动作: ret.executedAll,
+            })}`)
+        } catch (e) {
+            logger.error(`artifactReconcile 任务异常: ${e.stack || e.message}`)
+        } finally {
+            jobs.artifactReconcile.executing = false
+        }
+    }), null, true, cronConfig.timezone || 'Asia/Shanghai')
+    registeredJobs.push(reconcileJob)
+    logger.info(`cron/artifactReconcile 已注册 pattern=${reconcilePattern} `
+        + `动手开关=${cronConfig.artifactReconcileEnforce === true ? 'ON' : 'OFF(干跑)'} nextDate=${String(reconcileJob.nextDate?.() ?? '-')}`)
+} else {
+    logger.info('cron/artifactReconcile 未启用（需 cron_artifactReconcileEnabled=true；动手另需 cron_artifactReconcileEnforce=true）')
 }
 
 /**

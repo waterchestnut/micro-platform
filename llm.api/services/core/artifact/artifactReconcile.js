@@ -86,6 +86,7 @@ export const RECONCILE_CLASS = {
     ORPHAN_FILE: 'orphan-file',     // 分配/上传过、但无登记且无引用 ⇒ 泄漏的 doc.api 文件，可回收
     DANGLING_RECORD: 'dangling-record', // 登记了、但核验回来文件不在、且无有效引用 ⇒ 悬空记录
     ALLOC_WITHOUT_RECORD: 'alloc-without-record', // 分配了 fileCode 却没走到登记（崩溃在中间），既非孤儿文件也非悬空，属"半途分配"
+    INCONSISTENT_RECORD: 'inconsistent-record', // 登记了（registered/ready）却**根本没有 fileCode**：账内部自相矛盾，核验无从谈起
 }
 
 /**
@@ -95,20 +96,32 @@ export const RECONCILE_CLASS = {
  * @param {Boolean} [a.docFilePresent] 执行器核验回来的"doc.api 文件是否在"；未知(undefined) 不当"在"也不当"不在"
  * @param {Boolean} [a.referencedByMessage] 是否仍被某条持久化 message 引用
  * @param {Boolean} [a.allocated]  llm.api 是否分配过这个 fileCode（上传账里有它）
+ * @param {Boolean} [a.handleMissing] 账称 registered/ready 却没有 fileCode（§9.1 的"登记发生在传完之后"被违反）
  * @param {Number}  [a.ageMs]      自分配/登记起经过的毫秒
  * @param {Number}  [a.graceMs]    宽限期；未过 ⇒ in-flight
  * @returns {{klass: String, actions: String[], note: String}} 分类 + 建议动作（只列，不执行）
  *
  * 判据次序反映的是"别误删活物"的优先级，而非巧合：
  * 1. 超不过宽限期一律 in-flight（并发 intake 不是孤儿——同 retention/backfill 的窗口教训）；
- * 2. 被 message 引用 ⇒ 顶多标 broken，**永不删文件**（删了就是"用户看到的链接指向死文件"，比留一个坏记录更糟）；
- * 3. 有登记但核验文件缺失 ⇒ dangling-record（悬空，需标记或重拉，不是删引用）；
- * 4. 有分配、无登记、无引用 ⇒ orphan-file（回收候选）；
- * 5. 有分配、无登记、无文件、超窗 ⇒ alloc-without-record（半途崩溃残留，安全丢弃账目）。
+ * 2. **矛盾账先于一切核验**：registered ∧ 无把手（handleMissing）——没有 fileCode 就没有"文件在不在"
+ *    这回事，docFilePresent 无从谈起；把它放进度量成 CONSISTENT+verify-doc-api 就是给说谎账
+ *    发"待核验"的通行证（2026-11-15 dev 实锤：born-registered bug 的 4 条假行正是这个形状，
+ *    在旧判据下全部隐身成 consistent——那条 bug 的隐身能力有这一半）；
+ * 3. 被 message 引用 ⇒ 顶多标 broken，**永不删文件**（删了就是"用户看到的链接指向死文件"，比留一个坏记录更糟）；
+ * 4. 有登记但核验文件缺失 ⇒ dangling-record（悬空，需标记或重拉，不是删引用）；
+ * 5. 有分配、无登记、无引用 ⇒ orphan-file（回收候选）；
+ * 6. 有分配、无登记、无文件、超窗 ⇒ alloc-without-record（半途崩溃残留，安全丢弃账目）。
  */
-export function classifyArtifact({registered = false, docFilePresent, referencedByMessage = false, allocated = false, ageMs = 0, graceMs = 0} = {}) {
+export function classifyArtifact({registered = false, docFilePresent, referencedByMessage = false, allocated = false, handleMissing = false, ageMs = 0, graceMs = 0} = {}) {
     if (!(ageMs > graceMs)) {
         return {klass: RECONCILE_CLASS.IN_FLIGHT, actions: [], note: '未过宽限期，按在途 intake 对待，绝不当孤儿'}
+    }
+    if (handleMissing) {
+        if (referencedByMessage) {
+            return {klass: RECONCILE_CLASS.PROTECTED, actions: ['mark-broken', 'notify'], note: '被引用但登记无把手：标失效不删（矛盾账也在保护之内）'}
+        }
+        return {klass: RECONCILE_CLASS.INCONSISTENT_RECORD, actions: ['mark-broken', 'notify', 'unregister-artifact?'],
+            note: '登记无把手（registered/ready 且无 fileCode）：账自相矛盾，标失效+人工裁注销'}
     }
     if (referencedByMessage) {
         // 引用优先：缺文件只能标 broken，不能删（保护用户可见链接）

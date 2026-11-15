@@ -26,7 +26,7 @@ function findSrc(startDir) {
 }
 const SRC = findSrc(path.dirname(fileURLToPath(import.meta.url)))
 const M = await import(pathToFileURL(path.join(SRC, 'services/core/artifact/docApiUpload.js')).href)
-const {makeDocApiUploader, buildUserInfoHeader, interpretDocApiReply, buildDownloadUrl} = M
+const {makeDocApiUploader, buildUserInfoHeader, interpretDocApiReply, buildDownloadUrl, makeDocFileVerifier} = M
 const {INTAKE_ERRORS} = await import(pathToFileURL(path.join(SRC, 'services/core/artifact/intakeErrors.js')).href)
 
 const cfg = {baseIntranetUrl: 'http://doc.internal', baseUrl: 'https://doc.pub', timeoutMs: 5000}
@@ -128,5 +128,33 @@ describe('4 buildDownloadUrl：对外域名优先 + 编码', () => {
     })
     test('无 baseUrl 退回内网（不留空 URL）', () => {
         assert.match(buildDownloadUrl({config: {baseIntranetUrl: 'http://x'}, fileCode: 'f'}), /^http:\/\/x\/file\/download\//)
+    })
+})
+
+describe('5 makeDocFileVerifier：HEAD 三态（2026-11-15 L2 实测定型的执行面）', () => {
+    const mk = (reply, calls) => makeDocFileVerifier({
+        docApiConfig: {baseIntranetUrl: 'http://doc-api-http', timeoutMs: 5000},
+        userInfo: {userCode: 'cron:test', realName: 't'},
+        fetchImpl: async (url, init) => {
+            calls.push({url, init})
+            return typeof reply === 'function' ? reply(url, init) : reply
+        },
+    })
+    test('200⇒true、404⇒false；请求带内网 query 形态与 user-info 头', async () => {
+        const calls = []
+        const v = mk({status: 200, headers: new Map([['content-length', '10']])}, calls)
+        assert.equal(await v('fc/1'), true)
+        assert.match(calls[0].url, /^http:\/\/doc-api-http\/file\/download\?fileCode=fc%2F1$/, 'query 式+编码（读回实测过的形态，不另发明路径式）')
+        assert.equal(calls[0].init.method, 'HEAD')
+        assert.ok(calls[0].init.headers['user-info'], '内网直连必须带身份头（与上传同构的信任链）')
+        const calls2 = []
+        assert.equal(await mk({status: 404}, calls2)('fc'), false)
+    })
+    test('500/超时/抛错 ⇒ null（未知）——HEAD 行为再怪也只进 deferred，不会误判"不在"', async () => {
+        const calls = []
+        assert.equal(await mk({status: 500}, calls)('fc'), null)
+        assert.equal(await mk(() => { throw new Error('abort') }, calls)('fc'), null)
+        assert.equal(await mk({status: 200}, calls)(''), null, '空 fileCode 不打网络')
+        assert.equal(await makeDocFileVerifier({docApiConfig: {}, userInfo: {}})('fc'), null, '无内网 base 不打网络')
     })
 })

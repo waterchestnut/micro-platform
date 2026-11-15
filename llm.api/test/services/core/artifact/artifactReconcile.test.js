@@ -158,3 +158,40 @@ describe('5 不碰网络、不执行删除：纯判据纪律', () => {
         assert.ok(!/\bllm\s*\./.test(code), '不读 llm 全局')
     })
 })
+
+describe('6 handleMissing：登记无把手的矛盾账先于一切核验（2026-11-15 dev 实锤）', () => {
+    test('registered ∧ 无 fileCode ∧ 无引用 ⇒ inconsistent-record（旧判据下它隐身成 consistent，这条断言就是那半条 bug 的墓碑）', () => {
+        const c = classifyArtifact({registered: true, handleMissing: true, allocated: false, ageMs: 15 * 60000, graceMs: 600000})
+        assert.equal(c.klass, RECONCILE_CLASS.INCONSISTENT_RECORD)
+        assert.ok(c.actions.includes('mark-broken'))
+        assert.ok(c.actions.some(a => a.includes('unregister-artifact?')), '注销属判断类：带 ? 进 deferred，永不自动')
+        assert.ok(!c.actions.includes('delete-doc-api-file'), '没有把手就没有文件可删——矛盾账不许被当孤儿文件回收')
+    })
+    test('宽限期优先于矛盾判定（未超窗的 started 行还没拿到把手，属正常在途）', () => {
+        const c = classifyArtifact({registered: true, handleMissing: true, ageMs: 1000, graceMs: 600000})
+        assert.equal(c.klass, RECONCILE_CLASS.IN_FLIGHT)
+    })
+    test('被引用的矛盾账 ⇒ PROTECTED + 标失效（矛盾不豁免引用保护：用户可见的坏链接也不能删）', () => {
+        const c = classifyArtifact({registered: true, handleMissing: true, referencedByMessage: true, ageMs: 15 * 60000, graceMs: 600000})
+        assert.equal(c.klass, RECONCILE_CLASS.PROTECTED)
+        assert.deepEqual(c.actions, ['mark-broken', 'notify'])
+    })
+    test('handleMissing 只在 registered=true 时有意义：未登记的无把手行走既有分支（半途分配/孤儿）', () => {
+        const c = classifyArtifact({registered: false, handleMissing: false, allocated: false, ageMs: 15 * 60000, graceMs: 600000})
+        assert.notEqual(c.klass, RECONCILE_CLASS.INCONSISTENT_RECORD, '不登记就不该被叫"矛盾账"——那是登记方的事')
+    })
+    test('正常 ready 行（有把手）不受影响（新判据不吞好账）', () => {
+        const c = classifyArtifact({registered: true, handleMissing: false, allocated: true, docFilePresent: true, ageMs: 15 * 60000, graceMs: 600000})
+        assert.equal(c.klass, RECONCILE_CLASS.CONSISTENT)
+        assert.deepEqual(c.actions, [])
+    })
+    test('词表三处对账：RECONCILE_CLASS 新类必须在 reconcileArtifacts 的桶里出现（汇总面不许漏新分类）', () => {
+        const {buckets, counts} = reconcileArtifacts([
+            {registered: true, handleMissing: true, allocated: false, ageMs: 15 * 60000},
+            {registered: true, handleMissing: false, allocated: true, docFilePresent: true, ageMs: 15 * 60000},
+        ], 600000)
+        assert.equal(counts[RECONCILE_CLASS.INCONSISTENT_RECORD], 1)
+        assert.ok(buckets[RECONCILE_CLASS.INCONSISTENT_RECORD][0].actions.some(a => a.includes('unregister-artifact?')))
+        assert.equal(Object.keys(buckets).length, Object.values(RECONCILE_CLASS).length, '每个类都要有桶')
+    })
+})
