@@ -83,7 +83,13 @@ const artifactSchema = new Schema({
     sha256: {type: String, default: '', description: '内容指纹'},
     sandboxId: {type: String, default: '', description: '来源沙箱'},
     sourcePath: {type: String, default: '', description: '沙箱内原始路径'},
-    state: {type: String, enum: INTAKE_STATES, default: 'registered', description: 'intake 状态'},
+    /**
+     * 默认必须是**生命周期起点 started**，不是 registered。
+     * 2026-11-15 dev 真流量实锤（artifact-e2e 首跑）：唯一建行方 createStarted 不显式写 state，
+     * 行按默认值出生成 registered ⇒ intake 第一跳 CAS started→pulled 100% 未命中，save_artifact 全灭；
+     * 且假 registered 行 fileCode 为空、scanStalled（只捞 started/pulled/uploaded）看不见——失败模式对巡检隐身。
+     */
+    state: {type: String, enum: INTAKE_STATES, default: 'started', description: 'intake 状态'},
     integrity: {type: String, enum: INTEGRITY_MARKS, default: 'unknown', description: '对账完整性标记，未核验=unknown'},
     messageCode: {type: String, default: '', description: '挂载消息；被引用受对账保护'},
     readyAt: {type: Date, default: null, description: '进入 ready 的时间'},

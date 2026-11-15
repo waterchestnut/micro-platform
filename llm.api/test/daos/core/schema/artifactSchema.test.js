@@ -10,9 +10,14 @@
  */
 import {test, describe} from 'node:test'
 import * as assert from 'node:assert'
+import fs from 'node:fs'
+import path from 'node:path'
+import {fileURLToPath} from 'node:url'
 import mongoose from 'mongoose'
 import artifactSchema from '../../../../daos/core/schema/artifactSchema.js'
 import {INTAKE_STATE} from '../../../../services/core/artifact/artifactReconcile.js'
+
+const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..')
 
 const paths = artifactSchema.paths || {}
 
@@ -32,12 +37,19 @@ describe('2 必填与默认（登记时刻的口径）', () => {
         assert.ok(err && err.errors && err.errors.artifactCode, '缺 artifactCode 必须校验失败')
         assert.ok(!new M({artifactCode: 'a-1'}).validateSync(), '给了就过')
     })
-    test('state 默认 registered：这行诞生于 §9.5 第 3 步"登记"；version 默认 1', () => {
+    test('state 默认 started：唯一建行方是 intake 第 1 步（createStarted），行必须从生命周期起点出生', () => {
         const M = mongoose.model('T_artifact_def', artifactSchema)
         const o = new M({artifactCode: 'a-1'}).toObject()
-        assert.equal(o.state, 'registered')
+        assert.equal(o.state, 'started',
+            '2026-11-15 dev 实锤：默认 registered ⇒ CAS started→pulled 全灭且假行对 scanStalled 隐身')
         assert.equal(o.version, 1)
         assert.equal(o.sizeBytes, 0, '默认 0（没量到）与 undefined 区分：聚合不把整行当缺数据')
+    })
+    test('createStarted 的 $setOnInsert 必须显式带 state:started（不寄望默认值——名字与行为不许分家）', () => {
+        const src = fs.readFileSync(path.join(SRC, 'daos/core/dac/artifactDac.js'), 'utf8').replace(/\r/g, '')
+        const body = /async createStarted[\s\S]*?\$setOnInsert:\s*\{([\s\S]*?)\}/.exec(src)
+        assert.ok(body, 'createStarted 的 $setOnInsert 块必须存在（重构不许悄悄换形态）')
+        assert.match(body[1], /state:\s*'started'/, 'createStarted 必须显式写 state（本用例即 2026-11-15 实锤的固化）')
     })
     test('非法 state/integrity 被拒（词表不是装饰）', () => {
         const M = mongoose.model('T_artifact_enum', artifactSchema)

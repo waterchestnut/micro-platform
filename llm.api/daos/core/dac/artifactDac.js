@@ -30,6 +30,10 @@ export class ArtifactDac extends BaseDac {
             {
                 $setOnInsert: {
                     artifactCode: task.artifactCode,
+                    /** state 必须显式写：函数名叫 createStarted，行为就不许寄望 schema 默认值
+                     *  （2026-11-15 实锤：默认值 registered 让每一行"started"出生即 registered，
+                     *   intake 第一跳 CAS 全灭——名字与行为分家的教科书样本） */
+                    state: 'started',
                     conversationCode: task.conversationCode || '',
                     channel: task.channel || '',
                     userCode: task.userCode || '',
