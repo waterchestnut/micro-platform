@@ -25,21 +25,16 @@ const DAYS = Number(val('days', '7'))
 const LIMIT = Number(val('limit', '800'))
 
 await import('file:///D:/workspace/xxzx/xxzx.llm.api/src/init.js')
-const {Message} = await import('file:///D:/workspace/xxzx/xxzx.llm.api/src/daos/core/schema/index.js')
 
-const since = new Date(Date.now() - DAYS * 86400000)
 /**
- * 排除合成流量（普查的有效性判据）：名单的权威在 evals/gate/sampleCorpus（单源，
- * 本件与 classifier-cost 都是它的消费者）；排除数进报告，名单过旧会以数字显形。
+ * 排除合成流量（普查的有效性判据）：**判据整体住在 evals/gate/sampleCorpus**（主=userCode、次=前缀），
+ * 本件只是它的消费者之一；排除按原因计数进报告，清单过期/身份漏网都以数字显形。
  */
-const {isSynthetic} = await import('../gate/sampleCorpus.mjs')
-const rows0 = await Message.find({
-    insertTime: {$gte: since},
-    progress: 'finish',
-    'extInfo.toolCalls.0': {$exists: true},
-}, {'extInfo.toolCalls': 1, conversationCode: 1, insertTime: 1}).sort({insertTime: -1}).limit(LIMIT).lean()
-const rows = rows0.filter((r) => !isSynthetic(r.conversationCode))
-const excluded = rows0.length - rows.length
+const {loadNaturalToolCalls} = await import('../gate/sampleCorpus.mjs')
+const corpus = await loadNaturalToolCalls({days: DAYS, limit: LIMIT})
+const samplesIn = corpus.samples
+const rows = [...new Set(samplesIn.map((s) => s.conversationCode))]
+const excluded = corpus.scanned - rows.length
 
 /**
  * 动作 → 门暴露面归类与动词族：**从判据层 import（execGate.js）**——
@@ -54,31 +49,28 @@ let argsPresent = 0
 const charsLens = []
 const storedLens = []
 const unknownTools = new Set()
-for (const r of rows) {
-    for (const tc of r.extInfo?.toolCalls || []) {
-        calls++
-        const name = tc.name || '?'
-        const surface = SURFACE[name] || 'unknown'
-        if (surface === 'unknown') {
-            unknownTools.add(name)
+for (const s of samplesIn) {
+    calls++
+    const name = s.toolName
+    const surface = SURFACE[name] || 'unknown'
+    if (surface === 'unknown') {
+        unknownTools.add(name)
+    }
+    tally[surface] = (tally[surface] || 0) + 1
+    const argText = s.argText || ''
+    if (argText) {
+        argsPresent++
+        // 两套口径分开统计（"p15 双口径"同族教训）：argsChars=截断前计数，text.length=实际存档长
+        // 混进一个分布里，5988>limits.toolArgsChars=4000 这种数会伪装成"预算没生效"
+        if (s.argsChars !== null && Number.isFinite(s.argsChars)) {
+            charsLens.push(s.argsChars)
         }
-        tally[surface] = (tally[surface] || 0) + 1
-        const raw = tc.args ?? tc.arguments
-        const argText = typeof raw === 'string' ? raw : (raw ? JSON.stringify(raw) : '')
-        if (argText) {
-            argsPresent++
-            // 两套口径分开统计（"p15 双口径"同族教训）：argsChars=截断后计数，text.length=实际存档长
-            // 混进一个分布里，5988>limits.toolArgsChars=4000 这种数会伪装成"预算没生效"
-            if (Number.isFinite(Number(tc.argsChars))) {
-                charsLens.push(Number(tc.argsChars))
-            }
-            storedLens.push(argText.length)
-        }
-        if (name === 'run_code') {
-            for (const [fam, re] of VERB_FAMILIES) {
-                if (re.test(argText)) {
-                    verbTally[fam] = (verbTally[fam] || 0) + 1
-                }
+        storedLens.push(argText.length)
+    }
+    if (name === 'run_code') {
+        for (const [fam, re] of VERB_FAMILIES) {
+            if (re.test(argText)) {
+                verbTally[fam] = (verbTally[fam] || 0) + 1
             }
         }
     }
@@ -91,7 +83,7 @@ const report = {
     probe: 'p11-action-census',
     window: `近${DAYS}天`,
     会话数: rows.length,
-    合成流量排除数: excluded,
+    合成排除: `${excluded}（按判据 ${JSON.stringify(corpus.excludedBy)}；主=userCode 次=前缀）`,
     调用数: calls,
     入参落档率: `${argsPresent}/${calls}（H1 后的校准位）`,
     入参长度双口径: {

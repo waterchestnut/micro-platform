@@ -9,7 +9,7 @@ import {test, describe} from 'node:test'
 import * as assert from 'node:assert'
 
 const {seedLabel, agreementReport} = await import('../../evals/gate/classifierEvalset.mjs')
-const {isSynthetic, argHash} = await import('../../evals/gate/sampleCorpus.mjs')
+const {isSynthetic, syntheticReason, argHash} = await import('../../evals/gate/sampleCorpus.mjs')
 const {classifyAction} = await import('../../services/core/session/execGate.js')
 
 const A = (toolName, argText) => classifyAction({toolName, argsText: argText ?? ''})
@@ -73,5 +73,14 @@ describe('3 sampleCorpus 共享件', () => {
         assert.equal(isSynthetic(''), false)
         assert.equal(argHash('abc'), argHash('abc'))
         assert.notEqual(argHash('abc'), argHash('abd'))
+    })
+    test('syntheticReason：主判据 userCode 抓得住前缀追不上的写手（2026-11-15 盘点定调的那条）', () => {
+        assert.equal(syntheticReason('c95edbf7abc24de88b3cbc', 'menglb'), 'user', '管理员口令=探针/跑批默认身份，真实聊天一并排除（代价在报告显形）')
+        assert.equal(syntheticReason('anything-2026', 'window-probe'), 'user')
+        assert.equal(syntheticReason('anything-2026', 'attr-verify'), 'user')
+        assert.equal(syntheticReason('anything-2026', 'interrupt-attribution-probe'), 'user')
+        assert.equal(syntheticReason('eval-golden-x', 'some-new-account'), 'prefix', '前缀判据对已登记写手仍在位（次判据；loop-regression 恰是它追不上的活例）')
+        assert.equal(syntheticReason('student-chat-1', 'teacher02'), null, '自然账号+自然前缀=进样本')
+        assert.equal(syntheticReason('2f712ac9fde740a58a5df7', 'xxzx'), null, '纯 hex 会话 + 非探针身份=自然（普查里的真实那 3 条）')
     })
 })
