@@ -100,6 +100,31 @@ describe('3 身份分栏（sampleCorpus 单源）', () => {
     })
 })
 
+describe('5 enforce 形态映射（block 不是一个数，是五个来路）', () => {
+    test('(verdict,source,raw) 三元组完全区分五来路+ask-human', async () => {
+        const {enforceOutcomeOf} = await import(pathToFileURL(path.join(SRC, 'evals/gate/gateWeekRead.mjs')).href)
+        assert.equal(enforceOutcomeOf({verdict: 'await-human', source: 'layer2'}), 'ask-human')
+        assert.equal(enforceOutcomeOf({verdict: 'block', source: 'layer1', rule: 'deny-x'}), 'blocked-rule')
+        assert.equal(enforceOutcomeOf({verdict: 'block', source: 'fuse'}), 'blocked-fuse')
+        assert.equal(enforceOutcomeOf({verdict: 'block', source: 'no-classifier', raw: 'unparsable'}), 'blocked-no-model')
+        assert.equal(enforceOutcomeOf({verdict: 'block', source: 'layer2', raw: 'block'}), 'blocked-classifier')
+        assert.equal(enforceOutcomeOf({verdict: 'block', source: 'layer2', raw: 'escalate'}), 'blocked-no-human')
+        assert.equal(enforceOutcomeOf({verdict: 'allow', source: 'layer2', raw: 'allow'}), null, 'allow 永不是反事实')
+    })
+    test('形态栏求和=反事实总数；自然面栏只数自然身份（探针自钓的 escalate 不许冒充用户量）', () => {
+        const r = buildGateWeekReport([
+            msg('user-1', 'teacher01', [dec('a', 'block', 'layer2', {raw: 'block'}), dec('b', 'await-human')]),
+            msg('gate-stroke-block-9', 'menglb', [dec('c', 'await-human')]),
+        ])
+        assert.equal(r.反事实_enforce下不直接执行, 3)
+        const sum = Object.values(r.反事实_enforce形态).reduce((a, b) => a + b, 0)
+        assert.equal(sum, 3, '形态栏必须与总数守恒')
+        assert.deepEqual(r.反事实_enforce形态, {'blocked-classifier': 1, 'ask-human': 2})
+        assert.deepEqual(r.反事实_自然面, {'blocked-classifier': 1, 'ask-human': 1},
+            '合成面（menglb 自钓）的那笔 ask-human 不得进自然栏')
+    })
+})
+
 describe('4 姿态混检与按天时序', () => {
     test('enforce=true 档案出现 ⇒ withEnforce 计数（混合口径的自曝位）', () => {
         const r = buildGateWeekReport([

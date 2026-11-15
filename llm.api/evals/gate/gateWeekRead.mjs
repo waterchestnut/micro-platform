@@ -18,8 +18,28 @@
 import {syntheticReason} from './sampleCorpus.mjs'
 
 /**
+ * @description enforce 反事实的"形态映射"（判据层，2026-11-15 深夜口径修正）：
+ * verdict=block 有五个来路，enforce 下各自的结局不同——enforce 之议要的是"会怎样"，
+ * 不是"有多少"。映射输入是 (verdict, source, raw) 三元组（无 reason 字段的档案面能
+ * 完全区分五者：这是当初补 raw 字段的第二重收益）。
+ * @param {Object} d decisions 单条
+ * @returns {String|null} 非反事实条目返回 null
+ */
+export function enforceOutcomeOf(d) {
+    if (!d) return null
+    if (d.verdict === 'await-human') return 'ask-human'
+    if (d.verdict !== 'block') return null
+    if (d.source === 'layer1') return 'blocked-rule'
+    if (d.source === 'fuse') return 'blocked-fuse'
+    if (d.source === 'no-classifier') return 'blocked-no-model'
+    if (d.raw === 'block') return 'blocked-classifier'
+    /** source=layer2 且 raw≠block 的 block：escalate 而人工通道不可达的保守挡（过渡语义） */
+    return 'blocked-no-human'
+}
+
+/**
  * @description 从带 extInfo.gate 的档案数组出观察周报告（纯函数——输入形状=档案面读到的形状）
- * @param {Array<Object>} docs [{conversationCode, userCode, insertTime, extInfo:{gate}}]
+ * @param {Array<Object>} docs [{conversationCode, operator:{userCode}, insertTime, extInfo:{gate}}]
  * @returns {Object} 分布/反事实/纠正/分栏读数
  */
 export function buildGateWeekReport(docs = []) {
@@ -31,6 +51,8 @@ export function buildGateWeekReport(docs = []) {
         overrode: 0,
         反事实_enforce下不直接执行: 0,
         反事实_明细: {block: 0, 'await-human': 0},
+        反事实_enforce形态: {},
+        反事实_自然面: {},
         分栏: {natural: {messages: 0, decisions: 0}, synthetic: {messages: 0, decisions: 0}},
         合成排除计数: {},
         topTools: {},
@@ -60,6 +82,8 @@ export function buildGateWeekReport(docs = []) {
             if (x.verdict === 'block' || x.verdict === 'await-human') {
                 rep.反事实_enforce下不直接执行++
                 bump(rep.反事实_明细, x.verdict)
+                bump(rep.反事实_enforce形态, enforceOutcomeOf(x))
+                if (!why) bump(rep.反事实_自然面, enforceOutcomeOf(x))
             }
         }
     }
@@ -85,4 +109,4 @@ if (process.argv[1] && process.argv[1].endsWith('gateWeekRead.mjs')) {
     process.exit(0)
 }
 
-export default {buildGateWeekReport}
+export default {buildGateWeekReport, enforceOutcomeOf}
