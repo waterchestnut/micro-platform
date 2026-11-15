@@ -9,8 +9,14 @@
  *   4. 先到先得的**权威证据在档案**：extInfo.toolCalls 里 ask_user 的结果 content 必须含
  *      choice=A 且不含 B（run 侧 router 单点裁决，迟到的 B 不该进工具结果）；
  *   5. run 正常 done、progress=finish、answer 非空。
+ *   6. P-19（2026-11-15 裁定实现后补）：两条 /answer 各有一条 answer_ack 回流——先到 accepted:true
+ *      code:'ok'、后到 accepted:false（already-answered 或 bad-responses，取决于 A 是否已 settle），
+ *      answerCode 原样对相关；档案面 extInfo.awaitings >=2（事件流与档案是同一份 router 账的两个出口）。
  * 挂起闸账的"占格"判据需要 limits_concurrentRuns>0 的窗口才能测——本探针只测 stopHandles
  * 这一半（把手可用性），active 计数那一半如实留给开闸后的窗口，不假测。
+ * 已知抖动：dev 是双副本，/runStats 只读**本进程**的把手表——runStats 那次打到哪个副本看 LB，
+ * 故 handleDuringPending 有实测会 false 的窗口（2026-11-15 第二次跑就翻了面），它 false 是**多副本观察窗**
+ * （正是 §16.1 挂着的 /answer 跨 worker 终态那一格），不是本批代码的回归；判过以此单项豁免、其余全绿即可。
  * 用法（src/ 下）：node evals/platform-probes/ask-e2e-probe.mjs
  */
 import fs from 'node:fs'
@@ -39,13 +45,14 @@ async function streamWithHook({query, conversationCode, onAwaitInput}) {
     })
     if (!(r.headers.get('content-type') || '').includes('text/event-stream')) {
         clearTimeout(timer)
-        return {fatal: '非 SSE：' + (await r.text()).slice(0, 100), terminal: 'not-sse', awaitPayloads: []}
+        return {fatal: '非 SSE：' + (await r.text()).slice(0, 100), terminal: 'not-sse', awaitPayloads: [], acks: []}
     }
     const dec = new TextDecoder()
     let buf = ''
     let terminal = 'closed'
     let messageCode = ''
     const awaitPayloads = []
+    const acks = []
     let hookDone = Promise.resolve()
     try {
         for await (const cv of r.body) {
@@ -65,6 +72,9 @@ async function streamWithHook({query, conversationCode, onAwaitInput}) {
                     awaitPayloads.push(parsed)
                     hookDone = onAwaitInput(parsed, messageCode)
                 }
+                if (ev === 'answer_ack' && parsed) {
+                    acks.push(parsed)
+                }
                 if (ev === 'done' || ev === 'abort' || ev === 'error') { terminal = ev; break }
             }
             if (terminal !== 'closed') break
@@ -73,7 +83,9 @@ async function streamWithHook({query, conversationCode, onAwaitInput}) {
         clearTimeout(timer)
     }
     await hookDone
-    return {terminal, messageCode, awaitPayloads}
+    // 等两条 ack 落流（投递与回执之间隔一个控制通道往返）
+    await new Promise((res) => setTimeout(res, 1500))
+    return {terminal, messageCode, awaitPayloads, acks}
 }
 
 async function postJson(path, body) {
@@ -105,9 +117,9 @@ const out = await streamWithHook({
         const late = enumVals ? (enumVals[1] ?? 'B') : 'B'
         log('await_input 到达', {resultType: payload.resultType, hasRequests: Array.isArray(payload.inputRequests), hasState: !!payload.requestState, seq: payload.checkpointSeq, askedKey: key, enumVals})
         const rs = payload.requestState
-        // 连投两条：先选后弃（先到者应成为档案里的权威结果）
-        const a1 = await postJson('/core/chat/answer', {requestState: rs, inputResponses: {[key]: pick}})
-        const a2 = await postJson('/core/chat/answer', {requestState: rs, inputResponses: {[key]: late}})
+        // 连投两条：先选后弃（先到者应成为档案里的权威结果）；各带 answerCode 供回执关联（P-19）
+        const a1 = await postJson('/core/chat/answer', {requestState: rs, inputResponses: {[key]: pick}, answerCode: 'e2e-first'})
+        const a2 = await postJson('/core/chat/answer', {requestState: rs, inputResponses: {[key]: late}, answerCode: 'e2e-late'})
         log('两条 /answer 投递', {first: a1.code ?? a1.success, second: a2.code ?? a2.success, picked: String(pick).slice(0, 12), late: String(late).slice(0, 12)})
         probePick = String(pick)
         probeLate = String(late)
@@ -129,6 +141,10 @@ const checks = {
     toolResultHasA: pickedA,
     toolResultNoLateB: !leakedB,
     archiveFinish: doc?.progress === 'finish' && String(doc?.answer || '').length > 0,
+    // P-19（2026-11-15 裁定实现后的验证刀）：两条投递各有一条 answer_ack，先 ok 后拒、answerCode 对相关
+    ackAccepted: out.acks.some((a) => a.answerCode === 'e2e-first' && a.accepted === true && a.code === 'ok'),
+    ackRejected: out.acks.some((a) => a.answerCode === 'e2e-late' && a.accepted === false && ['already-answered', 'bad-responses'].includes(a.code)),
+    archiveAwaitings: Array.isArray(doc?.extInfo?.awaitings) && doc.extInfo.awaitings.length >= 2,
 }
 const pass = Object.values(checks).filter(Boolean).length
 log('判定', {通过: `${pass}/${Object.keys(checks).length}`, checks, askResultSample: askResult.slice(0, 90)})

@@ -285,6 +285,12 @@ export default async function (fastify, opts) {
                     initiator: request.userInfo?.userCode || '',
                     secret: AT.answerSecret(),
                     logger,
+                    /** P-19：deliver 终局走 run 自己的 SSE 通道发 answer_ack（进 eventLog，/resume 可见）；channel 未建的窗口只丢事件不丢账 */
+                    emitAck: (ack) => {
+                        if (channel) {
+                            channel.emit(JSON.stringify({...ack, messageCode: messageCodeForGate}), 'answer_ack')
+                        }
+                    },
                 })
             }
             RC.attachHandle({
@@ -871,6 +877,7 @@ export default async function (fastify, opts) {
                 properties: {
                     requestState: {type: 'string', description: 'await_input 下发的密封续体（原样回传）'},
                     inputResponses: {type: 'object', description: '对 form 问题的作答（未知键会被拒）'},
+                    answerCode: {type: 'string', maxLength: 64, description: '可选：调用方对账标识，answer_ack 原样带回'},
                 },
                 required: ['requestState', 'inputResponses'],
             },
@@ -886,7 +893,7 @@ export default async function (fastify, opts) {
         if (ctlCfg.askEnabled !== true) {
             return reply.code(200).send({success: false, code: 4003, msg: '提问/回答功能未启用（control_askEnabled）'})
         }
-        const {requestState, inputResponses} = request.reqParams || {}
+        const {requestState, inputResponses, answerCode} = request.reqParams || {}
         const AT = await import('../../../services/core/session/askUserTool.js')
         const MP = await import('../../../services/core/session/mrtrPayload.js')
         const refuse = () => reply.code(403).send({success: false, code: 4030, msg: '无法处理该答复：凭证无效、已被使用或不属于当前用户'})
@@ -917,7 +924,7 @@ export default async function (fastify, opts) {
         const sent = await RC.publishAnswer({
             messageCode: state.runCode,
             actorCode: request.userInfo.userCode,
-            answer: {askId: state.askId, responses: inputResponses, answeredBy: request.userInfo.userCode, requestState: String(requestState)},
+            answer: {askId: state.askId, responses: inputResponses, answeredBy: request.userInfo.userCode, requestState: String(requestState), answerCode: String(answerCode || '')},
         })
         if (!sent.published) {
             logger.warn(`/answer 投递失败 runCode=${state.runCode}: ${sent.error}`)

@@ -1103,6 +1103,12 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
              * null=没有（不是空壳数组：同"没调 update_plan"与"清空了计划"的区分）。
              */
             steerings: steeringsArchive.length ? steeringsArchive : null,
+            /**
+             * P-19（2026-11-15 裁定）：ask 回执的档案面。answer_ack 走事件流给"当下在场"的人，
+             * awaitings 给"事后审计与重连补看"的人——同一份账的两个出口（数据源只有 router.ackSnapshot()）。
+             * null=本轮没有 ask 投递（同 steerings 的"不是空壳"裁定）。
+             */
+            awaitings: options.answerRouter?.ackSnapshot?.()?.length ? options.answerRouter.ackSnapshot() : null,
             /** 异常路径的归因（`describeError` 的 kind:message）；正常路径为 null */
             error: errorMessage || null,
             /**
@@ -2209,6 +2215,10 @@ async function saveMessage(query, messageCode, messages, conversationCode, chann
             plan: options.plan,
             /** PR-D commit 2：注入过的插话清单（来源与去向的裁定见 persistTurn 处注释） */
             steerings: options.steerings,
+            awaitings: options.awaitings,
+            /** b397822 起入白名单：此前 error/upstream 在生产侧写了、这里没枚举 ⇒ 全库恒缺（守卫 llmChatExtInfoWhitelist 钉住两截链） */
+            error: options.error,
+            upstream: options.upstream,
         },
         messageTokens: options.messageTokens,
         answerTokens: options.answerTokens,

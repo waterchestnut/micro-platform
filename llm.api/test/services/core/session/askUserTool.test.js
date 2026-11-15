@@ -214,3 +214,50 @@ describe('3 awaitAskUser：出题→事件→挂起→回模型', () => {
         assert.equal(r.stats.answered, 2)
     })
 })
+
+describe('7 P-19 answer_ack：每次 deliver 终局都有回执（2026-11-15 裁定的实现面）', () => {
+    test('采纳发 ok；answerCode 原样对相关（调用方凭它对上自己那次投递）', async () => {
+        const acks = []
+        const r = createAnswerRouter({runCode: 'run-9', initiator: 'u-1', secret: SEC, emitAck: (a) => acks.push(a)})
+        const sealed = sealFor('a-9', 'question', 'run-9')
+        const p = r.register({askId: 'a-9', kind: 'question', schema: formReq.requestedSchema, requestState: sealed, timeoutMs: 5000})
+        assert.equal(r.deliver({askId: 'a-9', responses: {plan: 'A'}, answeredBy: 'u-1', requestState: sealed, answerCode: 'mine-1'}).accepted, true)
+        await withGuard(p, 2000, 'ack-accept')
+        assert.equal(acks.length, 1)
+        assert.deepEqual({requestId: acks[0].requestId, answerCode: acks[0].answerCode, accepted: acks[0].accepted, code: acks[0].code},
+            {requestId: 'a-9', answerCode: 'mine-1', accepted: true, code: 'ok'})
+        assert.ok(acks[0].at, '回执带时刻')
+    })
+    test('四类拒绝各有 code，且**与 deliver 返回值一致**（回执与裁决一个口径，两套说法=漂移起点）', () => {
+        const acks = []
+        const r = createAnswerRouter({runCode: 'run-9', initiator: 'u-1', secret: SEC, emitAck: (a) => acks.push(a)})
+        const sealed = sealFor('a-9b', 'question', 'run-9')
+        r.register({askId: 'a-9b', kind: 'question', schema: formReq.requestedSchema, requestState: sealed, timeoutMs: 5000}).then(() => {})
+        r.deliver({askId: 'ghost', responses: {}, answeredBy: 'u-1', requestState: sealed})
+        r.deliver({askId: 'a-9b', responses: {plan: 'C'}, answeredBy: 'u-1', requestState: sealed})
+        r.deliver({askId: 'a-9b', responses: {plan: 'A'}, answeredBy: 'u-1', requestState: sealed + 'x'})
+        assert.deepEqual(acks.map((a) => a.code), ['no-such-request', 'bad-responses', 'state-mismatch'])
+        assert.ok(acks.every((a) => a.accepted === false))
+        assert.ok(acks[1].notice, 'bad-responses 带 schema 错因（拒了要说清为什么拒——P-19 的立项理由）')
+    })
+    test('emitAck 抛错只吞不理：回执通道坏掉不许反噬裁决本身', async () => {
+        const r = createAnswerRouter({runCode: 'run-9', initiator: 'u-1', secret: SEC, emitAck: () => { throw new Error('通道炸了') }})
+        const sealed = sealFor('a-9c', 'question', 'run-9')
+        const p = r.register({askId: 'a-9c', kind: 'question', schema: null, requestState: sealed, timeoutMs: 5000})
+        assert.equal(r.deliver({askId: 'a-9c', responses: {x: 1}, answeredBy: 'u-1', requestState: sealed}).accepted, true)
+        assert.deepEqual((await withGuard(p, 2000, 'ack-throw')).resultType, 'complete')
+    })
+    test('ackSnapshot 有界（32 封顶，先进先出）且是副本（外部改不动账）', () => {
+        const r = createAnswerRouter({runCode: 'run-9', initiator: 'u-1', secret: SEC})
+        const sealed = sealFor('a-9d', 'question', 'run-9')
+        r.register({askId: 'a-9d', kind: 'question', schema: null, requestState: sealed, timeoutMs: 60000}).then(() => {})
+        for (let i = 0; i < 40; i++) {
+            r.deliver({askId: 'ghost-' + i, responses: {}, answeredBy: 'u-1', requestState: 'x'})
+        }
+        const snap = r.ackSnapshot()
+        assert.equal(snap.length, 32)
+        assert.equal(snap[0].requestId, 'ghost-8', '最旧的 8 条被挤出去（有界=保最新）')
+        snap[0].code = '篡改试试'
+        assert.notEqual(r.ackSnapshot()[0].code, '篡改试试')
+    })
+})

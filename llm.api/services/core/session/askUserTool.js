@@ -111,17 +111,38 @@ function mergeFormSchema(requests = []) {
 
 /**
  * @description 构造 run 侧答复路由器（每个开了 ask 的 run 一个；挂在控制通道把手上）
- * @param {Object} deps {runCode, initiator, secret, logger}
- * @returns {{runCode:String, register:Function, deliver:Function, stats:Object}} 路由器
+ * @param {Object} deps {runCode, initiator, secret, logger, emitAck}
+ * @returns {{runCode:String, register:Function, deliver:Function, stats:Object, ackSnapshot:Function}} 路由器
  *
  * `register` 返回 promise（resolve 即答复/取消的终局）；`deliver` 是通道订阅侧的投递口。
  * 裁决全在同步代码段里（Map 查改 + settle），没有 await 插队面——先到先得的"先"由单线程定序。
+ *
+ * **P-19（2026-11-15 裁定）：每次 deliver 的终局——采纳或拒绝——都发一条 `answer_ack`**
+ * （经 deps.emitAck，同一 run 的事件通道；断线者 /resume 可见，并留 ackSnapshot 给档案面）。
+ * 裁决与回执是两个身份：emitAck 抛错只吞不理——**回执发不出去不许反过来影响裁决**，
+ * 反之亦然；"已投递"从此有了对偶的"被怎样了"，被正当拒的答复人不再只能靠干等发现
+ * （首版 ask-e2e 探针就是这条缺口的受害者，立案原文）。
  */
-export function createAnswerRouter({runCode = '', initiator = '', secret = '', logger = null} = {}) {
+export function createAnswerRouter({runCode = '', initiator = '', secret = '', logger = null, emitAck = null} = {}) {
     if (!runCode) throw new Error('createAnswerRouter 需要 runCode（无 run 就没有答复的去处）')
     /** askId -> {state:'open'|'answered', kind, schema, requestState, answeredBy, finish?} */
     const entries = new Map()
     const stats = {issued: 0, answered: 0, cancelled: 0, rejected: 0}
+    /** ack 留档（档案面 extInfo.awaitings 的来源）：有界——长 run 被刷屏不许撑爆内存 */
+    const ackLog = []
+    const ACK_CAP = 32
+    function emitAckNow(ack) {
+        const row = {...ack, at: new Date().toISOString()}
+        if (ackLog.length >= ACK_CAP) {
+            ackLog.shift()
+        }
+        ackLog.push(row)
+        if (typeof emitAck === 'function') {
+            try {
+                emitAck(row)
+            } catch { /* 回执通道故障只丢回执（见头部裁定的两个身份） */ }
+        }
+    }
 
     /**
      * @description 登记一问并返回等待 promise
@@ -172,9 +193,11 @@ export function createAnswerRouter({runCode = '', initiator = '', secret = '', l
      * @returns {{accepted:Boolean, reason?:String, notice?:String}} 结果
      */
     function deliver(payload = {}) {
+        const ackBase = {requestId: String(payload?.askId || ''), answerCode: String(payload?.answerCode || '')}
         const e = entries.get(String(payload?.askId || ''))
         if (!e) {
             stats.rejected++
+            emitAckNow({...ackBase, accepted: false, code: 'no-such-request'})
             return {accepted: false, reason: 'no-such-request'}
         }
         const adm = decideAnswerAdmission({
@@ -186,11 +209,13 @@ export function createAnswerRouter({runCode = '', initiator = '', secret = '', l
         })
         if (!adm.admit) {
             stats.rejected++
+            emitAckNow({...ackBase, accepted: false, code: adm.reason})
             return {accepted: false, reason: adm.reason, notice: adm.notice}
         }
         /** requestState 逐字比对：两端都是服务端签发的串，相等即同一道题——askId 可能被抄错门牌 */
         if (String(payload?.requestState || '') !== e.requestState) {
             stats.rejected++
+            emitAckNow({...ackBase, accepted: false, code: 'state-mismatch'})
             return {accepted: false, reason: 'state-mismatch'}
         }
         const v = validateAnswerPayload({
@@ -201,16 +226,18 @@ export function createAnswerRouter({runCode = '', initiator = '', secret = '', l
         })
         if (!v.ok) {
             stats.rejected++
+            emitAckNow({...ackBase, accepted: false, code: 'bad-responses', notice: v.error})
             return {accepted: false, reason: 'bad-responses', notice: v.error}
         }
         e.state = 'answered'
         e.answeredBy = String(payload.answeredBy || '')
         e.finish({resultType: 'complete', responses: v.value.responses, answeredBy: e.answeredBy})
+        emitAckNow({...ackBase, accepted: true, code: 'ok'})
         if (logger?.info) logger.info(`ask_user 已获答复 askId=${payload.askId} by=${e.answeredBy}（run=${runCode}）`)
         return {accepted: true}
     }
 
-    return {runCode, register, deliver, stats}
+    return {runCode, register, deliver, stats, ackSnapshot: () => ackLog.map((x) => ({...x}))}
 }
 
 /**
