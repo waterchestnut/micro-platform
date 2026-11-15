@@ -140,6 +140,22 @@ export class LlmUsageDac extends BaseDac {
     }
 
     /**
+     * @description /stop 的归属核验读行：只认"仍在途"的行（终态行不该再被停第二次）
+     * @param {String} messageCode run 标识
+     * @returns {Promise<Object|null>} {messageCode, userCode} 或 null
+     */
+    async findProcessingByMessageCode(messageCode) {
+        if (!messageCode) {
+            return null
+        }
+        const row = await LlmUsage
+            .findOne({messageCode: String(messageCode), progress: LEDGER_PROGRESS.PROCESSING}, {userCode: 1})
+            .lean()
+            .exec()
+        return row ? {messageCode: String(messageCode), userCode: row.userCode || ''} : null
+    }
+
+    /**
      * @description 在途刷新：每次真正发起上游调用时把累计计数写回去
      * @param {Object} info 含 messageCode 与本 run 累计值
      * @returns {Promise<Object|null>} 更新后的记录

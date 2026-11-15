@@ -628,15 +628,17 @@ export function exhaustedFallback({loopExit = 'break', answerContent = '', answe
 /* ---------- 工具分派分类（对应 llmChat.js:551-555） ---------- */
 
 /**
- * @description 按谓词把工具调用分派到四类执行通道
+ * @description 按谓词把工具调用分派到各执行通道
  * @param {Object[]} toolCalls 已 prune 的调用
  * @param {Object} predicates 由调用方注入，保持本模块零依赖
  * @param {Function} predicates.isMemoryTool 记忆工具判定
  * @param {Function} predicates.isOverflowTool 溢出取回工具判定
  * @param {Function} predicates.isCodeTool 沙箱代码工具判定
- * @returns {{memoryCalls: Object[], overflowCalls: Object[], codeCalls: Object[], otherCalls: Object[]}}
+ * @param {Function} [predicates.isArtifactTool] 产物登记工具判定（PR-H2）
+ * @param {Function} [predicates.isAskTool] 人机提问工具判定（PR-E，挂起等非终态通道）
+ * @returns {{memoryCalls: Object[], overflowCalls: Object[], codeCalls: Object[], planCalls: Object[], artifactCalls: Object[], askCalls: Object[], otherCalls: Object[]}}
  */
-export function classifyToolCalls(toolCalls = [], {isMemoryTool, isOverflowTool, isCodeTool, isPlanTool, isArtifactTool} = {}) {
+export function classifyToolCalls(toolCalls = [], {isMemoryTool, isOverflowTool, isCodeTool, isPlanTool, isArtifactTool, isAskTool} = {}) {
     const isMem = typeof isMemoryTool === 'function' ? isMemoryTool : () => false
     const isOvf = typeof isOverflowTool === 'function' ? isOverflowTool : () => false
     const isCode = typeof isCodeTool === 'function' ? isCodeTool : () => false
@@ -644,16 +646,19 @@ export function classifyToolCalls(toolCalls = [], {isMemoryTool, isOverflowTool,
     const isPlan = typeof isPlanTool === 'function' ? isPlanTool : () => false
     /** save_artifact/read_artifact（PR-H2）：同款兼容——不传谓词恒 false，otherCalls 取反串同样带上它 */
     const isArtifact = typeof isArtifactTool === 'function' ? isArtifactTool : () => false
+    /** ask_user（PR-E）：同款兼容。它绝不能落进 otherCalls——MCP 通道里没有这个实现，漏接=模型提问石沉大海 */
+    const isAsk = typeof isAskTool === 'function' ? isAskTool : () => false
 
     const memoryCalls = toolCalls.filter(tc => isMem(tc.function?.name))
     const overflowCalls = toolCalls.filter(tc => isOvf(tc.function?.name))
     const codeCalls = toolCalls.filter(tc => isCode(tc.function?.name))
     const planCalls = toolCalls.filter(tc => isPlan(tc.function?.name))
     const artifactCalls = toolCalls.filter(tc => isArtifact(tc.function?.name))
+    const askCalls = toolCalls.filter(tc => isAsk(tc.function?.name))
     /** 其余走 MCP/Skill 通道；漏判会被整批丢给 mcpToolManager 而找不到实现，所以这里显式取反（plan/artifact 也必须进这串取反） */
     const otherCalls = toolCalls.filter(tc =>
-        !isMem(tc.function?.name) && !isOvf(tc.function?.name) && !isCode(tc.function?.name) && !isPlan(tc.function?.name) && !isArtifact(tc.function?.name))
-    return {memoryCalls, overflowCalls, codeCalls, planCalls, artifactCalls, otherCalls}
+        !isMem(tc.function?.name) && !isOvf(tc.function?.name) && !isCode(tc.function?.name) && !isPlan(tc.function?.name) && !isArtifact(tc.function?.name) && !isAsk(tc.function?.name))
+    return {memoryCalls, overflowCalls, codeCalls, planCalls, artifactCalls, askCalls, otherCalls}
 }
 
 /**

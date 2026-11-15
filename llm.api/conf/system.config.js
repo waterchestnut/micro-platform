@@ -628,6 +628,38 @@ export default {
         maxNameChars: parseInt(process.env['artifact_maxNameChars'] || 120),
     },
     /**
+     * PR-D/PR-E 的 run 控制面开关（通道与判据在 `session/runControl.js`）。
+     * 默认全关：关 ⇒ /stop 路由直接回"未启用"，订阅连接不建，run 登记不挂 abort 之外的东西。
+     */
+    controlConfig: {
+        stopEnabled: process.env['control_stopEnabled'] === 'true',
+        /**
+         * steer（插话）开关。与 stop **各自独立**：插话动的是主循环的输入面，风险面比"停"大一档，
+         * 开闸窗口分开谈。steerEnabled 开而 stopEnabled 关是合法组合（能插话但不能掐）。
+         */
+        steerEnabled: process.env['control_steerEnabled'] === 'true',
+        /**
+         * hard 插话（掐掉当前生成、注入后续跑）的独立开关。**steerEnabled 开不隐含它**——
+         * soft 只是往边界塞话，hard 会中断一次正在计费的生成，激进一档、开闸窗口分开谈。
+         * 关 ⇒ /steer 对 mode:'hard' 回 400 明确拒（**不降级成 soft**：mode 决定打断与否，
+         * 静默改行为是 normalize"从严拒不猜纠"裁定点名禁止的方向）。
+         */
+        hardSteerEnabled: process.env['control_hardSteerEnabled'] === 'true',
+        /** 单 run 邮箱容量：满了挤旧留新（被挤的进 evicted 计数，见 steerMailbox.createRunMailbox） */
+        steerMaxQueue: parseInt(process.env['control_steerMaxQueue'] || '20'),
+        /** 单边界最多注入条数（防一长串互相矛盾的指令灌进同一次调用；溢出旧弃新留） */
+        steerBoundaryLimit: parseInt(process.env['control_steerBoundaryLimit'] || '5'),
+        /** 插话陈旧线：超过这个年龄的插话到边界也不再注入（用户可能已经改口，陈旧注入比不注入更坏） */
+        steerExpiryMs: parseInt(process.env['control_steerExpiryMs'] || '600000'),
+        /**
+         * PR-E ask_user/answer 开关（**出题与答题同一把闸**：能问不能答=把 run 挂死）。
+         * 开 ⇒ 模型看见 ask_user 工具、run 可原地挂起等答复、/answer 可投递。
+         */
+        askEnabled: process.env['control_askEnabled'] === 'true',
+        /** 单次提问的最长等待：到点如实把 cancelled 交给模型自决，不无限期占着 run 与连接 */
+        askTimeoutMs: parseInt(process.env['control_askTimeoutMs'] || '1800000'),
+    },
+    /**
      * PR-T0 上下文治理（D22）。判据全在 `context/constraints.js`（纯函数、离线可测），这里只给开关与槽预算。
      * 收益按 §16.4 P-2b 裁定记为**治理**（约束在压缩后存活），与缓存命中率无关；缓存腿等 P-13，不在此。
      */

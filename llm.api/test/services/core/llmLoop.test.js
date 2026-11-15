@@ -141,6 +141,20 @@ test('classifyToolCalls：四类互斥且并集完整', () => {
     assert.equal(total, calls.length, '不能有调用被丢掉，也不能被算两次')
 })
 
+/** PR-E 同款：ask_user 漏出取反串 = 模型提问被丢进 MCP 通道石沉大海（挂起永远不发生） */
+test('classifyToolCalls：ask_user 绝不漏进 otherCalls（注入 isAskTool 时）', () => {
+    const preds = {...PREDS, isAskTool: (n) => n === 'ask_user'}
+    const r = classifyToolCalls([{id: '1', function: {name: 'ask_user'}}, {id: '2', function: {name: 'searxng_http/search'}}], preds)
+    assert.equal(r.askCalls.length, 1)
+    assert.equal(r.otherCalls.length, 1, '别的工具照常走 MCP，ask 不该连坐')
+    /** 谓词不注入（llmChat 关着的形态）：ask_user 落 otherCalls 是**刻意的逐字一致**——关着时注册面就没有这个工具 */
+    const off = classifyToolCalls([{id: '1', function: {name: 'ask_user'}}], PREDS)
+    assert.equal(off.askCalls.length, 0)
+    assert.equal(off.otherCalls.length, 1)
+})
+
+
+
 test('classifyToolCalls：谓词缺失时全部落到 otherCalls，不抛错', () => {
     const r = classifyToolCalls([{id: '1', function: {name: 'whatever'}}], {})
     assert.equal(r.otherCalls.length, 1)

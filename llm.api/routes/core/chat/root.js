@@ -230,7 +230,74 @@ export default async function (fastify, opts) {
         }
 
         const controller = new AbortController()
+        /** 打断信号从这里交给 run；`signal` 必须在 close 监听之后仍然可用（旧写法是解构在监听前，别退回） */
         const {signal} = controller
+        /**
+         * PR-D /stop + /steer：把手表登记 + 本 worker 确保有控制订阅（任一开关开才做任何事）。
+         * 与并发闸无关——闸管"能不能再开一个 run"，这里管"开着的这个能不能被停/被插话"。
+         * 订阅失败只意味着**本 worker** 收不到跨进程信号（下次 run 再试），不打断这一轮。
+         * 组合读法：steer 开而 stop 关时把手照带 abort——那是本 worker 唯一的终止把手，
+         * 关掉的是**发布侧**（/stop 路由 4003），不是把手本身；直连 redis 的发布方本来就在信任边界外。
+         */
+        const ctlCfg = llm.config.controlConfig || {}
+        const stopOn = ctlCfg.stopEnabled === true
+        const steerOn = ctlCfg.steerEnabled === true
+        const askOn = ctlCfg.askEnabled === true
+        let runMailbox = null
+        let answerRouter = null
+        /**
+         * hard steer 的停止位（PR-D commit 2b）。刻意**不是** AbortController：
+         * drain 的 break 会经 iterator.return 关连接（停花钱等价，shutdown 抢救已实战验证），
+         * 而子 signal 的 APIUserAbortError 会在 withUpstreamRetry 里被误判成"可重试的网络断"——
+         * 首字前打断还要把刚被插话打断的那次调用重发一遍，那才是这刀真正危险的错误面。
+         * 三道闸缺一不可：
+         *  · mode==='hard'（soft 不该掐任何东西）；
+         *  · hardSteerEnabled（路由侧同判据的兜底：两闸同一次配置加载，翻一侧红另一侧红不了）；
+         *  · **active（生成窗闸）**——置位只发生在主循环 create→drain 窗口，finalize/self-check/
+         *    工具执行期的 hard 一律排队走 postTools 边界（与 llmLoop.steerAction 的阶段裁决同构：
+         *    打断只属于 generating；tool_executing 期置位会烧掉下一轮的首帧调用）。
+         */
+        let hardSteer = null
+        if (stopOn || steerOn || askOn) {
+            const RC = await import('../../../services/core/session/runControl.js')
+            if (steerOn) {
+                const SB = await import('../../../services/core/session/steerMailbox.js')
+                hardSteer = {flag: null, active: false}
+                runMailbox = SB.createRunMailbox({
+                    maxQueue: Number(ctlCfg.steerMaxQueue) || undefined,
+                    onAccept: (s) => {
+                        if (s.mode === 'hard' && ctlCfg.hardSteerEnabled === true && hardSteer.active) {
+                            hardSteer.flag = 'hard-steer'
+                        }
+                    },
+                })
+            }
+            /**
+             * PR-E：答复路由器在这里建（run 侧），`/answer` 从任何 worker 投递都汇到这一个实例——
+             * 一次性消费与先到先得的**权威账本**只认它（路由侧预检只是快速失败）。
+             * 密钥缺失照常建 router：到 awaitAskUser 的 no-signing-secret 如实降级，
+             * 把"能问不能答"配错的爆炸半径留在可见的错误里，不做成静默关功能。
+             */
+            if (askOn) {
+                const AT = await import('../../../services/core/session/askUserTool.js')
+                answerRouter = AT.createAnswerRouter({
+                    runCode: messageCodeForGate,
+                    initiator: request.userInfo?.userCode || '',
+                    secret: AT.answerSecret(),
+                    logger,
+                })
+            }
+            RC.attachHandle({
+                messageCode: messageCodeForGate,
+                abort: () => controller.abort(),
+                userCode: request.userInfo?.userCode,
+                onSteer: runMailbox ? (payload) => runMailbox.push(payload) : undefined,
+                onAnswer: answerRouter ? (payload) => answerRouter.deliver(payload) : undefined,
+            })
+            await RC.ensureRunControlSubscriber({takeAbort: RC.takeHandle, takeSteerHandle: RC.takeSteerHandle, takeAnswerHandle: RC.takeAnswerHandle, logger})
+        }
+
+
         /**
          * 通道句柄提前声明成 `let`：断开监听器要引用它，而监听器注册在通道创建之前。
          * 用 `const` 就地声明的话监听器里访问它就是 TDZ——同步代码踩不到，
@@ -348,7 +415,14 @@ export default async function (fastify, opts) {
                 /** PR-0.3：把 fastify 的 reqId 与入站 traceId 交给 run，日志才接得上 */
                 reqId: request.id,
                 inboundTraceId: request.headers['x-trace-id'],
+                /** PR-D commit 2：soft 插话的收件箱（steerEnabled 关时为 null，主循环连判断都是一次假值短路） */
+                runMailbox,
+                /** PR-D commit 2b：hard 打断的停止位（{flag, active}；同上 null 语义） */
+                hardSteer,
+                /** PR-E：ask_user 的答复路由器（askEnabled 关时为 null ⇒ llmChat 连工具都不注册） */
+                answerRouter,
             })
+
             aborted = ret === 'aborted'
             channel.emit(aborted ? 'aborted' : 'done', aborted ? 'abort' : 'done')
         } catch (err) {
@@ -415,6 +489,22 @@ export default async function (fastify, opts) {
                 await globalGate.mod.releaseGlobal({
                     store: globalGate.store, messageCode: messageCodeForGate, userCode: request.userInfo.userCode, logger,
                 })
+            }
+            /**
+             * stop 把手**无条件摘**，不放进 `if (stopEnabled)`：今天关闸的 run 也可能在结束时
+             * 开关刚被翻过（进程内配置只读一次的话不存在，但 attach 的逆操作写成条件版
+             * 就是在复刻 detachArchive 被点名的那个错）。import 是缓存的，代价可忽略。
+             */
+            {
+                const RC = await import('../../../services/core/session/runControl.js')
+                RC.detachHandle(messageCodeForGate)
+            }
+            /**
+             * run 结束时邮箱里还有货 ⇒ 这些插话永远不会被注入了（pubsub 无持久化，随进程死）。
+             * 不静默：用户收到的每个 /steer 响应都只承诺过"已投递"，这条日志是"投递≠生效"的另一半账。
+             */
+            if (runMailbox && runMailbox.size() > 0) {
+                logger.warn(`run 结束仍有未消费插话 messageCode=${messageCodeForGate}, 队列=${runMailbox.size()}, 邮箱账=${JSON.stringify(runMailbox.stats)}`)
             }
             /**
              * 摘掉落档函数**必须放在闸的 if 外面**：放进 `if (limit > 0)` 就是重复同一个错——
@@ -638,6 +728,205 @@ export default async function (fastify, opts) {
 
 
     /**
+     * PR-D /stop：停掉一个在途 run（跨 worker 经控制通道投递，见 session/runControl）。
+     * 三条纪律都在这条小路由上：
+     * 1. **防枚举**："不存在 / 已终态 / 不是你的" 三种情况回**同一个 403 同一句话**
+     *    （messageAccess.test:46 立的成文规矩——能区分"这号存在但不归你"的接口就是活跃账号探测器）；
+     * 2. 开关关 ⇒ 明说未启用（不是拒绝，是没这功能——别让用户界面把配置问题当权限问题排查）；
+     * 3. 响应只承诺"信号已投递"，不承诺"已停止"——pubsub 无回执，运行与否以账本终态为准
+     *    （归属不明的结果不写成功，同日志纪律）。
+     */
+    fastify.post('/stop', {
+        schema: {
+            description: '请求中止一个在途 run（仅本人、仅 processing 中的轮次）',
+            summary: '停止本轮生成',
+            tags: ['llm'],
+            body: {
+                type: 'object',
+                properties: {messageCode: {type: 'string', description: '要停止的 run 标识（= 该轮 messageCode）'}},
+                required: ['messageCode'],
+            },
+            response: {},
+        },
+    }, async function (request, reply) {
+        if (!request.userInfo?.userCode) {
+            const err = new Error('缺少有效的用户身份（user-info）')
+            err.statusCode = 401
+            throw err
+        }
+        const ctlCfg = llm.config.controlConfig || {}
+        if (ctlCfg.stopEnabled !== true) {
+            return reply.code(200).send({success: false, code: 4003, msg: '停止功能未启用（control_stopEnabled）'})
+        }
+        const {messageCode} = request.reqParams || {}
+        const row = await llmUsageDac.findProcessingByMessageCode(messageCode).catch((e) => {
+            logger.error(`/stop 查账失败 messageCode=${String(messageCode).slice(0, 64)}: ${String(e?.message || e).slice(0, 140)}`)
+            return null
+        })
+        if (!row || row.userCode !== request.userInfo.userCode) {
+            /** 两种情形故意不可区分（见头注第 1 条） */
+            return reply.code(403).send({success: false, code: 4030, msg: '无法停止该轮：不存在、已结束或不属于当前用户'})
+        }
+        const RC = await import('../../../services/core/session/runControl.js')
+        const sent = await RC.publishStop({messageCode: row.messageCode, actorCode: request.userInfo.userCode})
+        if (!sent.published) {
+            logger.warn(`/stop 投递失败 messageCode=${row.messageCode}: ${sent.error}`)
+            return reply.code(200).send({success: false, code: 4003, msg: '停止信号未能投递（控制通道不可用），请稍后重试'})
+        }
+        return {success: true, data: {messageCode: row.messageCode, delivered: 'broadcast', note: '停止信号已投递；是否已停以该轮档案终态为准'}}
+    })
+
+    /**
+     * PR-D /steer（commit 2，soft）：往在途 run 投一句话，主循环在迭代边界注入（见 llmChat 的 pullBoundary）。
+     * 与 /stop 共享的纪律：防枚举同文案、开关关回 4003、投递失败如实回错不 500。
+     * steer 特有的三条：
+     * 1. **说话人取自身份，不收 body 字段**——一个能"冒充别人插话"的接口等于给未鉴权网关发明伪造面；
+     * 2. 判序是"先归属后内容"：若先拒坏文本再查归属，一条空 text 就能拿 400/403 之差探测 run 存在性；
+     *    归属过了之后 400 带拒因**只关于自己的话**，不含对方信息；
+     * 3. 校验复用 normalizeSteerMessage——路由侧是 fail-fast 与身份覆盖，mailbox 侧 push 再走一遍同一函数
+     *    兜住直发通道的人；两处同一个函数，判据不漂移。
+     * 响应只承诺"已投递控制通道"：边界来不来、迟到几分钟、会不会被判陈旧而弃，都不是路由此刻能知道的。
+     */
+    fastify.post('/steer', {
+        schema: {
+            description: '向在途 run 插话（仅本人、仅 processing 中的轮次；soft 在迭代边界注入）',
+            summary: '插话本轮生成',
+            tags: ['llm'],
+            body: {
+                type: 'object',
+                properties: {
+                    messageCode: {type: 'string', description: '目标 run 标识（= 该轮 messageCode）'},
+                    text: {type: 'string', description: '插话内容（单行语义，换行会被折成空格）'},
+                    mode: {type: 'string', description: 'soft|hard，默认 soft（hard 需 control_hardSteerEnabled 开闸；关着回 400 拒收，不降级成 soft）'},
+                    steerCode: {type: 'string', description: '客户端幂等键（重复投递只注入一次）'},
+                },
+                required: ['messageCode', 'text'],
+            },
+            response: {},
+        },
+    }, async function (request, reply) {
+        if (!request.userInfo?.userCode) {
+            const err = new Error('缺少有效的用户身份（user-info）')
+            err.statusCode = 401
+            throw err
+        }
+        const ctlCfg = llm.config.controlConfig || {}
+        if (ctlCfg.steerEnabled !== true) {
+            return reply.code(200).send({success: false, code: 4003, msg: '插话功能未启用（control_steerEnabled）'})
+        }
+        const {messageCode, text, mode, steerCode} = request.reqParams || {}
+        const row = await llmUsageDac.findProcessingByMessageCode(messageCode).catch((e) => {
+            logger.error(`/steer 查账失败 messageCode=${String(messageCode).slice(0, 64)}: ${String(e?.message || e).slice(0, 140)}`)
+            return null
+        })
+        if (!row || row.userCode !== request.userInfo.userCode) {
+            /** 与 /stop 同款：三种被拒情形故意不可区分 */
+            return reply.code(403).send({success: false, code: 4030, msg: '无法插话该轮：不存在、已结束或不属于当前用户'})
+        }
+        const SB = await import('../../../services/core/session/steerMailbox.js')
+        const n = SB.normalizeSteerMessage({
+            text, mode, steerCode,
+            userCode: request.userInfo.userCode,
+            realName: request.userInfo.realName,
+        }, {})
+        if (!n.ok) {
+            return reply.code(400).send({success: false, code: 4000, msg: `插话被拒：${n.error}`})
+        }
+        /**
+         * hard 未开闸 ⇒ 逐条拒这一句并说清原因。刻意**不降级成 soft**：mode 决定打断与否，
+         * 把 hard 悄悄跑成 soft = "该打断没打断"——normalize 从严拒的裁定在这条路由上同款执行。
+         * 位置在归属核验之后 ⇒ 400 里不含任何对方存在性信息。
+         */
+        if (n.value.mode === 'hard' && ctlCfg.hardSteerEnabled !== true) {
+            return reply.code(400).send({success: false, code: 4000, msg: 'hard 插话未启用（control_hardSteerEnabled），本条未入队'})
+        }
+        const RC = await import('../../../services/core/session/runControl.js')
+        const sent = await RC.publishSteer({messageCode: row.messageCode, actorCode: request.userInfo.userCode, steer: n.value})
+        if (!sent.published) {
+            logger.warn(`/steer 投递失败 messageCode=${row.messageCode}: ${sent.error}`)
+            return reply.code(200).send({success: false, code: 4003, msg: '插话未能投递（控制通道不可用），请稍后重试'})
+        }
+        return {success: true, data: {messageCode: row.messageCode, steerCode: n.value.steerCode, delivered: 'broadcast', note: '插话已投递控制通道；是否注入以 steer_ack 事件为准'}}
+    })
+
+    /**
+     * PR-E /answer：回答一次 ask_user 挂起（跨 worker 经控制通道投给 run 侧 router）。
+     * 判序是安全结构，不是风格：
+     * 1. **requestState 就是凭证**（服务端签名、含 runCode/askId/kind）——开不了 ⇒ 统一 403，
+     *    不解释"签名错/过期/不存在"（这是对外唯一的模糊面，内部原因进日志）；
+     * 2. 信密封里的 runCode，不信 body 的任何自报；账本 owner 核验与 /stop 同源；
+     * 3. **路由侧参与者预检只认 ledger owner（participants 数据源未建，保守方向）**，
+     *    kind=approval 非发起人在这里就拒——但**裁决权威在 run 侧 router**
+     *    （先到先得的 `alreadyAnsweredBy` 账只在 run 的内存里，跨 worker 无从复制）；
+     * 4. 响应只承诺"已投递"：你的答复**被采用还是迟到**，要等 run 侧的账，这里给不了答案
+     *    （迟到者的 notice 通道待多人协议窗口，不发明事件——同 channel-scope defer 的裁定家族）。
+     */
+    fastify.post('/answer', {
+        schema: {
+            description: '回答一次 ask_user 挂起（回传 await_input 的 inputResponses + requestState 原样）',
+            summary: '回答挂起的提问',
+            tags: ['llm'],
+            body: {
+                type: 'object',
+                properties: {
+                    requestState: {type: 'string', description: 'await_input 下发的密封续体（原样回传）'},
+                    inputResponses: {type: 'object', description: '对 form 问题的作答（未知键会被拒）'},
+                },
+                required: ['requestState', 'inputResponses'],
+            },
+            response: {},
+        },
+    }, async function (request, reply) {
+        if (!request.userInfo?.userCode) {
+            const err = new Error('缺少有效的用户身份（user-info）')
+            err.statusCode = 401
+            throw err
+        }
+        const ctlCfg = llm.config.controlConfig || {}
+        if (ctlCfg.askEnabled !== true) {
+            return reply.code(200).send({success: false, code: 4003, msg: '提问/回答功能未启用（control_askEnabled）'})
+        }
+        const {requestState, inputResponses} = request.reqParams || {}
+        const AT = await import('../../../services/core/session/askUserTool.js')
+        const MP = await import('../../../services/core/session/mrtrPayload.js')
+        const refuse = () => reply.code(403).send({success: false, code: 4030, msg: '无法处理该答复：凭证无效、已被使用或不属于当前用户'})
+        const opened = MP.openRequestState(requestState, {secret: AT.answerSecret()})
+        if (!opened.ok) {
+            logger.warn(`/answer 续体校验失败 actor=${request.userInfo.userCode}: ${opened.error}`)
+            return refuse()
+        }
+        const state = opened.value
+        const row = await llmUsageDac.findProcessingByMessageCode(state.runCode).catch((e) => {
+            logger.error(`/answer 查账失败 runCode=${String(state.runCode).slice(0, 64)}: ${String(e?.message || e).slice(0, 140)}`)
+            return null
+        })
+        if (!row || row.userCode !== request.userInfo.userCode) {
+            return refuse()
+        }
+        const adm = MP.decideAnswerAdmission({
+            kind: state.kind === 'approval' ? 'approval' : 'question',
+            answerer: request.userInfo.userCode,
+            initiator: row.userCode,
+            participants: [],
+        })
+        if (!adm.admit) {
+            logger.warn(`/answer 预检拒绝 reason=${adm.reason} runCode=${state.runCode}`)
+            return refuse()
+        }
+        const RC = await import('../../../services/core/session/runControl.js')
+        const sent = await RC.publishAnswer({
+            messageCode: state.runCode,
+            actorCode: request.userInfo.userCode,
+            answer: {askId: state.askId, responses: inputResponses, answeredBy: request.userInfo.userCode, requestState: String(requestState)},
+        })
+        if (!sent.published) {
+            logger.warn(`/answer 投递失败 runCode=${state.runCode}: ${sent.error}`)
+            return reply.code(200).send({success: false, code: 4003, msg: '答复未能投递（控制通道不可用），请稍后重试'})
+        }
+        return {success: true, data: {runCode: state.runCode, askId: state.askId, delivered: 'broadcast', note: '答复已投递；是否被采用（先到先得）以该轮工具结果为准'}}
+    })
+
+    /**
      * 并发闸的读数（PR-0.4）。
      * 只给聚合数：**不返回 `byUser`**——"谁现在有几个 run 在跑"是把别人的在线状态卖给了任意调用方，
      * 与 §2E-4/§2F.37 是同一类问题（能枚举活跃账号的接口，和能读别人会话的接口是同一种缺陷）。
@@ -661,6 +950,7 @@ export default async function (fastify, opts) {
         }
         const s = snapshot()
         const cfg = llm.config.limits?.concurrentRuns || {}
+        const ctlSnap = (await import('../../../services/core/session/runControl.js')).controlSnapshot()
         return {
             active: s.active,
             admitted: s.admitted,
@@ -673,6 +963,10 @@ export default async function (fastify, opts) {
             limit: Number(cfg.limit) || 0,
             perUserLimit: Number(cfg.perUserLimit) || 0,
             gateEnabled: (Number(cfg.limit) || 0) > 0,
+            /** PR-D stop/steer/answer 的本地读数（只有把手数——不返回任何 messageCode/userCode，理由同上禁枚举） */
+            stopHandles: ctlSnap.handles,
+            steerHandles: ctlSnap.steerHandles,
+            answerHandles: ctlSnap.answerHandles,
             /**
              * 停机抢救的两个可读事实。放这里的理由很具体：`active` 在闸关闭时恒为 0（设计如此），
              * 如果抢救表也挂在那张表上，"有没有东西等着被抢救"就变成**查不到**——
