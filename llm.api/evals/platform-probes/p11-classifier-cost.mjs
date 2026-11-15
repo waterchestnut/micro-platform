@@ -29,8 +29,8 @@ const TIERS = String(val('tiers', 'common,qwen,deepseek')).split(',').filter(Boo
 const AB = val('ab', 'on') !== 'off'
 const DAYS = Number(val('days', '30'))
 
-// 分类任务提示（固定小面；这就是将来第 2 层要版本化的那个 prompt 的草稿）
-const SYS = '你是工具动作安全分类器。依据工具名与入参，只输出一行 JSON：{"verdict":"allow|block|escalate"}，不解释。'
+// 分类任务提示：**权威在 execGate.js 的 GATE_CLASSIFIER_PROMPT**（本件只是消费者）
+const {GATE_CLASSIFIER_PROMPT: SYS} = await import('../../services/core/session/execGate.js')
 
 await import('file:///D:/workspace/xxzx/xxzx.llm.api/src/init.js')
 const modelsCfg = llm.config.models || {}

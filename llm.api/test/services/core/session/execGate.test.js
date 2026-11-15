@@ -33,16 +33,16 @@ describe('0 词表单源（execGate 是普查与门的共同权威）', () => {
 })
 
 describe('1 classifyAction：归一与 malformed 识别', () => {
-    test('run_code + rm 命令 ⇒ shell + file-delete 族', () => {
-        const a = classifyAction({toolName: 'run_code', argsText: 'import os\nos.system("rm -rf /tmp/x")'})
+    test('run_code + rm 命令 ⇒ shell + file-delete 族（args 用生产形态 {"code":...}——裸文本 run_code 入参不存在，v2 新规当场揪出这条假形状）', () => {
+        const a = classifyAction({toolName: 'run_code', argsText: '{"code":"import os\\nos.system(\\"rm -rf /tmp/x\\")"}'})
         assert.equal(a.surface, 'shell')
         assert.ok(a.families.includes('file-delete'))
         assert.equal(a.malformed, false)
     })
-    test('对象入参序列化后判族；字符串入参直判', () => {
+    test('对象入参序列化后判族；JSON 字符串入参直判', () => {
         const obj = classifyAction({toolName: 'run_code', argsText: {code: 'requests.get("http://x")'}})
         assert.ok(obj.families.includes('network'))
-        assert.ok(classifyAction({toolName: 'run_code', argsText: 'curl http://x'}).families.includes('network'))
+        assert.ok(classifyAction({toolName: 'run_code', argsText: '{"code":"curl http://x"}'}).families.includes('network'))
     })
     test('save_artifact ⇒ artifact-upload（产物路径在门覆盖里的证据）；update_plan ⇒ plan', () => {
         assert.equal(classifyAction({toolName: 'save_artifact', argsText: '{"path":"/workspace/a"}'}).surface, 'artifact-upload')
@@ -58,23 +58,23 @@ describe('1 classifyAction：归一与 malformed 识别', () => {
         assert.equal(a.malformed, true)
         assert.deepEqual(a.families, [])
     })
-    test('空/缺入参不算 malformed（合法的无参动作），非空非标量才算', () => {
+    test('无参元操作不算 malformed；**shell 空正文/不可解析算**（v2 硬规：读不到的动作不许进判族碰运气）；非标量算', () => {
         assert.equal(classifyAction({toolName: 'get_current_datetime'}).malformed, false)
-        assert.equal(classifyAction({toolName: 'run_code', argsText: ''}).malformed, false)
+        assert.equal(classifyAction({toolName: 'run_code', argsText: ''}).malformed, true, 'shell 空正文现在归 malformed（live 首跑分类器对空 args 判 allow 的直接教训）')
         assert.equal(classifyAction({toolName: 'run_code', argsText: 42}).malformed, true)
     })
 })
 
 describe('2 decideLayer1：命中语义与三条设计决定', () => {
     test('决定 1：allow:[] 是全 continue，不是全允许', () => {
-        const r = decideLayer1(classifyAction({toolName: 'run_code', argsText: 'rm -rf /'}), {allow: [], deny: []})
+        const r = decideLayer1(classifyAction({toolName: 'run_code', argsText: '{"code":"rm -rf /"}'}), {allow: [], deny: []})
         assert.equal(r.verdict, 'continue')
         assert.equal(r.final, false)
     })
     test('决定 3：allow 与 deny 都 final，且 deny 先查（同命 deny 赢）', () => {
         const rmRule = {id: 'rm-kill', surfaces: ['shell'], families: ['file-delete']}
         const allowAll = {id: 'yes-anything'}
-        const act = classifyAction({toolName: 'run_code', argsText: 'rm x'})
+        const act = classifyAction({toolName: 'run_code', argsText: '{"code":"rm x"}'})
         const r = decideLayer1(act, {allow: [allowAll], deny: [rmRule]})
         assert.equal(r.verdict, 'deny', 'allow 在前也拦不住 deny 先查')
         assert.equal(r.final, true)
@@ -96,9 +96,9 @@ describe('2 decideLayer1：命中语义与三条设计决定', () => {
     })
     test('规则三条件 AND：工具名+族都对上才算命中', () => {
         const r = {id: 'net-in-shell', tools: ['run_code'], families: ['network']}
-        assert.equal(matchRule(classifyAction({toolName: 'run_code', argsText: 'curl x'}), r), true)
-        assert.equal(matchRule(classifyAction({toolName: 'get_website', argsText: 'curl x'}), r), false, '工具不对')
-        assert.equal(matchRule(classifyAction({toolName: 'run_code', argsText: 'ls'}), r), false, '族不对')
+        assert.equal(matchRule(classifyAction({toolName: 'run_code', argsText: '{"code":"curl x"}'}), r), true)
+        assert.equal(matchRule(classifyAction({toolName: 'get_website', argsText: '{"code":"curl x"}'}), r), false, '工具不对')
+        assert.equal(matchRule(classifyAction({toolName: 'run_code', argsText: '{"code":"ls"}'}), r), false, '族不对')
     })
     test('matchRule 直接传 malformed+非空families 仍不匹配族（G3 变异逼出的独立验证：守卫是公共契约的纵深，不靠 classifyAction 恰好置空）', () => {
         // matchRule 是导出 API，外部可构造这种 action；若去掉 matchRule 内的 malformed 守卫，下面会误命中
@@ -112,7 +112,7 @@ describe('2 decideLayer1：命中语义与三条设计决定', () => {
         assert.equal(r.verdict, 'deny')
     })
     test('脏规则不误命中（非数组条件被忽略=当 any，但整条仍需真匹配上动作）', () => {
-        assert.equal(matchRule(classifyAction({toolName: 'run_code', argsText: 'x'}), {tools: 'run_code'}), true,
+        assert.equal(matchRule(classifyAction({toolName: 'run_code', argsText: '{"code":"x"}'}), {tools: 'run_code'}), true,
             '非数组 tools 当缺省(any)——命中因 run_code 对 any 恒真')
         assert.equal(decideLayer1(classifyAction({toolName: 'memory_get', argsText: '{}'}), {allow: [{tools: ['run_code']}], deny: []}).verdict, 'continue')
     })
