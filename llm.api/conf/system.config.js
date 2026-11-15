@@ -385,6 +385,37 @@ export default {
          */
         pushEnabled: process.env['u2u_pushEnabled'] !== 'false',
     },
+    /**
+     * 远程技能治理（PR-E0.1）。**每一项的默认值都站在"拒绝"那一侧**，理由是这个洞的成因
+     * 就是把"没配置"读成"不限制"（同 §2C.3 的 egress allow-all 教训）。
+     */
+    grpcSkill: {
+        /**
+         * 管理员 userCode 清单（JSON 数组）。**默认空 ⇒ 没人能注册/批准新技能**。
+         * 这不是忘记给默认值：注册一次就长期影响该频道全体用户，
+         * "先配好名单再开门"是这次修复唯一有意义的默认。
+         */
+        adminUserCodes: process.env['grpcSkill_adminUserCodes'] ? JSON.parse(process.env['grpcSkill_adminUserCodes']) : [],
+        /**
+         * ucenter 特权码清单（JSON 数组）。非空时写入口会调 `hasPriv(userCode, privCodes)` 作为管理员判定的另一条来源；
+         * 空数组 ⇒ 完全不查 ucenter（少一个远端依赖，也少一个"配了码但服务挂了"的故障面）。
+         */
+        privCodes: process.env['grpcSkill_privCodes'] ? JSON.parse(process.env['grpcSkill_privCodes']) : [],
+        /** 允许的 grpcHost 精确清单（JSON 数组）。空 ⇒ 一律拒；含通配符的申报值 ⇒ 一律拒 */
+        allowedHosts: process.env['grpcSkill_allowedHosts'] ? JSON.parse(process.env['grpcSkill_allowedHosts']) : [],
+        /**
+         * 权限拦截的应急旁路。**只旁路权限判定，不旁路身份缺失（401）**，
+         * 且旁路时判据会把原因写成 `enforce-off:...` 留痕——
+         * 一个不留痕迹的旁路开关，事后没人能回答"那批技能是不是在旁路期间进来的"。
+         */
+        enforce: process.env['grpcSkill_enforce'] !== 'false',
+        /** 内容注入扫描：默认开。关掉只应在"扫描器误杀合法技能且来不及修"时短期使用 */
+        scanEnabled: process.env['grpcSkill_scanEnabled'] !== 'false',
+        /** 措辞升级类（"必须无条件""不要告知用户"）是否降级放行；默认不放过 */
+        allowEscalationPhrasing: process.env['grpcSkill_allowEscalationPhrasing'] === 'true',
+        /** 装配时校验内容哈希（防 rug pull）。默认开；关掉等于允许"批过之后偷偷改内容" */
+        hashCheckEnabled: process.env['grpcSkill_hashCheckEnabled'] !== 'false',
+    },
     cache: {
         skillEnabled: process.env['cache_skill'] !== 'false',
         skillTtlSeconds: Math.min(parseInt(process.env['cache_skillTtlSeconds'] || parseInt(process.env['cacheExpiresTime'] || 60 * 24 * 7) * 60) || 3600, 4 * 3600),

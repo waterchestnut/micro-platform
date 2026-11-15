@@ -113,6 +113,36 @@ export function registerCommonRoutes(fastify, opts, tags = ['grpc-skill-ipmi']) 
     }, async function (request, reply) {
         return await grpcSkillService.disableGrpcSkill(request.userInfo, request.reqParams.skillCode)
     })
+
+    /**
+     * PR-E0.1 ②：审核入口（批准 / 驳回 / 撤销）。
+     * 单独一个动作而不是塞进 `/update`，是为了让"改内容"与"改结论"在留痕里是两件事——
+     * 塞进 update 的话，作者改一次描述就会在审计里冒充一次审核，谁批的、批的哪版都读不出来。
+     */
+    fastify.post('/review', {
+        schema: {
+            description: '审核远程技能（批准/驳回/撤销）',
+            summary: '审核远程技能',
+            body: {
+                type: 'object',
+                properties: {
+                    skillCode: {type: 'string'},
+                    to: {type: 'string', enum: ['approved', 'rejected', 'revoked'], description: '目标审核态'},
+                    reason: {type: 'string', maxLength: 500, description: '理由（驳回/撤销必填）'},
+                },
+                required: ['skillCode', 'to']
+            },
+            tags,
+            response: {
+                default: {...getResSwaggerSchema()}
+            }
+        }
+    }, async function (request, reply) {
+        return await grpcSkillService.reviewGrpcSkill(request.userInfo, request.reqParams.skillCode, {
+            to: request.reqParams.to,
+            reason: request.reqParams.reason || '',
+        })
+    })
 }
 
 export default async function (fastify, opts) {

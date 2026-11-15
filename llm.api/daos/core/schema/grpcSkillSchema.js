@@ -6,6 +6,7 @@
 
 import mongoose from 'mongoose'
 import StatusEnum from '../enum/StatusEnum.js'
+import SkillReviewEnum from '../enum/SkillReviewEnum.js'
 import Tag from '../definition/Tag.js'
 
 const Schema = mongoose.Schema
@@ -44,6 +45,26 @@ const grpcSkillSchema = new Schema({
     note: {type: String, description: '备注'},
     operator: {type: Object, description: '创建者'},
     status: {type: Number, default: 0, description: '状态', enum: StatusEnum.toValues()},
+    /**
+     * 审核生命周期（PR-E0.1 ②）。**独立字段**，不挤 `status`：
+     * 后者有 `-1` 软删语义并被 `BaseDac` 隐式过滤，把"待审"塞进去会让待审记录从管理端列表里消失，
+     * 于是没人知道"有一条等着我批"（同 `MemoryStatusEnum` 文件头那条理由）。
+     * 默认 pending ⇒ **新注册的技能默认不进任何用户上下文**，这正是这个洞的补法。
+     */
+    reviewStatus: {type: String, default: 'pending', description: '审核态：pending/approved/rejected/revoked', enum: SkillReviewEnum.toValues()},
+    /** 谁批的：Object 而非 String——审计要能回答"哪个人、什么时候"，只留 userCode 会逼人去 join 才知道是谁 */
+    reviewedBy: {type: Object, description: '审核人 {userCode, realName}；未审核时为 null'},
+    reviewedAt: {type: Date, description: '审核时间；未审核时为 null'},
+    reviewNote: {type: String, description: '审核说明（驳回/撤销的理由，回答"为什么批"）'},
+    /**
+     * 内容哈希（PR-E0.1 ⑤，防 rug pull）：批准针对的是**那一刻的正文**，
+     * 装配时把存好的哈希与当前 skillMD 重算值比对，不一致 ⇒ 剔除 + 告警 + 审核态回 pending。
+     * 用 md5 而不是 sha256：与本仓既有内容哈希一致（`checkpoint.js:43`、`memory/api.js:235`），
+     * 这里的目的是**变更检测**，不是抗对抗性碰撞。
+     */
+    skillMDHash: {type: String, description: '批准时的 skillMD 内容哈希（md5，变更检测用）'},
+    /** 内容版本号：每次正文变化 +1，让审计能说出"批的是第 3 版，现在跑的是第 5 版" */
+    contentVersion: {type: Number, default: 0, description: '正文版本号（skillMD 每变一次 +1）'},
     tags: {type: [Tag], description: '标签'},
     insertTime: {
         type: Date, default: function () {
