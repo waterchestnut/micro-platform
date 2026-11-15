@@ -59,7 +59,12 @@ export function buildExtractBody(modelKey, messages) {
     return body
 }
 
-function isTransient(e) {
+/**
+ * @description 瞬时/非瞬时错误分类（后台模型调用共用判据，单源防分家）
+ * @param {Error} e 异常
+ * @returns {Boolean} 是否瞬时
+ */
+export function isTransient(e) {
     const status = e?.status ?? e?.response?.status
     if (status === 408 || status === 429 || status >= 500) {
         return true

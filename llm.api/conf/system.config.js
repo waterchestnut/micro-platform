@@ -99,6 +99,17 @@ export default {
         backfillOlderThanMs: Number(process.env['cron_backfillOlderThanMs']) || 600000,
         backfillLimit: Number(process.env['cron_backfillLimit']) || 200,
         /**
+         * sleep-time 记忆整理（`tasks/sleepTimeConsolidate.js`）。两道开关默认都关（本文件惯例）：
+         * enabled 控注册、write 控写库；dry-run 连模型都不调（计划=零成本）。
+         * sleepTimeIdleMs：namespace 最后活动距今超过它才整理——整理不与在线采集抢稳定态。
+         */
+        sleepTimePattern: process.env['cron_sleepTimePattern'] || '45 4 * * *',
+        sleepTimeEnabled: process.env['cron_sleepTimeEnabled'] === 'true',
+        sleepTimeWrite: process.env['cron_sleepTimeWrite'] === 'true',
+        sleepTimeIdleMs: Number(process.env['cron_sleepTimeIdleMs']) || 3600000,
+        sleepTimeMaxNamespaces: Number(process.env['cron_sleepTimeMaxNamespaces']) || 20,
+        sleepTimeLockTtlSeconds: Number(process.env['cron_sleepTimeLockTtlSeconds']) || 3000,
+        /**
          * agentTask 中断恢复（`tasks/agentTaskRecover.js`）。
          *
          * **模板这边默认不注册**（`recoverEnabled === 'true'`），与本文件里 retentionEnabled /
@@ -180,6 +191,27 @@ export default {
             temperature: parseFloat(process.env['memory_extract_temperature'] || 0.2),
             /** 已知的 Qwen3/QwQ 类模型关闭思考，避免抽取被推理占满 */
             disableThinking: process.env['memory_extract_disableThinking'] !== 'false',
+        },
+        /**
+         * sleep-time 整理（模型 I/O 在 consolidator.js，判据在 sleepTime.js，编排在 tasks/）。
+         * 预算键独立于 extract：两族失败降级策略不同（抽取失败进 DLQ，整理失败只是这轮不产出）。
+         */
+        consolidation: {
+            model: process.env['memory_consolidation_model'] || 'relay_common_low',
+            fallbackModel: process.env['memory_consolidation_fallbackModel'] || 'relay_common_flash',
+            maxTokens: parseInt(process.env['memory_consolidation_maxTokens'] || 1024),
+            timeoutMs: parseInt(process.env['memory_consolidation_timeoutMs'] || 90000),
+            maxRetries: parseInt(process.env['memory_consolidation_maxRetries'] || 1),
+            retryBackoffMs: parseInt(process.env['memory_consolidation_retryBackoffMs'] || 1500),
+            temperature: parseFloat(process.env['memory_consolidation_temperature'] || 0.1),
+            disableThinking: process.env['memory_consolidation_disableThinking'] !== 'false',
+            /** 判据阈值（改它走 sleepTimeRunPlan 的安全阀，低于 0.8 直接拒执行） */
+            dupSimilarity: parseFloat(process.env['memory_consolidation_dupSimilarity'] || 0.92),
+            minEpisodeAgeDays: parseInt(process.env['memory_consolidation_minEpisodeAgeDays'] || 7),
+            minEpisodes: parseInt(process.env['memory_consolidation_minEpisodes'] || 3),
+            maxPerRun: parseInt(process.env['memory_consolidation_maxPerRun'] || 20),
+            atomCap: parseInt(process.env['memory_consolidation_atomCap'] || 500),
+            confidence: parseFloat(process.env['memory_consolidation_confidence'] || 0.5),
         },
         /** 召回预算与排序 */
         recall: {

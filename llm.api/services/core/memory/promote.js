@@ -19,7 +19,14 @@ const tools = llm.tools
 const logger = llm.logger
 const config = llm.config
 
-async function journal({userCode, channel, actor, op, targetType, targetCode, before, after, evidence, reason, operator}) {
+/**
+ * @description 记忆变更日志的唯一写入口（只追加；失败只记 error 不打断业务）。
+ * 导出给 sleep-time 整理等其它后台写路径复用——"所有对记忆生效内容的变更都必须写 journal"
+ * 这条家规的执行点不该有第二个副本（两份同值分家家族的预防）。
+ * @param {Object} entry {userCode, channel, actor, op, targetType, targetCode, before, after, evidence, reason, operator}
+ * @returns {Promise<void>}
+ */
+export async function journalMemoryChange({userCode, channel, actor, op, targetType, targetCode, before, after, evidence, reason, operator}) {
     try {
         await memoryJournalDac.add({
             userCode, channel, actor, op, targetType, targetCode,
@@ -31,6 +38,7 @@ async function journal({userCode, channel, actor, op, targetType, targetCode, be
         logger.error(`写记忆变更日志失败(${op}/${targetType}/${targetCode}): ${e.message}`)
     }
 }
+const journal = journalMemoryChange
 
 /**
  * @description 取同命名空间内生效中的原子，作为冲突判定的比对集

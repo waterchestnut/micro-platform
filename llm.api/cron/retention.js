@@ -22,6 +22,7 @@ const cronConfig = llm.config.cron || {}
 import {CronJob} from 'cron'
 import {runRetention} from '../tasks/retention.js'
 import {runBackfill} from '../tasks/abandonedBackfill.js'
+import {runSleepTimeConsolidate} from '../tasks/sleepTimeConsolidate.js'
 import {runAgentTaskRecover} from '../tasks/agentTaskRecover.js'
 import {createDrainController, resolveDrainBudget} from '../daos/core/policy/drainPolicy.js'
 
@@ -114,6 +115,41 @@ if (cronConfig.backfillEnabled) {
         + `写档=${cronConfig.backfillWrite ? 'ON' : 'OFF(只出计划)'} nextDate=${String(backfillJob.nextDate?.() ?? '-')}`)
 } else {
     logger.info('cron/abandonedBackfill 未启用（需 cron_backfillEnabled=true；写库另需 cron_backfillWrite=true）')
+}
+
+/**
+ * sleep-time 记忆整理：**默认不注册**（`cron_sleepTimeEnabled=true` 才注册，
+ * 且必须再 `cron_sleepTimeWrite=true` 才真写库，否则只出计划且**不调模型**——
+ * 模型调用是真金白银，"只出计划"必须连钱都不花）。
+ * 双闸理由与 backfill 同款且更重：这个任务退役用户记忆条目、产新原子（review 态），
+ * "开了定时"与"开始写"必须可分别回退（判据与执行编排在 `tasks/sleepTimeConsolidate.js`）。
+ */
+if (cronConfig.sleepTimeEnabled === true) {
+    const sleepPattern = cronConfig.sleepTimePattern || '45 4 * * *'
+    const sleepJob = new CronJob(sleepPattern, () => runGuarded('sleepTimeConsolidate', async () => {
+        jobs.sleepTime = jobs.sleepTime || {executing: false}
+        if (jobs.sleepTime.executing) {
+            logger.info('sleepTimeConsolidate-任务仍在执行，跳过本次触发')
+            return
+        }
+        jobs.sleepTime.executing = true
+        try {
+            const ret = await runSleepTimeConsolidate({})
+            logger.info(`sleepTimeConsolidate 触发完成: ${JSON.stringify({
+                模式: ret.dryRun === undefined ? (ret.skipped || '未知') : (ret.dryRun ? '计划' : '执行'),
+                ns: `${ret.namespacesScanned ?? '-'}/${ret.namespacesIdle ?? '-'}`, 合计: ret.totals, 失败ns: ret.failures?.length,
+            })}`)
+        } catch (e) {
+            logger.error(`sleepTimeConsolidate 任务异常: ${e.stack || e.message}`)
+        } finally {
+            jobs.sleepTime.executing = false
+        }
+    }), null, true, cronConfig.timezone || 'Asia/Shanghai')
+    registeredJobs.push(sleepJob)
+    logger.info(`cron/sleepTimeConsolidate 已注册 pattern=${sleepPattern} `
+        + `写库开关=${cronConfig.sleepTimeWrite === true ? 'ON' : 'OFF(只出计划)'} nextDate=${String(sleepJob.nextDate?.() ?? '-')}`)
+} else {
+    logger.info('cron/sleepTimeConsolidate 未启用（需 cron_sleepTimeEnabled=true；写库另需 cron_sleepTimeWrite=true）')
 }
 
 /**
