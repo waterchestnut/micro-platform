@@ -182,6 +182,14 @@ export function budgetCut(items, budget, options, minByKind) {
 }
 
 /**
+ * 召回段的两个单源常量：拼接形态**只在生成侧定义一次**，识别侧（`isQueryWithRecall`）引用同一份。
+ * §2.9 的根因就是"写侧与读侧各写各的字符串"——落库 content 带了读侧不认识的后缀，
+ * `rebuildTurn` 的精确相等失配，整轮结构退化成纯文本对。
+ */
+export const RECALL_JOIN = '\n\n'
+export const RECALL_SECTION_HEADER = '## 已知记忆'
+
+/**
  * @description 渲染为注入模型的一段文本
  * @author xianyang
  * @param {Object[]} items 条目
@@ -196,7 +204,35 @@ export function renderRecall(items) {
         const tag = [item.atomCode ? `记忆 ${String(item.atomCode).slice(0, 8)}` : '近期对话', day].filter(Boolean).join(' | ')
         return `- ${item.content}（${tag}）`
     })
-    return ['## 已知记忆', ...body, ''].join('\n')
+    return [RECALL_SECTION_HEADER, ...body, ''].join('\n')
+}
+
+/**
+ * @description 装配侧唯一入口：把召回段拼到 query 尾部（v1.31 前这是 llmChat:391 的内联模板串）
+ * @param {String} query 用户原文
+ * @param {Object[]} items 召回条目
+ * @returns {String} 无条目时逐字等于 query（默认关/无记忆路径零变化）
+ */
+export function applyRecallToQuery(query, items) {
+    const section = renderRecall(items)
+    return section ? `${query}${RECALL_JOIN}${section}` : String(query)
+}
+
+/**
+ * @description 识别侧：这段文本是不是"query + 召回后缀"或 query 本身（§2.9 止血的核心判据）
+ * @param {String} text 落库 messages 里的 user 文本
+ * @param {String} query 档案顶层的原始 query
+ * @returns {Boolean} 是否可定位
+ *
+ * 判据锚在 query 本身而不是"从文本里剥后缀"——后一种做法遇到用户自己引用
+ * `\n\n## 已知记忆` 会把正文拦腰截错。这里最坏的"误命中"是用户 query 恰好长得像带后缀：
+ * 命中只意味着**允许结构化定位**，content 一个字节都不改，没有伤害方向。
+ */
+export function isQueryWithRecall(text, query) {
+    if (typeof text !== 'string' || typeof query !== 'string') {
+        return false
+    }
+    return text === query || (text.length > query.length && text.startsWith(`${query}${RECALL_JOIN}${RECALL_SECTION_HEADER}`))
 }
 
 /**

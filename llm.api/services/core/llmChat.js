@@ -25,7 +25,7 @@ import {mcpToolManager} from '../../mcp/index.js'
 import {SkillChat} from '../../skill/skillChat.js'
 import {collectRagSources} from './memory/sources.js'
 import {captureTurn} from './memory/capture.js'
-import {recallForPrompt, renderRecall} from './memory/recall.js'
+import {recallForPrompt, applyRecallToQuery} from './memory/recall.js'
 import {buildMemoryTools, executeMemoryTool, isMemoryTool, memoryToolsEnabled} from './memory/tools.js'
 import {buildOverflowTools, isOverflowTool, readOverflow, OVERFLOW_TOOL_NAME} from '../../tools/overflow.js'
 import {buildCodeTools, isCodeTool, executeCodeTool, codeToolEnabled} from '../sandbox/codeTool.js'
@@ -392,7 +392,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         }
     }
 
-    const userText = recallStats?.kept ? `${query}\n\n${renderRecall(recalledItems)}` : query
+    const userText = applyRecallToQuery(query, recalledItems)
     const currentMessage = options.inputs?.length
         ? {
             'role': 'user',

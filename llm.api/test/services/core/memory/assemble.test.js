@@ -205,3 +205,87 @@ test('compactToBudget 对 Infinity 预算直接返回总量', () => {
   compactToBudget(msgs, Infinity, {tokenizerOptions: TOK})
   assert.equal(JSON.stringify(msgs), snapshot)
 })
+
+/* ========================= §2.9 止血：召回后缀档案的结构还原 ========================= */
+
+const {applyRecallToQuery, isQueryWithRecall, RECALL_SECTION_HEADER} =
+    await import('../../../../services/core/memory/recall.js')
+const RECALLED = [{content: '用户偏好中文回复', atomCode: 'atom-0001', insertTime: Date.parse('2026-11-01')}]
+
+test('写读对称：applyRecallToQuery 拼出的形态，isQueryWithRecall 必须认得（单源常量，不是两份字符串的约定）', () => {
+    const withRecall = applyRecallToQuery(Q, RECALLED)
+    assert.ok(withRecall.startsWith(`${Q}\n\n${RECALL_SECTION_HEADER}`))
+    assert.equal(isQueryWithRecall(withRecall, Q), true)
+    assert.equal(isQueryWithRecall(Q, Q), true, '无召回时逐字 query 照旧可定位（默认路径零变化）')
+    assert.equal(applyRecallToQuery(Q, []), Q, 'items 空 ⇒ 逐字 query——旧版 kept 真值但 items 空会拼出 query+两个空行的暗雷也随之消掉')
+    assert.equal(isQueryWithRecall('别人的文本', Q), false)
+    assert.equal(isQueryWithRecall(`别人的问题\n\n${RECALL_SECTION_HEADER}\n- 无关`, Q), false, '含 header 但 query 不是前缀 ⇒ 拒——判据锚在 query，不是"找得到标题就算"')
+    assert.equal(isQueryWithRecall(`${Q}？不是后缀`, Q), false)
+    assert.equal(isQueryWithRecall(null, Q), false)
+    assert.equal(isQueryWithRecall(Q, null), false)
+})
+
+test('带召回后缀的档案不再退化为纯文本对（§2.9 的缺陷现场）', () => {
+    const userText = applyRecallToQuery(Q, RECALLED)
+    const doc = turnDoc({messages: [{role: 'system', content: 's'}, {role: 'user', content: userText},
+        {role: 'assistant', content: null, tool_calls: [{id: 'c1', type: 'function', function: {name: 'extract_doc', arguments: '{}'}}]},
+        {role: 'tool', tool_call_id: 'c1', content: '工具长文本'}]})
+    const turn = rebuildTurn(doc)
+    assert.ok(turn.length >= 4, `旧判据在这必然空数组（content !== query）⇒ 整轮退化为文本对，工具结构就是这么丢的；实际还原了 ${turn.length} 条`)
+    assert.equal(turn[1].tool_calls.length, 1, 'tool_calls 结构存活')
+    assert.equal(turn[0].content, userText, '定位只放宽判据，content 本体一个字节不改（还原的是"实际发送的那条"）')
+})
+
+test('多模态数组片段同样认得带后缀的 text', () => {
+    const userText = applyRecallToQuery(Q, RECALLED)
+    const doc = turnDoc({answer: '答', messages: [
+        {role: 'user', content: [{type: 'image_url', image_url: {url: 'u'}}, {type: 'text', text: userText}]},
+        {role: 'assistant', content: '答'},
+    ]})
+    const turn = rebuildTurn(doc)
+    assert.equal(turn.length, 2)
+    assert.equal(turn[0].role, 'user')
+})
+
+test('伪造面推演：用户自己引用"已知记忆"标题不构成伤害——命中只是允许定位，不剥文本', () => {
+    const sneaky = `${Q}\n\n${RECALL_SECTION_HEADER}\n- 我自己引用的内容`
+    const doc = turnDoc({query: sneaky, messages: [{role: 'user', content: sneaky}, {role: 'assistant', content: '答'}]})
+    const turn = rebuildTurn(doc)
+    assert.equal(turn[0].content, sneaky, 'content===query 分支就放行；就算走后缀分支，文本也原样保留')
+    // 反向：query 短、content 带"冒充后缀"——startsWith 锚在 query，没有"从中间剥"的形态错误
+    assert.equal(isQueryWithRecall(`${Q}\n\n${RECALL_SECTION_HEADER}`, Q), true, '空段落的召回形态：判据命中、无伤害，这是可接受的一侧')
+})
+
+test('buildHistoryMessages 在混合档案下（带后缀/不带/老数据）逐条走对路径', () => {
+    const withSuffix = turnDoc({messageCode: 'mS', messages: [{role: 'user', content: applyRecallToQuery(Q, RECALLED)}, {role: 'assistant', content: '结构答'}]})
+    const plain = turnDoc({messageCode: 'mP', query: '另一问', answer: '另一答', messages: [{role: 'user', content: '另一问'}, {role: 'assistant', content: '结构答2'}]})
+    const legacy = {messageCode: 'mL', query: '老数据', answer: '老答'}
+    const {messages} = buildHistoryMessages([withSuffix, plain, legacy].reverse(), {tokenizerOptions: TOK})
+    assert.ok(messages.some(m => m.content === '结构答'), '带后缀档案 ⇒ 结构化还原（answer 从 messages 来，不是降级文本对）')
+    assert.ok(messages.some(m => m.content === '老答'), '老数据 ⇒ 仍走降级文本对（行为不变）')
+    const pairs = messages.filter(m => m.role === 'user').length
+    assert.equal(pairs, 3, '三轮都进了历史，一条没丢')
+})
+
+test('renderRecall 的形态本身（X2 教训：判据对"前缀型漂移"要有一手，形态断言补上这层）', async () => {
+    const text = (await import('../../../../services/core/memory/recall.js')).renderRecall(RECALLED)
+    assert.ok(text.startsWith('## 已知记忆\n'), '标题行逐字（不是恰好以它开头的别的标题）')
+    assert.ok(text.includes('- 用户偏好中文回复（记忆 atom-000'), '条目行含内容+atomCode 前 8 位')
+    assert.ok(text.endsWith('\n'), '以换行收尾（applyRecallToQuery 的 JOIN 语义依赖段是完整行）')
+    assert.equal((await import('../../../../services/core/memory/recall.js')).renderRecall([]), '')
+})
+
+test('装配侧单源锚：llmChat 必须经 applyRecallToQuery，不许留着内联模板（写读两式的病根就是两处各写各的）', async () => {
+    const fs = await import('node:fs')
+    const path = await import('node:path')
+    const {fileURLToPath} = await import('node:url')
+    const here = path.dirname(fileURLToPath(import.meta.url))
+    let dir = here
+    for (let i = 0; i < 12; i++) {
+        if (fs.existsSync(path.join(dir, 'services/core/llmChat.js'))) break
+        dir = path.dirname(dir)
+    }
+    const src = fs.readFileSync(path.join(dir, 'services/core/llmChat.js'), 'utf8').replace(/\r/g, '')
+    assert.ok(src.includes('const userText = applyRecallToQuery(query, recalledItems)'), 'llmChat 的拼接点漂移')
+    assert.ok(!src.includes('${query}\\n\\n${renderRecall'), '内联模板回来了=单源又被绕过')
+})

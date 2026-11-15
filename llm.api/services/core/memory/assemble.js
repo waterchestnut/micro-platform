@@ -4,6 +4,7 @@
  */
 
 import {calcMessagesTokenCount} from '../../openai/util.js'
+import {isQueryWithRecall} from './recall.js'
 
 const logger = typeof llm !== 'undefined' && llm.logger ? llm.logger : console
 
@@ -16,15 +17,21 @@ export const TOOL_STUB_HEAD = 200
 /** 历史槽位在总预算中的默认占比 */
 export const DEFAULT_HISTORY_RATIO = 0.6
 
+/**
+ * §2.9 止血点：user 消息的 content 在召回生效时是"query+召回后缀"（写侧 `applyRecallToQuery`），
+ * 与档案顶层 query 不再逐字相等。旧判据（`=== query`）在这种档案上必然失配 ⇒
+ * 整轮 rebuild 失败、历史退化为纯文本对——**工具轮结构就是这么丢的**。
+ * 定位判据换成与写侧同源的一对函数；content 本体不碰（还原出来的消息保持发送时的原样）。
+ */
 function isUserTextMessage(message, query) {
     if (!message || message.role !== 'user') {
         return false
     }
     if (typeof message.content === 'string') {
-        return message.content === query
+        return isQueryWithRecall(message.content, query)
     }
     if (Array.isArray(message.content)) {
-        return message.content.some(part => part && typeof part === 'object' && part.type === 'text' && part.text === query)
+        return message.content.some(part => part && typeof part === 'object' && part.type === 'text' && isQueryWithRecall(part.text, query))
     }
     return false
 }
