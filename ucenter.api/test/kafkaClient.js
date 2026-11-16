@@ -9,4 +9,4 @@ const {tools, logger, config} = ucenter
 
 import {sendMessage} from '../daos/kafka/client.js'
 
-sendMessage(config.kafka.topics.statistic.topic, config.kafka.topics.statistic.groupId, [{value: JSON.stringify({info:'test'})}])
+sendMessage([{topic: config.kafka.topics.statistic.topic, value: JSON.stringify({info:'test'})}])

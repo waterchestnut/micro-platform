@@ -57,15 +57,12 @@ export const createClient = (clientPrefix, brokers = kafkaConfig.brokers, sasl =
 /**
  * 生产者角色发送数据
  * @author xianyang
- * @param {Array} msgs 消息列表
- * @param {String} [msgs.key] key
- * @param {String} msgs.value value
- * @param {String} [msgs.topic] topic
- * @param {Number} [msgs.partition] partition
- * @param {Object} [msgs.headers] headers
- * @param {Object} [msgs.timestamp] timestamp
- * @param {Object} [client] 客户端配置
+ * @param {Array<Object>|String} msgsArg 标准形: 消息列表(每项含 topic; 其余字段 key/value/partition/headers/timestamp); 传 String 时为老式兼容形态的 topic
+ * @param {Object|String} [groupIdOrClient] 标准形: 客户端配置(缺省用本文件 defaultClient); 老式兼容形态下为 groupId(kafkajs 遗留参数, 忽略即弃)
+ * @param {Array<Object>} [msgsLegacy] 仅老式兼容形态生效: 消息列表
+ * @param {Object} [clientArg] 仅老式兼容形态生效: 客户端配置
  * @returns {Boolean} 发送是否成功
+ * @note 标准形 sendMessage(msgs[, client]); 老式 sendMessage(topic, groupId, msgs, client) 仅作外部/遗漏处兜底, 全生态调用点已标准化, 新代码一律标准形
  */
 export const sendMessage = async (msgsArg, groupIdOrClient, msgsLegacy, clientArg) => {
     /**
