@@ -36,6 +36,8 @@ export default {
     redlockRedis: process.env['REDLOCK_URI'],
     /** 加密cookie的秘钥 */
     cookieSecret: process.env['COOKIE_SECRET'],
+    /** 登录 cookie 共享父域(空=按请求 host 末两段推导; 多环境显式配置优先) */
+    cookieDomain: process.env['cookieDomain'] || '',
     /** 默认缓存数据过期时间，单位：分钟 */
     cacheExpiresTime: 60 * 24 * 7,
     /** accessToken过期时间，单位：分钟 */

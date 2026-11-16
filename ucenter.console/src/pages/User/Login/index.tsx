@@ -145,6 +145,7 @@ const Login: React.FC = () => {
         })
         successMessage(defaultLoginSuccessMessage)
         setCookie('param-accessToken', res.data.accessToken) // 假设返回结构中有 accessToken
+        await syncSharedLoginCookies(res.data.accessToken, res.data.refreshToken)
 
         // 刷新状态的逻辑保持不变
         // const userInfo = await initialState?.fetchUserInfo?.();
@@ -178,13 +179,30 @@ const Login: React.FC = () => {
     }
   }
 
-  const handleWechatSuccess = (accessToken: string, refreshToken: string) => {
+  /**
+   * 登录成功后刷新父域共享登录 cookie(与 xxzx ucenter.console 同源修复):
+   * 直登链原本只写本站 host-only cookie, 父域滞留旧账号 token 致"退出换号仍显示旧账号"。
+   * 经服务端 grant-cookie 按部署权威口径写父域; 失败不阻断跳转(下次 oauth callback 兜底)。
+   */
+  const syncSharedLoginCookies = async (accessToken?: string, refreshToken?: string) => {
+    if (!accessToken) return
+    try {
+      await fetch('/client-proxy/oauth/grant-cookie', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({accessToken, refreshToken}),
+      })
+    } catch {}
+  }
+
+  const handleWechatSuccess = async (accessToken: string, refreshToken: string) => {
     setWechatModalOpen(false)
     setCookie('param-accessToken', accessToken)
     if (refreshToken) {
       setCookie('param-refreshToken', refreshToken)
     }
     successMessage(intl.formatMessage({id:'pages.login.wechat.success',defaultMessage:'微信登录成功！'}))
+    await syncSharedLoginCookies(accessToken, refreshToken)
     const urlParams = new URL(window.location.href).searchParams
     // @ts-ignore
     location.href = urlParams.get('retUrl') || PLATFORM_BASE || '/'
