@@ -60,14 +60,26 @@ export const createClient = (clientPrefix, brokers = kafkaConfig.brokers, sasl =
  * @param {Array} msgs 消息列表
  * @param {String} [msgs.key] key
  * @param {String} msgs.value value
- * @param {String} [msgs.topic] partition
+ * @param {String} [msgs.topic] topic
  * @param {Number} [msgs.partition] partition
  * @param {Object} [msgs.headers] headers
  * @param {Object} [msgs.timestamp] timestamp
  * @param {Object} [client] 客户端配置
  * @returns {Boolean} 发送是否成功
  */
-export const sendMessage = async (msgs, client = defaultClient) => {
+export const sendMessage = async (msgsArg, groupIdOrClient, msgsLegacy, clientArg) => {
+    /**
+     * 统一签名: sendMessage(msgs, client)。兼容迁移前的老调用 sendMessage(topic, groupId, msgs, client)
+     * (groupId 为 kafkajs 时代遗留参数, 生产者不需要; 各仓 statistic/cron 等调用面广, 兼容层消除改造风险)。
+     */
+    let msgs, client
+    if (typeof msgsArg === 'string') {
+        client = clientArg || defaultClient
+        msgs = (msgsLegacy || []).map(m => ({topic: msgsArg, ...m}))
+    } else {
+        client = (groupIdOrClient && !Array.isArray(groupIdOrClient)) ? groupIdOrClient : defaultClient
+        msgs = msgsArg
+    }
     try {
         const producer = getProducer(client)
         await producer.send({
@@ -78,7 +90,15 @@ export const sendMessage = async (msgs, client = defaultClient) => {
     } catch (error) {
         if (error.code === 'PLT_KFK_CONNECTION_ERROR') {
             let idx = producerList.findIndex(_ => _.usedClient === client)
-            if (idx > -1) producerList.splice(idx, 1)
+            if (idx > -1) {
+                const [stale] = producerList.splice(idx, 1)
+                // 必须先close再剔除：只删引用会让旧Producer的socket/SASL/重试缓冲永久驻留（proposals/kafka-client-stream-leak）
+                try {
+                    await stale.producer.close()
+                } catch (e) {
+                    logger.error('关闭失效producer出错：' + e)
+                }
+            }
         }
         throw error
     }
@@ -93,6 +113,10 @@ export const sendMessage = async (msgs, client = defaultClient) => {
  * @param {Object} [client] 客户端实例
  * @param {Object} [options] 其他consume参数
  * @returns {Promise<Object>} 消费者实例
+ * 流重建互斥约定（proposals/kafka-client-stream-leak）：
+ * 任一时刻只允许一条建流在途；旧流必须先destroy并等到close再建新流，
+ * 否则error定时器与rebalance-join并发建流时只会有一条被activeStream记住，
+ * 另一条成为永远无人销毁的"孤儿流"（持有fetch缓冲并重复消费，数天内可达GB级）。
  */
 export const subscribe = async (topics, groupId, callback, client = defaultClient, options = {}) => {
     const consumer = new Consumer({
@@ -101,21 +125,24 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
         deserializers: stringDeserializers
     })
 
-    let activeStream = null
-    let recreateTimer = null
-
     /**
-     * 停机排空控制器（判据与源仓同一份：daos/core/policy/drainPolicy.js）。
-     * 为什么不能照抄源仓整个文件：底座这份 kafka client 是另一代实现（没有 stopping / 重建互斥），
-     * 只把"排空"这一层差量接上，其余保持原样 —— 混着搬会把未经验证的改动一起带进来。
+     * 停机排空控制器：`Consumer#close()` 实测只 leave group + 关连接，**不等在途 callback**，
+     * 而 close 之后 `message.commit()` 会失败 —— 所以必须"先停止拉新 → 等在途提交 → 再 close"。
+     * 顺序颠倒的写法（先 close 再等）看着也在"等"，实际是把干完活的位点丢掉，等于白干一遍。
      */
     const drain = createDrainController()
 
+    let activeStream = null
+    let recreateTimer = null
+    let creating = null
+    let stopping = false
+    let commitFailures = 0
+
     registerErrorHandler(consumer, {
         /**
-         * @description 收到信号后的排空动作（必须先于 close）
+         * @description 收到信号后的排空动作（在 close 之前跑）
          * @param {String} signal 信号名
-         * @returns {Promise<Object>} 排空结果
+         * @returns {Promise<Object>} 排空结果，供处理器写日志
          */
         onSignal: async (signal) => {
             const budget = resolveDrainBudget({
@@ -129,9 +156,12 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
             }
             const r = await drain.waitForDrain(budget.budgetMs)
             /**
-             * 排空之后、close 之前必须 destroy 流：只 pause 时 close 会报
-             * `Cannot leave group while consuming messages`（源仓 dev 实测），等于没干净退组。
-             * destroy 一定在 waitForDrain 之后 —— 早一步就掐断了正在提交的位点。
+             * 排空之后、close 之前必须把流**销毁**，只 pause 不够。
+             * 实测证据（dev 现场，`consumer-drain-probe`）：pause 完直接 close 会报
+             *   `PLT_KFK_USER: Cannot leave group while consuming messages.`
+             * 也就是"干净退组"根本没发生 —— 别的成员只能等连接断开或 sessionTimeout。
+             * destroy 放在 waitForDrain 之后是刻意的：早一步就会掐断正在提交的位点。
+             * 2s 兜底是必须的：close 事件不来也不能把退出预算吃光。
              */
             const dying = activeStream
             if (dying && !dying.destroyed) {
@@ -149,82 +179,132 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
         },
     })
 
+    consumer.on('error', err => {
+        // 库在心跳rejoin失败时会上抛'error'，无监听会变成未处理事件（proposals/kafka-client-stream-leak）
+        logger.error('Kafka consumer error:' + err)
+    })
+    consumer.once('client:close', () => {
+        stopping = true
+        if (recreateTimer) {
+            clearTimeout(recreateTimer)
+            recreateTimer = null
+        }
+    })
     const withTimeout = (promise, ms) => {
+        let timer = null
         return Promise.race([
             promise,
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Kafka commit timeout')), ms))
-        ])
+            new Promise((_, reject) => {
+                timer = setTimeout(() => reject(new Error('Kafka commit timeout')), ms)
+            })
+        ]).finally(() => clearTimeout(timer))
     }
 
     async function createStream() {
-        /** 排空期间不再建流：建了就会继续向 broker 要活（分发消息时也会被拒，但那已经是浪费） */
-        if (drain.draining) return null
-        if (activeStream && !activeStream.destroyed) {
-            activeStream.destroy()
-        }
-
-        let stream = await consumer.consume({
-            autocommit: false,
-            topics,
-            sessionTimeout: 30000,
-            heartbeatInterval: 3000,
-            maxBytes: 256 * 1024,
-            ...options
-        })
-
-        stream.on('data', async (message) => {
-            const ref = `${message.topic}/${message.partition}/${message.offset}`
-            if (!drain.start(ref)) {
-                /**
-                 * 停机中：不处理也**不提交**。提交等于把没干过的活标记成干过（那才是真丢消息）；
-                 * 位点留在原地，leave group 之后由别的成员取走。
-                 */
-                logger.warn(`Kafka 停机中，不接新消息（offset 不提交，留给其他成员）: ${ref}`)
-                stream.pause()
-                return
-            }
+        /**
+         * `drain.draining` 也必须挡在这里。理由不是防御性冗余：
+         * 我把 close 排到排空之后（否则 commit 会失败），而 `stopping` 是由 `client:close` 置位的 ——
+         * 于是"排空期间"这一段里 stopping 还是 false，此时流一旦 error/end，
+         * 下面的定时器就会**再建一条新流继续 fetch**。
+         * 分发消息时 drain.start() 固然会拒绝，但"停机过程中还在向 broker 要活"这件事本身就该停。
+         */
+        if (stopping || drain.draining) return null
+        if (creating) return creating // 已有建流在途，复用同一Promise（互斥，防孤儿流）
+        creating = (async () => {
             try {
-                logger.info(`Message received [Topic: ${message.topic}, Partition: ${message.partition}, Offset: ${message.offset}]`)
-                stream.pause()
-
-                await callback({topic: message.topic, partition: message.partition, msg: message.value})
-            } catch (error) {
-                logger.error('Error processing message:' + error)
-            } finally {
-                try {
-                    if (typeof message.commit === 'function') {
-                        await withTimeout(message.commit(), 5000)
-                    }
-                } catch (e) {
-                    logger.error('Kafka commit failed:' + e)
+                const old = activeStream
+                if (old && !old.destroyed) {
+                    activeStream = null
+                    // 销毁旧流并等到close，避免新旧两条流并存重复消费/重复commit
+                    await new Promise(resolve => {
+                        old.once('close', resolve)
+                        old.destroy()
+                        setTimeout(resolve, 3000) // 兜底：close不来也不能卡死重建
+                    })
                 }
-                /** finish 在 commit 之后：排空的定义是"活干完且位点提交已尝试"，不是"callback 返回了" */
-                drain.finish(ref)
-                if (!drain.draining) stream.resume()
+                if (stopping || drain.draining) return null
+
+                let stream = await consumer.consume({
+                    autocommit: false,
+                    topics,
+                    sessionTimeout: 30000,
+                    heartbeatInterval: 3000,
+                    maxBytes: 256 * 1024,
+                    ...options
+                })
+
+                stream.on('data', async (message) => {
+                    const ref = `${message.topic}/${message.partition}/${message.offset}`
+                    if (!drain.start(ref)) {
+                        /**
+                         * 已经在停机排空：这条**不处理也不提交**。
+                         * 不提交是刻意的 —— 位点留在原地，leave group 之后别的成员会取走；
+                         * 要是这里顺手 commit 了，就等于把没干过的活标记成干过（真丢消息）。
+                         */
+                        logger.warn(`Kafka 停机中，不接新消息（offset 不提交，留给其他成员）: ${ref}`)
+                        stream.pause()
+                        return
+                    }
+                    try {
+                        logger.info(`Message received [Topic: ${message.topic}, Partition: ${message.partition}, Offset: ${message.offset}]`)
+                        stream.pause()
+
+                        await callback({topic: message.topic, partition: message.partition, msg: message.value})
+                    } catch (error) {
+                        logger.error('Error processing message:' + error)
+                    } finally {
+                        try {
+                            if (typeof message.commit === 'function') {
+                                await withTimeout(message.commit(), 5000)
+                                commitFailures = 0
+                            }
+                        } catch (e) {
+                            logger.error('Kafka commit failed:' + e)
+                            // 连续commit失败≈membership已丢失（broker端组显示EMPTY但fetch不受校验、进程还在消费）；
+                            // 心跳rejoin失败后库不会再自愈，这里强制重建流触发重新入组（proposals/kafka-client-stream-leak）
+                            if (++commitFailures >= 3) {
+                                commitFailures = 0
+                                logger.warn('Kafka commit连续失败，疑似丢失组成员身份，强制重建流以重新入组')
+                                createStream().catch(err => logger.error('Failed to recreate stream:' + err))
+                            }
+                        }
+                        /**
+                         * finish 放在 commit **之后**：排空完成的定义是"活干完且位点提交已尝试"，
+                         * 不是"callback 返回了"。否则 close 会插在 commit 前面，等于白干。
+                         */
+                        drain.finish(ref)
+                        if (!drain.draining && !stream.destroyed) stream.resume()
+                    }
+                })
+
+                stream.on('error', (err) => {
+                    if (stopping || drain.draining || activeStream !== stream) return // 已被替换的旧流，错误直接丢弃
+                    if (recreateTimer) return
+                    logger.error('Kafka Stream runtime error:' + err + ', will recreate in 3s')
+                    recreateTimer = setTimeout(() => {
+                        recreateTimer = null
+                        createStream().catch(err => logger.error('Failed to recreate stream:' + err))
+                    }, 3000)
+                })
+
+                stream.on('end', () => {
+                    if (stopping || drain.draining || activeStream !== stream) return
+                    if (recreateTimer) return
+                    logger.warn('Stream ended, will recreate in 3s')
+                    recreateTimer = setTimeout(() => {
+                        recreateTimer = null
+                        createStream().catch(err => logger.error('Failed to recreate stream:' + err))
+                    }, 3000)
+                })
+
+                activeStream = stream
+                logger.info('Consumer stream created successfully')
+                return stream
+            } finally {
+                creating = null
             }
-        })
-
-        stream.on('error', (err) => {
-            if (drain.draining || recreateTimer) return
-            logger.error('Kafka Stream runtime error:' + err + ', will recreate in 3s')
-            recreateTimer = setTimeout(() => {
-                recreateTimer = null
-                createStream().catch(err => logger.error('Failed to recreate stream:' + err))
-            }, 3000)
-        })
-
-        stream.on('end', () => {
-            if (drain.draining || recreateTimer) return
-            logger.warn('Stream ended, will recreate in 3s')
-            recreateTimer = setTimeout(() => {
-                recreateTimer = null
-                createStream().catch(err => logger.error('Failed to recreate stream:' + err))
-            }, 3000)
-        })
-
-        activeStream = stream
-        logger.info('Consumer stream created successfully')
-        return stream
+        })()
+        return creating
     }
 
     await createStream()
@@ -234,9 +314,10 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
     })
 
     consumer.on('consumer:group:join', () => {
-        /** createStream 里也有同样的守卫；这里先返回是为了不打那句误导性的 info */
-        if (drain.draining) return
-        logger.info('Kafka rebalance completed, creating new stream to fetch fresh data')
+        // 当前流健在就不重建（库内部会随rebalance刷新分配）；重建本身是竞态/重复消费窗口，
+        // 只有流已丢失/已销毁时才补建（proposals/kafka-client-stream-leak）
+        if (stopping || (activeStream && !activeStream.destroyed)) return
+        logger.info('Kafka rebalance completed, no active stream, creating new stream')
         createStream().catch(err => logger.error('Failed to create stream after rebalance:' + err))
     })
 
@@ -252,7 +333,7 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
  */
 function registerErrorHandler(consumer, hooks = {}) {
     for (let type of ['unhandledRejection', 'uncaughtException']) {
-        process.on(type, async e => {
+        process.once(type, async e => {
             try {
                 logger.error(`process.on ${type}`)
                 logger.error(e)
@@ -267,11 +348,20 @@ function registerErrorHandler(consumer, hooks = {}) {
         process.once(type, async () => {
             logger.warn(`Received ${type}, closing consumer gracefully`)
             try {
+                /**
+                 * 顺序要紧：先排空在途（含 commit），再 close。
+                 * close 会 leave group + 关连接，之后再提交必然失败 ——
+                 * 那种"看起来等了、其实等到的是一个已经关掉的客户端"的写法是本模块要避免的原型。
+                 */
                 if (typeof hooks.onSignal === 'function') {
                     try {
                         await hooks.onSignal(type)
                     } catch (e) {
-                        /** 排空异常不能吃掉 close：不 leave group 就要白等 sessionTimeout 30s */
+                        /**
+                         * 排空自己出错**不能**连带跳过 close：跳过就等于不 leave group，
+                         * 组里其他成员要等满 sessionTimeout(30s) 才接管，
+                         * 一个已经失败的等待反而把停机拖得更久。
+                         */
                         logger.error(`Kafka 停机排空异常（继续 close 以触发重新分配）: ${e.stack || e}`)
                     }
                 }
@@ -279,7 +369,10 @@ function registerErrorHandler(consumer, hooks = {}) {
             } catch (err) {
                 logger.error(`Error closing consumer on ${type}: ${err}`)
             } finally {
-                /** 退出动作可注入：会 process.exit 的函数没法被测（顺序断言需要一个记账替身） */
+                /**
+                 * 退出动作可以从外面换掉：只有一个会 `process.exit` 的函数没法被测。
+                 * 生产默认就是 process.exit，测试注入一个记账函数，才能断言"排空 → close → 退出"的真实顺序。
+                 */
                 ;(hooks.exit || ((code) => process.exit(code)))(0)
             }
         })
@@ -287,11 +380,10 @@ function registerErrorHandler(consumer, hooks = {}) {
 }
 
 /**
- * 导出只为一条测试：`先排空 → 再 close → 才退出` 是核心不变量，
- * 不导出就只能靠读代码相信它。
+ * 导出只为一条测试：`先排空 → 再 close → 才退出` 是这次改动的核心不变量，
+ * 不导出就只能靠读代码相信它，而读代码这件事我今天已经错过几次了。
  */
 export {registerErrorHandler}
-
 export async function listAllGroups() {
     const admin = new Admin({
         ...defaultClient

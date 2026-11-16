@@ -38,7 +38,6 @@
     "google-protobuf": "^3.21.4",
     "grpc-tools": "^1.13.0",
     "ioredis": "^5.5.0",
-    "kafkajs": "^2.2.4",
     "mongoose": "^8.10.0",
     "mongoose-to-swagger-2": "^1.5.4",
     "node-fetch": "^3.3.2",
@@ -47,7 +46,8 @@
     "pino-pretty": "^13.0.0",
     "pinyin-pro": "^3.26.0",
     "redlock": "5.0.0-beta.2",
-    "uuid": "^11.0.5"
+    "uuid": "^11.0.5",
+    "@platformatic/kafka": "2.15.0"
   },
   "devDependencies": {
     "c8": "^10.1.2"
