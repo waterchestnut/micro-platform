@@ -2,8 +2,16 @@
 import {ref, onMounted, nextTick, watch} from 'vue'
 import {useRoute} from 'vue-router'
 import {getAccessToken} from '@/utils/authority'
-import {FileViewerLifecycleContext} from '@flyfish-group/file-viewer3'
+import type {FileViewerLifecycleContext} from '@flyfish-group/file-viewer3'
 import {init as initPptxPreview} from 'pptx-preview'
+// 3.x runtime-only 架构: 按需装配业务渲染器(pdf/docx/xlsx/pptx/文本/图片), worker 等资产由
+// build/copy-viewer-assets 插件落位 dist/vendor/
+import { pdfRenderer } from '@file-viewer/renderer-pdf'
+import { wordRenderer } from '@file-viewer/renderer-word'
+import { spreadsheetRenderer } from '@file-viewer/renderer-spreadsheet'
+import { presentationRenderer } from '@file-viewer/renderer-presentation'
+import { textRenderer } from '@file-viewer/renderer-text'
+import { imageRenderer } from '@file-viewer/renderer-image'
 import {useI18n} from '@/i18n'
 
 const { t } = useI18n()
@@ -107,6 +115,7 @@ function handlePptxDownload() {
 }
 
 const options = {
+  renderers: [pdfRenderer, wordRenderer, spreadsheetRenderer, presentationRenderer, textRenderer, imageRenderer],
   toolbar: false,
   watermark: {
     text: 'FoLeaC',

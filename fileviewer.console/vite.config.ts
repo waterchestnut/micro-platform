@@ -1,6 +1,7 @@
 import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
+import { fileViewerAssetsPlugin } from './build/copy-viewer-assets'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
@@ -9,6 +10,7 @@ export default defineConfig(({ mode }) => {
     base: '/',
     plugins: [
       vue(),
+      fileViewerAssetsPlugin(),
       {
         name: 'inject-env',
         transformIndexHtml: {

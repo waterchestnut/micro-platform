@@ -1,6 +1,7 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import FileViewer from '@flyfish-group/file-viewer3'
+import '@flyfish-group/file-viewer3/dist/file-viewer3.css'
 import App from './App.vue'
 import router from './router'
 import './styles/global.css'
