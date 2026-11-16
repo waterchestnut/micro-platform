@@ -1,4 +1,4 @@
-# Logs
+﻿# Logs
 logs
 *.log
 npm-debug.log*
@@ -141,4 +141,5 @@ vite.config.ts.timestamp-*
 # webstorm
 .idea
 
-build/*.d.ts
+**/build/*.d.ts
+
