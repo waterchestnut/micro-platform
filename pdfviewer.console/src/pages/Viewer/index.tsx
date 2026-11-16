@@ -15,7 +15,7 @@ import {checkResLiterature, localFileLiterature} from '@/services/resource/liter
 import {getFileUrl, uuidV4} from '@/utils/util'
 import {simpleUniqueUploadFile, uniqueUploadFile} from '@/services/doc/fileInfo'
 import dayjs from 'dayjs'
-import {CaptureData} from 'embedpdf-snippet-i18n/dist/components/capture'
+import {SnapshotData} from 'embedpdf-snippet-i18n'
 
 const useStyles = createStyles(({token, css}) => {
   return {
@@ -106,7 +106,7 @@ const Viewer: React.FC = () => {
     aiRef?.current?.goAnalysis(`请结合文献材料解读以下内容：\r\n${text}`)
   }
 
-  const onSaveAnnotation = async (buffer: Buffer, fileName: string) => {
+  const onSaveAnnotation = async (buffer: Uint8Array, fileName: string) => {
     const blobData = new Blob([new Uint8Array(buffer)], {type: 'application/pdf'})
     const formData = new FormData()
     formData.append('file', blobData, fileName)
@@ -158,7 +158,7 @@ const Viewer: React.FC = () => {
     }, 3000)
   }
 
-  const saveCaptureFile = async (captureData: CaptureData, documentName: string) => {
+  const saveCaptureFile = async (captureData: SnapshotData, documentName: string) => {
     setLocalFileLoading(true)
     setLocalFileTip('文件上传中。。。')
     const formData = new FormData()
@@ -173,7 +173,7 @@ const Viewer: React.FC = () => {
     return fileRet.data
   }
 
-  const onCaptureAIAnalysisAction = async (captureData: CaptureData, documentName: string) => {
+  const onCaptureAIAnalysisAction = async (captureData: SnapshotData, documentName: string) => {
     /*console.log(captureData, documentName)*/
     let fileInfo = await saveCaptureFile(captureData, documentName)
     if (!fileInfo) {
@@ -186,7 +186,7 @@ const Viewer: React.FC = () => {
     }])
   }
 
-  const onCaptureTransAction = async (captureData: CaptureData, documentName: string) => {
+  const onCaptureTransAction = async (captureData: SnapshotData, documentName: string) => {
     /*console.log(captureData, documentName)*/
     let fileInfo = await saveCaptureFile(captureData, documentName)
     if (!fileInfo) {

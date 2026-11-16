@@ -1,10 +1,16 @@
-import React, {useMemo, useState, useEffect, useRef, useCallback} from 'react'
+import React, {useEffect, useRef} from 'react'
 
-import EmbedPDF, {
-  type EmbedPdfContainer,
-  type PDFViewerConfig,
-  type PluginRegistry,
-  buildCdnFontConfig,
+import {
+  buildFontFallbackConfig,
+  charsetUrlsFromBase,
+  composeLayout,
+  init,
+  legacyIcon,
+  saveAnnotationsCommand,
+  selectionActions,
+  snapshotActions,
+  type SnippetHandle,
+  type SnapshotData,
 } from 'embedpdf-snippet-i18n'
 import {getAIIconPaths} from '@/icons/ai'
 import {getTransIconPaths} from '@/icons/trans'
@@ -13,7 +19,8 @@ import {getTheme} from '@/utils/runtimeTheme'
 import {useModel} from '@@/exports'
 import {getArrowLeftIconPaths} from '@/icons/arrowLeft'
 import {history} from '@umijs/max'
-import {CaptureData} from 'embedpdf-snippet-i18n/dist/components/capture'
+
+export type {SnapshotData}
 
 interface PDFViewerProps {
   pdfUrl: string
@@ -22,19 +29,19 @@ interface PDFViewerProps {
   style?: React.CSSProperties
   className?: string
   onTransAction?: (text?: string) => void
-  onCaptureTransAction?: (data: CaptureData, documentName: string) => void
+  onCaptureTransAction?: (data: SnapshotData, documentName: string) => void
   onAIAnalysisAction?: (text?: string) => void
-  onCaptureAIAnalysisAction?: (data: CaptureData, documentName: string) => void
-  onSaveAnnotation?: (buffer: any, fileName: string) => void
+  onCaptureAIAnalysisAction?: (data: SnapshotData, documentName: string) => void
+  onSaveAnnotation?: (buffer: Uint8Array, fileName: string) => void
   onFileOpened?: (file: File) => void
 }
 
+// v3.x 的 wasm/字体等静态资源与 pdfviewer.console 同源部署（版本必须与 embedpdf-snippet-i18n 匹配）
 // @ts-ignore
 const viewerBaseUrl = PDF_VIEWER_BASE
 
 export default function PDFViewer(props: PDFViewerProps) {
   const {
-    id,
     pdfUrl,
     pdfName,
     style,
@@ -44,250 +51,108 @@ export default function PDFViewer(props: PDFViewerProps) {
     onSaveAnnotation,
     onFileOpened,
     onCaptureAIAnalysisAction,
-    onCaptureTransAction
+    onCaptureTransAction,
   } = props
 
   const containerRef = useRef<HTMLDivElement>(null)
-  const viewerRef = useRef<EmbedPdfContainer | null>(null)
+  const handleRef = useRef<SnippetHandle | null>(null)
 
   const {initialState} = useModel('@@initialState')
   const {currentUser} = initialState || {}
 
+  // 回调经 ref 承载：查看器只初始化一次，按钮按最新闭包执行。
+  const cbRef = useRef({onTransAction, onAIAnalysisAction, onSaveAnnotation, onFileOpened, onCaptureAIAnalysisAction, onCaptureTransAction})
+  cbRef.current = {onTransAction, onAIAnalysisAction, onSaveAnnotation, onFileOpened, onCaptureAIAnalysisAction, onCaptureTransAction}
+
   useEffect(() => {
-    if (!containerRef.current) return
-
-    let isActive = true
     const containerElement = containerRef.current
+    if (!containerElement) return
 
-    const loadEmbedPDF = async () => {
-      let fileName = pdfName || `${uuidV4()}.pdf`
-      let fontUrls: any = {};
-      ['arabic', 'hebrew', 'jp', 'kr', 'latin', 'sc', 'tc'].forEach(key => {
-        fontUrls[key] = `${viewerBaseUrl}/fonts/${key}`
-      })
-      try {
-        const viewer = EmbedPDF.init({
-          type: 'container',
-          target: containerRef.current!,
-          worker: true,
-          wasmUrl: `${viewerBaseUrl}/pdfium.wasm?v=2-14-0-1`,
-          annotations: {annotationAuthor: currentUser?.realName || '匿名用户'},
-          documentManager: {
-            maxDocuments: 5,
-            initialDocuments: [{
-              url: pdfUrl || `${viewerBaseUrl}/demo/368653411.pdf`, documentId: id, name: fileName
-            }]
-          },
-          tabBar: 'never',
-          theme: {
-            preference: 'light',
-            light: {
-              accent: {
-                // 随主题切换（docs/08 §5.4）：theme.json.pdfEngine 缺省时回落现网旧值
-                primary: getTheme().pdfEngine?.primary || '#08979c',        // Main brand color
-                primaryHover: getTheme().pdfEngine?.primaryHover || '#006d75',   // Hover state
-                primaryActive: getTheme().pdfEngine?.primaryActive || '#00474f',  // Click state
-                primaryLight: getTheme().pdfEngine?.primaryLight || '#8fcfc8',   // Subtle backgrounds (e.g., selection)
-                primaryForeground: getTheme().pdfEngine?.primaryForeground || '#fff'  // Text on top of primary color
-              }
-            },
-          },
-          i18n: {
-            defaultLocale: 'zh-CN'
-          },
-          icons: {
-            custom_ai: getAIIconPaths(),
-            custom_trans: getTransIconPaths(),
-            custom_arrow_left: getArrowLeftIconPaths(),
-          },
-          fontFallback: {
-            fonts: {
-              ...buildCdnFontConfig(fontUrls).fonts
-            }
-          },
-          captureExtActions: [
-            {
-              id: 'custom.capture.ai',
-              label: 'AI解读',
-              onClick: (captureData: CaptureData) => {
-                onCaptureAIAnalysisAction && onCaptureAIAnalysisAction(captureData, fileName)
-              }
-            },
-            {
-              id: 'custom.capture.trans',
-              label: '翻译',
-              onClick: (captureData: CaptureData) => {
-                onCaptureTransAction && onCaptureTransAction(captureData, fileName)
-              }
-            },
-          ],
-        })
+    const fileName = pdfName || `${uuidV4()}.pdf`
+    const theme = getTheme()
 
-        if (!viewer) {
-          return
-        }
-        viewerRef.current = viewer
-        if (!isActive) {
-          return
-        }
-        const registry = await viewer.registry
+    // 选中文字的 AI 解读 / 翻译（v2 custom.selection.*，浮动条按钮自动前置）
+    const sel = selectionActions([
+      {
+        id: 'custom.selection.ai',
+        label: 'AI解读',
+        icon: 'custom_ai',
+        onText: (text) => cbRef.current.onAIAnalysisAction?.(text),
+      },
+      {
+        id: 'custom.selection.trans',
+        label: '翻译',
+        icon: 'custom_trans',
+        onText: (text) => cbRef.current.onTransAction?.(text),
+      },
+    ])
 
-        const commands = registry.getPlugin('commands')?.provides?.()
-        const ui = registry.getPlugin('ui')?.provides?.()
-        const schema = ui.getSchema()
+    // 截图框选后的扩展按钮（v2 captureExtActions）
+    const snap = snapshotActions([
+      {
+        id: 'custom.capture.ai',
+        label: 'AI解读',
+        onSnapshot: (data) => cbRef.current.onCaptureAIAnalysisAction?.(data, fileName),
+      },
+      {
+        id: 'custom.capture.trans',
+        label: '翻译',
+        onSnapshot: (data) => cbRef.current.onCaptureTransAction?.(data, fileName),
+      },
+    ])
 
-        // custom selection
-        commands.registerCommand({
-          id: 'custom.selection.ai',
-          label: 'AI解读',
-          icon: 'custom_ai',
-          action: async ({registry, documentId}: { registry: PluginRegistry; state: any; documentId: string }) => {
-            const plugin = registry.getPlugin('selection')
-            const scope = plugin?.provides?.().forDocument(documentId)
-            const results = (await scope?.getSelectedText().toPromise()) || []
-            /*console.log('AI解读', text)*/
-            const textStr = results?.length ? results.join('\r\n') : ''
-            onAIAnalysisAction && onAIAnalysisAction(textStr)
-            scope?.clear()
-          },
-          categories: ['selection'],
-        })
-        commands.registerCommand({
-          id: 'custom.selection.trans',
-          label: '翻译',
-          icon: 'custom_trans',
-          action: async ({registry, documentId}: { registry: PluginRegistry; state: any; documentId: string }) => {
-            const plugin = registry.getPlugin('selection')
-            const scope = plugin?.provides?.().forDocument(documentId)
-            const results = (await scope?.getSelectedText().toPromise()) || []
-            /*console.log('翻译', text)*/
-            const textStr = results?.length ? results.join('\r\n') : ''
-            onTransAction && onTransAction(textStr)
-            scope?.clear()
-          },
-          categories: ['selection'],
-        })
-        const selectionItems = schema.selectionMenus['selection'].items
-        ui.mergeSchema({
-          selectionMenus: {
-            ...schema.selectionMenus,
-            selection: {
-              ...schema.selectionMenus['selection'],
-              items: [
-                {
-                  type: 'command-button',
-                  id: 'custom-selection-ai',
-                  commandId: 'custom.selection.ai',
-                  variant: 'icon',
-                  categories: ['selection'],
-                },
-                {
-                  type: 'command-button',
-                  id: 'custom-selection-trans',
-                  commandId: 'custom.selection.trans',
-                  variant: 'icon',
-                  categories: ['selection'],
-                },
-                ...selectionItems
-              ]
-            }
-          }
-        })
+    // 保存批注：导出含未保存变更的副本 bytes（v2 saveAsCopyAndGetBufferAndName）
+    const save = saveAnnotationsCommand(
+      (buffer, name) => cbRef.current.onSaveAnnotation?.(buffer, name),
+      'custom.toolbar.save',
+    )
 
-        // custom toolbar
-        const toolbar = schema.toolbars['main-toolbar']
-        commands.registerCommand({
-          id: 'custom.toolbar.back',
-          label: '返回',
-          icon: 'custom_arrow_left',
-          action: async ({registry, documentId}: { registry: PluginRegistry; state: any; documentId: string }) => {
-            /*console.log('返回')*/
-            history.back()
-          },
-          categories: ['toolbar'],
-        })
-        commands.registerCommand({
-          id: 'custom.toolbar.save',
-          label: '保存批注',
-          icon: 'save',
-          action: async ({registry, documentId}: { registry: PluginRegistry; state: any; documentId: string }) => {
-            // @ts-ignore
-            const data = await registry.getPlugin('export')?.saveAsCopyAndGetBufferAndName(documentId).toPromise()
-            /*console.log(data)*/
-            onSaveAnnotation && onSaveAnnotation(data.buffer, data.name)
-          },
-          categories: ['toolbar'],
-        })
-        commands.registerCommand({
-          id: 'custom.toolbar.capture.ai',
-          label: '截图AI解析',
-          action: async ({registry, documentId}: { registry: PluginRegistry; state: any; documentId: string }) => {
-            const capture = registry.getPlugin('capture')?.provides?.()
-            if (!capture) return
-
-            const scope = capture.forDocument(documentId)
-            if (scope.isMarqueeCaptureActive()) {
-              scope.disableMarqueeCapture()
-            } else {
-              scope.enableMarqueeCapture()
-            }
-          },
-          categories: ['toolbar'],
-        })
-        const toolbarItems = JSON.parse(JSON.stringify(toolbar.items))
-        const rightGroup = toolbarItems.find((item: any) => item.id === 'right-group')
-        const leftGroup = toolbarItems.find((item: any) => item.id === 'left-group')
-        /*console.log(toolbarItems, rightGroup, leftGroup)*/
-        if (rightGroup) {
-          rightGroup.items = rightGroup.items || []
-          rightGroup.items.unshift({
-            type: 'command-button',
-            id: 'custom-toolbar-save',
-            commandId: 'custom.toolbar.save',
-            variant: 'icon',
-            categories: ['toolbar'],
-          },)
-          rightGroup.items.unshift({
-            type: 'command-button',
-            id: 'custom-toolbar-capture-ai',
-            commandId: 'custom.toolbar.capture.ai',
-            variant: 'text',
-            categories: ['toolbar'],
-          },)
-        }
-        if (leftGroup) {
-          leftGroup.items = leftGroup.items || []
-          leftGroup.items.unshift({
-            type: 'command-button',
-            id: 'custom-toolbar-back',
-            commandId: 'custom.toolbar.back',
-            variant: 'icon',
-            categories: ['toolbar'],
-          },)
-        }
-        ui.mergeSchema({
-          toolbars: {'main-toolbar': {...toolbar, items: toolbarItems}}
-        })
-
-        const docManager = registry.getPlugin('document-manager')?.provides?.()
-        docManager.onDocumentOpened(async (doc: any) => {
-          /*console.log(doc)
-          const data = await registry?.getPlugin('export')?.saveAsCopyAndGetBufferAndName(doc.id).toPromise()
-          console.log(data)*/
-        })
-        docManager.onFileSelected((file: File) => {
-          onFileOpened && onFileOpened(file)
-        })
-      } catch (error) {
-        console.error('Failed to load EmbedPDF:', error)
-      }
+    // 返回按钮（v2 custom.toolbar.back）
+    const back = {
+      id: 'custom.toolbar.back',
+      label: '返回',
+      icon: 'custom_arrow_left',
+      run: () => history.back(),
     }
 
-    loadEmbedPDF()
+    const handle = init({
+      target: containerElement,
+      documents: [{src: pdfUrl || `${viewerBaseUrl}/demo/368653411.pdf`, name: fileName, active: true}],
+      maxDocuments: 5,
+      engine: {
+        wasmUrl: `${viewerBaseUrl}/embedpdf.wasm?v=3-3-0-1`,
+        fallbackFonts: buildFontFallbackConfig(charsetUrlsFromBase(viewerBaseUrl)),
+      },
+      identity: {displayName: currentUser?.realName || '匿名用户'},
+      locale: 'zh-CN',
+      theme: {
+        preference: 'light',
+        // 随主题切换（docs/08 §5.4）：theme.json.pdfEngine.primary 缺省时回落现网旧值
+        accent: theme.pdfEngine?.primary || '#08979c',
+      },
+      icons: {
+        custom_ai: legacyIcon(getAIIconPaths()),
+        custom_trans: legacyIcon(getTransIconPaths()),
+        custom_arrow_left: legacyIcon(getArrowLeftIconPaths()),
+      },
+      commands: [...sel.commands, ...snap.commands, save, back],
+      // v2 的 mergeSchema 工具栏注入：隐藏标签栏，左侧返回，右侧保存 + 截图工具
+      layout: composeLayout(sel.layout, snap.layout, (base) =>
+        base
+          .tabs('never')
+          .add(back.id, {to: 'main', before: 'menu:document'})
+          .add(save.id, {to: 'main', section: 'end'})
+          .add('tool:snapshot', {to: 'main', section: 'end'}),
+      ),
+      // v2 docManager.onFileSelected：本地文件选择事件（Open 菜单/Mod+O/拖放）
+      onFileSelected: (file) => cbRef.current.onFileOpened?.(file),
+    })
+
+    handleRef.current = handle
+
     return () => {
-      isActive = false
-      containerElement.innerHTML = ''
-      viewerRef.current = null
+      handle.destroy()
+      handleRef.current = null
     }
   }, [])
 
