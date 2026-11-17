@@ -88,11 +88,13 @@ export default function PDFViewer(props: PDFViewerProps) {
       {
         id: 'custom.capture.ai',
         label: 'AI解读',
+        icon: 'custom_ai',
         onSnapshot: (data) => cbRef.current.onCaptureAIAnalysisAction?.(data, fileName),
       },
       {
         id: 'custom.capture.trans',
         label: '翻译',
+        icon: 'custom_trans',
         onSnapshot: (data) => cbRef.current.onCaptureTransAction?.(data, fileName),
       },
     ])
