@@ -112,7 +112,7 @@ const ChunkEdit: ForwardRefRenderFunction<ChunkEditAction, ChunkEditProps> = (pr
         {
           onCancel: handleCancel,
           centered: true,
-          destroyOnClose: true
+          destroyOnHidden: true
         }
       }
       onFinish={async () => {

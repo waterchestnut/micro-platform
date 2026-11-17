@@ -103,7 +103,7 @@ const Edit: ForwardRefRenderFunction<EditAction, EditProps> = (props, ref) => {
         {
           onCancel: handleCancel,
           centered: true,
-          destroyOnClose: true
+          destroyOnHidden: true
         }
       }
       onFinish={async () => {

@@ -108,7 +108,7 @@ const SegmentEdit: ForwardRefRenderFunction<SegmentEditAction, SegmentEditProps>
         {
           onCancel: handleCancel,
           centered: true,
-          destroyOnClose: true
+          destroyOnHidden: true
         }
       }
       onFinish={async () => {

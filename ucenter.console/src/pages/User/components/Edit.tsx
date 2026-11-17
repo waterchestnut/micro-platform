@@ -104,7 +104,7 @@ const Edit: ForwardRefRenderFunction<EditAction, EditProps> = (props, ref) => {
           onCancel: handleCancel,
           centered: true,
           className: `modal-fixed ${userInfo?.viewer ? 'modal-no-footer' : ''}`,
-          destroyOnClose: true,
+          destroyOnHidden: true,
           width: '60%'
         }
       }
@@ -461,10 +461,10 @@ const Edit: ForwardRefRenderFunction<EditAction, EditProps> = (props, ref) => {
         deleteIconProps={{tooltipText: '删除'}}
         itemRender={({listDom, action}) => (
           <ProCard
-            bordered
+            variant="outlined"
             style={{marginBlockEnd: 8}}
             extra={action}
-            bodyStyle={{paddingBlockEnd: 0}}
+            styles={{body: {paddingBlockEnd: 0}}}
           >
             {listDom}
           </ProCard>

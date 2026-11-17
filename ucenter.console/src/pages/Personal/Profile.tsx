@@ -234,7 +234,6 @@ const Profile: React.FC = () => {
         <ProFormDatePicker
           name='birthday'
           label='生日'
-          type='date'
         />
         <ProFormSelect
           name='gender'

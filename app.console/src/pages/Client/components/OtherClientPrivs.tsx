@@ -150,14 +150,13 @@ const OtherClientPrivs: ForwardRefRenderFunction<OtherClientPrivsAction, OtherCl
         {
           onCancel: handleCancel,
           centered: true,
-          destroyOnClose: true
+          destroyOnHidden: true
         }
       }
       onFinish={async () => {
         await handleOk()
       }}
-      onValuesChange={(changes: Array<any>) => {
-        changeChecked(changes)
+      onValuesChange={(changedValues: any) => {(changedValues)
       }}
       submitter={{
         render: (props, doms) => {

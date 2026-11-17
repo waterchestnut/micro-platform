@@ -39,7 +39,7 @@ const Edit: ForwardRefRenderFunction<EditAction, EditProps> = (props, ref) => {
       open={isOpen}
       onCancel={handleCancel}
       centered={true}
-      destroyOnClose={true}
+      destroyOnHidden={true}
       forceRender={true}
       footer={null}
       width={900}

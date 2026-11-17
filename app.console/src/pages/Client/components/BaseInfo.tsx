@@ -279,10 +279,10 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
         deleteIconProps={{tooltipText: '删除'}}
         itemRender={({listDom, action}, {index}) => (
           <ProCard
-            bordered
+            variant="outlined"
             style={{marginBlockEnd: 8}}
             extra={action}
-            bodyStyle={{paddingBlockEnd: 0}}
+            styles={{body: {paddingBlockEnd: 0}}}
           >
             {listDom}
           </ProCard>
@@ -329,10 +329,10 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
         deleteIconProps={{tooltipText: '删除'}}
         itemRender={({listDom, action}, {index}) => (
           <ProCard
-            bordered
+            variant="outlined"
             style={{marginBlockEnd: 8}}
             extra={action}
-            bodyStyle={{paddingBlockEnd: 0}}
+            styles={{body: {paddingBlockEnd: 0}}}
           >
             {listDom}
           </ProCard>
@@ -385,10 +385,10 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
         deleteIconProps={{tooltipText: '删除'}}
         itemRender={({listDom, action}, {index}) => (
           <ProCard
-            bordered
+            variant="outlined"
             style={{marginBlockEnd: 8}}
             extra={action}
-            bodyStyle={{paddingBlockEnd: 0}}
+            styles={{body: {paddingBlockEnd: 0}}}
           >
             {listDom}
           </ProCard>

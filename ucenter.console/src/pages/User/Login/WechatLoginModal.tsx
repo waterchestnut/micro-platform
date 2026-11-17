@@ -412,7 +412,7 @@ const WechatLoginModal: React.FC<WechatLoginModalProps> = ({open, onCancel, onSu
       onCancel={onCancel}
       footer={null}
       width={420}
-      destroyOnClose
+      destroyOnHidden
       centered
     >
       {renderContent()}

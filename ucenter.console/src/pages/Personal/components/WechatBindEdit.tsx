@@ -184,7 +184,7 @@ const WechatBindEdit: React.FC<WechatBindEditProps> = (props) => {
         onCancel={handleCloseBind}
         footer={null}
         width={420}
-        destroyOnClose
+        destroyOnHidden
         centered
       >
         {renderQrContent()}

@@ -98,7 +98,7 @@ const Edit: ForwardRefRenderFunction<EditAction, EditProps> = (props, ref) => {
           onCancel: handleCancel,
           centered: true,
           className: `modal-fixed ${regionInfo?.viewer ? 'modal-no-footer' : ''}`,
-          destroyOnClose: true,
+          destroyOnHidden: true,
           width: '60%'
         }
       }

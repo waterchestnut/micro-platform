@@ -89,7 +89,7 @@ const MaterialEdit: ForwardRefRenderFunction<MaterialEditAction, MaterialEditPro
       open={isOpen}
       onCancel={handleCancel}
       centered={true}
-      destroyOnClose={true}
+      destroyOnHidden={true}
       forceRender={true}
       footer={null}
       width={900}

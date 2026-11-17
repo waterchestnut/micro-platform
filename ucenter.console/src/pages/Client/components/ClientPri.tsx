@@ -148,7 +148,7 @@ const PrivilegeEdit: ForwardRefRenderFunction<PrivilegeEditAction, PrivilegeEdit
       modalProps={{
         onCancel: () => setOpen(false),
         centered: true,
-        destroyOnClose: true,
+        destroyOnHidden: true,
         width: 800,
       }}
       formRef={formRef}
