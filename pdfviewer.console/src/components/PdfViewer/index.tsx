@@ -1,11 +1,10 @@
 import React, {useEffect, useRef} from 'react'
 
 import {
-  buildFontFallbackConfig,
-  charsetUrlsFromBase,
   composeLayout,
   FORK_ICONS,
   init,
+  nativeFallbackFonts,
   saveAnnotationsCommand,
   selectionActions,
   snapshotActions,
@@ -118,7 +117,7 @@ export default function PDFViewer(props: PDFViewerProps) {
       maxDocuments: 5,
       engine: {
         wasmUrl: `${viewerBaseUrl}/embedpdf.wasm?v=3-3-0-1`,
-        fallbackFonts: buildFontFallbackConfig(charsetUrlsFromBase(viewerBaseUrl)),
+        fallbackFonts: nativeFallbackFonts(`${viewerBaseUrl}/DroidSansFallbackFull.ttf`),
       },
       identity: {displayName: currentUser?.realName || '匿名用户'},
       locale: 'zh-CN',
