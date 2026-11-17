@@ -18,14 +18,10 @@ export default defineConfig({
 
   /**
    * @name 压缩目标
-   * @description EmbedPDF 3.x 引擎链含 BigInt 字面量（不可降级转译），umi 默认的
-   * esbuild 压缩 target（es2015/chrome80）会直接报错，这里把压缩目标提到 es2020 档。
-   * 运行时兼容不受影响：BigInt 字面量在 Chrome 67+ / Safari 14+ 原生可用。
+   * @description 原为 EmbedPDF 3.x BigInt 字面量把压缩 target 手工钉到 es2020 档（max 4.6 默认 es2015 会炸）。
+   * 升级 max 4.7 后默认压缩目标已覆盖 BigInt 且不再对 destructuring 做降级（同链的 callin 零配置可构建），
+   * 旧钉法反而触发 esbuild「Transforming destructuring not supported」——故移除，回归默认。
    */
-  jsMinifier: 'esbuild',
-  jsMinifierOptions: {
-    target: ['es2020', 'chrome90', 'edge90', 'firefox90', 'safari14'],
-  },
 
   /**
    * @name 兼容性设置
