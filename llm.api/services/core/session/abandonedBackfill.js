@@ -18,7 +18,12 @@
  *    而重复档案会同时污染历史与记忆采集（`llmChat` 里那条"重复落库直接拒绝"的注释就是同一教训）。
  *    代价要写明：如果认领后、写档前进程崩了，这条就变成"账本 abort、档案没有"。
  *    窗口是毫秒级，且失败会留下 `messageCode` 便于人工补，比写重复行的后果轻。
- * 2. **已有档案的行绝不认领也不写**：那是真人的数据，被覆盖的损失比"看不见一次损失"大得多。
+ * 2. **终态档案的行绝不认领也不写**：那是真人的数据，被覆盖的损失比"看不见一次损失"大得多。
+ *    批二b 起加一个例外形态——档案行存在但 `progress:'processing'`：它不是"真人的数据"，
+ *    它就是本轮的开局面（answer 是空的、query 正是"当时问了什么"），而它的账本也停在 processing。
+ *    这种行**认领后原地翻转**（flip：只 $set 终态字段，query/inputs 保留），绝不 add——
+ *    给同一 messageCode 补第二行正是规矩 1 防的事。判据别糊：`heartbeat-fresh` 的检查排在 flip 之前，
+ *    **活着的长 run 的 processing 行心跳在阈值内，走 skip，翻不得。**
  */
 /**
  * 纯决策层**不在模块顶层 import 任何 dac**：dac 依赖 app 注入的全局 `llm`，
@@ -68,17 +73,18 @@ export function recoverQueryFromCheckpoints(checkpoints = []) {
  * @param {Object} params 参数
  * @param {Object} params.row llmUsage 行
  * @param {Boolean} params.hasArchive 该 messageCode 是否已有档案
+ * @param {String} [params.archiveProgress] 已有档案行的 progress（批二b：区分终态行与 processing 残留）
  * @param {Object} [params.checkpoint] 该会话最新的检查点（用于捞问题）
  * @param {Number} [params.olderThanMs] 遗弃判定的心跳阈值
  * @param {Function} [params.now] 时间源
- * @returns {{action: 'skip'|'backfill', reason: String, fields: Object|null}} 决策
+ * @returns {{action: 'skip'|'backfill', reason: String, fields: Object|null, mode: String}} 决策
  */
-export function planBackfill({row, hasArchive = false, checkpoint = null, olderThanMs = DEFAULT_OLDER_THAN_MS, now = Date.now} = {}) {
+export function planBackfill({row, hasArchive = false, archiveProgress = '', checkpoint = null, olderThanMs = DEFAULT_OLDER_THAN_MS, now = Date.now} = {}) {
     if (!row?.messageCode) {
         return {action: 'skip', reason: 'no-message-code', fields: null}
     }
-    if (hasArchive) {
-        /** 有档案就不动：回填是给"看不见损失"兜底的，不是给已有数据做覆盖的 */
+    if (hasArchive && archiveProgress !== 'processing') {
+        /** 有**终态**档案就不动：回填是给"看不见损失"兜底的，不是给已有数据做覆盖的 */
         return {action: 'skip', reason: 'archive-exists', fields: null}
     }
     if (!isAbandonedRun({progress: row.progress, updateTime: row.updateTime, olderThanMs, now})) {
@@ -87,12 +93,36 @@ export function planBackfill({row, hasArchive = false, checkpoint = null, olderT
          * "progress 根本不是从中（或字段缺失）" 与 "心跳确实还新"。
          * 投影缺 `progress` 那次故障，日志上就是一条无可指摘的 `heartbeat-fresh` ⇒ 看不出问题。
          * 现在分开报，缺字段会写成 `not-processing:missing`，一眼就是数据形状错了。
+         * 批二b 起这条还多兼一个岗：**活着的长 run 的 processing 中途行也走这堵墙**
+         * （心跳新 ⇒ skip），flip 支永远碰不到在途轮次——判断顺序不许反。
          */
         const p = row.progress ?? 'missing'
         return {
             action: 'skip',
             reason: p !== LEDGER_PROGRESS.PROCESSING ? `not-processing:${p}` : 'heartbeat-fresh',
             fields: null,
+        }
+    }
+    /**
+     * 批二b：档案存在且停在 processing ⇒ 本轮的**中途行翻转成遗弃档**（原地 $set 终态字段）。
+     * query/inputs/operator 是 markStarted 当场写的真值，比检查点捞回来的估计更好，一律保留；
+     * 只补"为什么不再是进行中"的那几个键。不 add——同 messageCode 第二行是规矩 1 防的事。
+     */
+    if (hasArchive) {
+        return {
+            action: 'backfill',
+            mode: 'flip',
+            reason: 'processing-row-flip',
+            fields: {
+                progress: 'abort',
+                error: 'abandoned:process-lost',
+                'extInfo.interruptedBy': 'process-lost',
+                'extInfo.recoveredBy': BACKFILL_MARKER,
+                'extInfo.writtenBy': PERSIST_VIA.BACKFILL,
+                'extInfo.lostChars': null,
+                'extInfo.modelCalls': row.modelCalls || 0,
+                'extInfo.estPromptTokens': row.estPromptTokens || 0,
+            },
         }
     }
     const {query} = recoverQueryFromCheckpoints(checkpoint ? [checkpoint] : [])
@@ -114,15 +144,21 @@ export function planBackfill({row, hasArchive = false, checkpoint = null, olderT
             recoveredBy: BACKFILL_MARKER,
             /** 事后补的档必须与当场落的档分得开，否则"回填救回多少"永远答不了 */
             writtenBy: PERSIST_VIA.BACKFILL,
-            /** 留量级而不是留正文：让人能判断这条损失有多大 */
-            lostChars: 0,
+            /**
+             * **无法估计就别装成估计过**：这类 run 的正文从未进过检查点（实测可救回 0/5），
+             * 当时写 `lostChars: 0` 配上"留量级"的注释，等于用一个 0 冒充"量级已知"。
+             * 而 `0` 的字面意思是"丢了 0 字"，与"不知道丢了多少"是两件事——
+             * 前端照 `lostChars` 写文案时会渲染出"约 0 字未保存"这种既精确又假的话。
+             * ⇒ 显式写 `null`：视图层原样透出为"不知道"（见 `services/core/messageView.js`）。
+             */
+            lostChars: null,
             modelCalls: row.modelCalls || 0,
             estPromptTokens: row.estPromptTokens || 0,
         },
     }
     /** 复用主动落档那套"值不值得写"的判据：没正文也不空转——这里问题就是内容 */
     const decision = shutdownArchiveDecision({answerChars: 0, persisted: false})
-    return {action: 'backfill', reason: decision.reason === 'no-content' ? 'question-only' : decision.reason, fields}
+    return {action: 'backfill', mode: 'add', reason: decision.reason === 'no-content' ? 'question-only' : decision.reason, fields}
 }
 
 /**
@@ -158,11 +194,12 @@ export async function backfillAbandonedRuns({
     const backfilled = []
     for (const row of rows) {
         /** BaseDac.getByCode 的第二个参数**就是投影**（不是 options 对象），写错形状会拿到整个文档 */
-        const existing = await message.getByCode(row.messageCode, {_id: 1})
+        const existing = await message.getByCode(row.messageCode, {_id: 1, progress: 1})
         const checkpoints = await cp.listByConversation(row.conversationCode, 1)
         const plan = planBackfill({
             row,
             hasArchive: Boolean(existing),
+            archiveProgress: existing?.progress || '',
             checkpoint: checkpoints?.[0] || null,
             olderThanMs,
             now,
@@ -172,7 +209,7 @@ export async function backfillAbandonedRuns({
             continue
         }
         if (dryRun) {
-            backfilled.push({messageCode: row.messageCode, dryRun: true, queryChars: (plan.fields.query || '').length, reason: plan.reason})
+            backfilled.push({messageCode: row.messageCode, dryRun: true, mode: plan.mode, queryChars: (plan.fields.query || '').length, reason: plan.reason})
             continue
         }
         /**
@@ -185,8 +222,22 @@ export async function backfillAbandonedRuns({
             continue
         }
         try {
-            await message.add(plan.fields)
-            backfilled.push({messageCode: row.messageCode, dryRun: false, queryChars: (plan.fields.query || '').length, reason: plan.reason})
+            if (plan.mode === 'flip') {
+                /**
+                 * 批二b 认领后翻转：`{messageCode, progress:'processing'}` 匹配不到
+                 * 说明终态流程恰好落库（这轮其实活着跑完了）——**这一行就不许再动，
+                 * 更不许退化成 add**（同 messageCode 第二行是认领制防的事）。
+                 */
+                const flipped = await message.flipProcessingToAbandoned(row.messageCode, plan.fields)
+                if (!flipped) {
+                    skipped.push({messageCode: row.messageCode, reason: 'flip-missed-terminal-race'})
+                    continue
+                }
+                backfilled.push({messageCode: row.messageCode, dryRun: false, mode: 'flip', queryChars: 0, reason: plan.reason})
+            } else {
+                await message.add(plan.fields)
+                backfilled.push({messageCode: row.messageCode, dryRun: false, mode: 'add', queryChars: (plan.fields.query || '').length, reason: plan.reason})
+            }
         } catch (e) {
             /** 认领后写档失败：状态已经变 abort，必须把 messageCode 留在日志里以便人工补 */
             skipped.push({messageCode: row.messageCode, reason: `claimed-but-write-failed:${String(e?.message || e).slice(0, 120)}`})

@@ -11,7 +11,7 @@ import llmChannelDataSet, {getChannelMemory} from '../../conf/llmChannel.js'
 import {pickModelKey, defaultModelKey, defaultVisionModelKey} from '../../conf/llmModel.js'
 import tmplParse from 'json-templates'
 import {llmRagSearch} from '../../grpc/clients/resourceRag.js'
-import messageDac from '../../daos/core/dac/messageDac.js'
+import messageDac, {TERMINAL_PROGRESS} from '../../daos/core/dac/messageDac.js'
 /** §14 自有账本：模型用量按 run 落一行，看板与预算都从这张窄表出 */
 import llmUsageDac from '../../daos/core/dac/llmUsageDac.js'
 import {waitTime} from '../../tools/index.js'
@@ -310,6 +310,27 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
         } catch (e) {
             tlog.warn(`开局落账失败（不影响本轮回答，但这一轮将无法被恢复扫描发现）: ${String(e?.message || e).slice(0, 200)}`)
         }
+        /**
+         * PR-G 批二b：与账本同刻成对建**档案侧**的 processing 行（同一开关=同一个"开局记账"动作，
+         * 拆两个开关只会造出"账本有行档案没行"的半态）。这把开关同时决定 2b 的全部行为：
+         * 关掉 ⇒ 前端 ongoing 映射退回死分支（=批二a 之前的世界），R1 走老 add 支——**独立回退面**。
+         * query/inputs 必带（历史页提问气泡从 query 渲染，缺了刷新只见空气泡不见问题）；失败只 warn——
+         * 档案缺中途行的代价是"刷新看不见进行中"，不是这一轮答不出来。
+         */
+        try {
+            await messageDac.markStarted({
+                messageCode,
+                conversationCode,
+                channel,
+                channelGroup,
+                llmModel,
+                query,
+                inputs: options.inputs || [],
+                operator: {userCode: curUserInfo?.userCode || '', realName: curUserInfo?.realName || ''},
+            })
+        } catch (e) {
+            tlog.warn(`开局建档失败（本轮刷新时不会显示"进行中"，R1 会按无档案行补记）: ${String(e?.message || e).slice(0, 200)}`)
+        }
     }
 
     const systemMessages = []
@@ -407,7 +428,13 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
 
     const fixedCost = calcMessagesTokenCount([...systemMessages, ...fixedMessages, currentMessage], tokenizerOptions)
     const historyBudget = Number.isFinite(contextBudget) ? Math.max(0, contextBudget - fixedCost) : Infinity
-    const historyRows = await getMessages({conversationCode}, 1, config.context?.historyMaxTurns || 10, {
+    /**
+     * PR-G 批二b：历史装配**只取终态行**。本 run 自己的 processing 中途行在 markStarted
+     * 就已存在且按 insertTime 排最前——不过滤就会把"本轮的空回答"喂给模型当上一轮
+     * （还与随后单独 append 的 currentMessage 重复）。complexFilter 是 assembleParams
+     * 唯一的原生条件通道，终态集用 dac 单源。
+     */
+    const historyRows = await getMessages({conversationCode, complexFilter: [{progress: {$in: TERMINAL_PROGRESS}}]}, 1, config.context?.historyMaxTurns || 10, {
         sort: {insertTime: -1},
         total: config.context?.historyMaxTurns || 10,
     })
@@ -2249,7 +2276,23 @@ async function saveMessage(query, messageCode, messages, conversationCode, chann
      * 写在上面任何一处都会缺一支——那正是 2026-11-13 那两个键全库 0 行的成因之一（另一个成因是压根没进白名单）。
      */
     const cacheIntent = cacheIntentForArchive(options)
+    /**
+     * PR-G 批二b（方案 A）：终态整行写回**之前**，认领式删除本轮的 processing 中途行。
+     * 为什么不是把 add 换成 upsert——`BaseDac.upsert` 的 attrOpen 递归会把 extInfo 展开成
+     * 点路径做**部分合并**、跳过 null 字段、还绕开 mongoose 校验；中途行只带开局的最小字段，
+     * 部分合并会让"终态没写的键"带着中途残值活下来。删+插保持全站终态写法只有一种
+     * （`new Model().save()` 全量校验），代价仅是一次额外删除。
+     * 删除失败不拦终态：行留在 processing 由 R1 翻转支兜底（见 abandonedBackfill）。
+     * 删回来的行只用来**继承开局时刻**：提问气泡按 insertTime 排位，终态补写不许把本轮甩到会话尾部。
+     */
+    let startedRow = null
+    try {
+        startedRow = await messageDac.claimProcessing(messageCode)
+    } catch (e) {
+        logger.warn(`认领中途行失败（终态照常写，R1 兜底）messageCode=${messageCode}: ${String(e?.message || e).slice(0, 160)}`)
+    }
     await messageDac.add({
+        ...(startedRow?.insertTime ? {insertTime: startedRow.insertTime} : {}),
         messageCode,
         conversationCode,
         channel,

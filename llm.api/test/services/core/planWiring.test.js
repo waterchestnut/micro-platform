@@ -145,8 +145,12 @@ describe('6 B1 跨轮 seed：只在 planOn 时读一次，且失败不致命', (
     })
     test('dac 方法只投影 extInfo.plan（不为读计划把整坨 extInfo 拉进内存）', () => {
         const dac = codeOf('daos/core/dac/messageDac.js')
-        const m = /async getLatestExtInfoPlan\(conversationCode\)[\s\S]*?getOneByFilter\(\{conversationCode\},\s*(\{[^}]*\})/.exec(dac)
-        assert.ok(m, '找不到 getLatestExtInfoPlan 或其投影参数')
-        assert.match(m[1], /extInfo\.plan/, '投影必须只取 extInfo.plan')
+        const m = /async getLatestExtInfoPlan\(conversationCode\)[\s\S]*?getOneByFilter\((\{(?:[^{}]|\{[^{}]*\})*\}),\s*(\{[^}]*\})/.exec(dac)
+        assert.ok(m, '找不到 getLatestExtInfoPlan 或其过滤/投影参数')
+        assert.match(m[2], /extInfo\.plan/, '投影必须只取 extInfo.plan')
+        /** 批二b：本轮自己的 processing 中途行在 seed 之前就存在（markStarted 在前），
+         * 不过滤终态就会把"本轮空档"当"上一轮计划"——recitation 静默清零 */
+        assert.match(m[1], /progress:\s*\{\$in:\s*TERMINAL_PROGRESS\}/,
+            'seed 读必须限定终态行（TERMINAL_PROGRESS 单源），否则批二b 的中途行会冒充上一轮')
     })
 })
