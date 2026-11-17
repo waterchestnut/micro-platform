@@ -197,6 +197,27 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
         ]).finally(() => clearTimeout(timer))
     }
 
+    /**
+     * 流重建的无限重试调度 —— 必须重试到成功或停机为止, 一次性重试不行。
+     * 实测教训(cw2pc dev 2026-11-16): broker leader 选举抖动导致流全灭, 3s 后的重建又失败一次,
+     * 旧逻辑只打日志就放弃; 消费者变"Running 僵尸"(pm2 online、无流、group EMPTY), 16 小时未再入组。
+     * 指数退避 3s→60s, 建流成功后复位; 重试期间每次失败一条日志。
+     */
+    let recreateDelay = 3000
+    function scheduleRecreate() {
+        if (stopping || drain.draining || recreateTimer) return
+        recreateTimer = setTimeout(() => {
+            recreateTimer = null
+            createStream()
+                .then(s => { if (s) recreateDelay = 3000 })
+                .catch(err => {
+                    logger.error(`Failed to recreate stream (下一次约 ${recreateDelay}ms 后重试):` + err)
+                    recreateDelay = Math.min(recreateDelay * 2, 60000)
+                    scheduleRecreate()
+                })
+        }, recreateDelay)
+    }
+
     async function createStream() {
         /**
          * `drain.draining` 也必须挡在这里。理由不是防御性冗余：
@@ -262,7 +283,7 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
                             if (++commitFailures >= 3) {
                                 commitFailures = 0
                                 logger.warn('Kafka commit连续失败，疑似丢失组成员身份，强制重建流以重新入组')
-                                createStream().catch(err => logger.error('Failed to recreate stream:' + err))
+                                scheduleRecreate()
                             }
                         }
                         /**
@@ -277,24 +298,23 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
                 stream.on('error', (err) => {
                     if (stopping || drain.draining || activeStream !== stream) return // 已被替换的旧流，错误直接丢弃
                     if (recreateTimer) return
-                    logger.error('Kafka Stream runtime error:' + err + ', will recreate in 3s')
-                    recreateTimer = setTimeout(() => {
-                        recreateTimer = null
-                        createStream().catch(err => logger.error('Failed to recreate stream:' + err))
-                    }, 3000)
+                    logger.error('Kafka Stream runtime error:' + err)
+                    recreateTimer && clearTimeout(recreateTimer)
+                    recreateTimer = null
+                    scheduleRecreate()
                 })
 
                 stream.on('end', () => {
                     if (stopping || drain.draining || activeStream !== stream) return
                     if (recreateTimer) return
-                    logger.warn('Stream ended, will recreate in 3s')
-                    recreateTimer = setTimeout(() => {
-                        recreateTimer = null
-                        createStream().catch(err => logger.error('Failed to recreate stream:' + err))
-                    }, 3000)
+                    logger.warn('Stream ended')
+                    recreateTimer && clearTimeout(recreateTimer)
+                    recreateTimer = null
+                    scheduleRecreate()
                 })
 
                 activeStream = stream
+                recreateDelay = 3000
                 logger.info('Consumer stream created successfully')
                 return stream
             } finally {
@@ -304,7 +324,10 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
         return creating
     }
 
-    await createStream()
+    createStream().catch(err => {
+        logger.error('Initial consumer stream failed, will keep retrying:' + err)
+        scheduleRecreate()
+    })
 
     consumer.on('consumer:group:rebalance', () => {
         logger.warn('Kafka rebalance in progress')
