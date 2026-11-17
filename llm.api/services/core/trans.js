@@ -44,6 +44,34 @@ function transClient(modelConfig) {
     })
 }
 
+/** markdown 代码围栏：```json ... ``` 或 ``` ... ```（模型高频习惯，裸 JSON.parse 必炸） */
+const FENCE_RE = /^```(?:json|JSON)?\s*\n?([\s\S]*?)\n?\s*```$/
+
+/**
+ * 从大模型回复文本中稳健提取 JSON 对象。
+ * 三级策略：直接解析 → 剥代码围栏 → 截取最外层花括号兜底（模型可能夹带解释文字）。
+ * 与源仓同一改动：图片翻译现网实报模型回 ```json 围栏，裸 parse 误判「未识别」。
+ * @param {String} text 模型原始回复
+ * @returns {Object|null} 解析结果，失败返回 null
+ */
+export function parseModelJson(text) {
+    if (!text || typeof text !== 'string') return null
+    let t = text.trim()
+    try { return JSON.parse(t) } catch (e) { /* 继续下一步 */ }
+    const fence = FENCE_RE.exec(t)
+    if (fence) {
+        t = fence[1].trim()
+        try { return JSON.parse(t) } catch (e) { /* 继续下一步 */ }
+    }
+    const s = t.indexOf('{')
+    const e = t.lastIndexOf('}')
+    if (s >= 0 && e > s) {
+        try { return JSON.parse(t.slice(s, e + 1)) } catch (err) { /* 兜底失败 */ }
+    }
+    logger.warn(`parseModelJson 无法从模型回复提取 JSON: ${text.slice(0, 120)}`)
+    return null
+}
+
 /**
  * @description 检测文本是否为非中文，若是则翻译为简体中文，返回整段翻译和逐句翻译
  * @author xianyang
@@ -121,11 +149,16 @@ export async function nonChineseTrans(sourceText, options = {}) {
     }
 
     try {
-        const content = ret.choices[0].message.content
-        if (content.startsWith('无法识别与翻译')) {
+        const content = ret.choices[0].message.content || ''
+        if (content.trim().startsWith('无法识别与翻译')) {
             return {fullTrans: '', sentenceTrans: []}
         }
-        return JSON.parse(content)
+        /** 同 pictureTrans 口径：容忍 ```json 围栏/夹带解释文字 */
+        const parsed = parseModelJson(content)
+        if (!parsed) {
+            return {fullTrans: '', sentenceTrans: []}
+        }
+        return {fullTrans: parsed.fullTrans || '', sentenceTrans: parsed.sentenceTrans || []}
     } catch (e) {
         logger.error(e)
         return {fullTrans: '', sentenceTrans: []}
@@ -194,6 +227,7 @@ export async function pictureTrans(imgUrl, options = {}) {
         
         ## 输出要求
         - 以JSON的格式返回识别的文本
+        - 只输出纯 JSON 对象本身，禁止使用 \`\`\`json 代码块包裹，禁止任何额外解释文字
         - 如果识别的文本为中文，则把识别的文本翻译为英文
         - 如果识别的文本不是中文，则把识别的文本翻译为中文
         - 如果无法识别或无法翻译，请回答：无法识别与翻译。
@@ -234,13 +268,17 @@ export async function pictureTrans(imgUrl, options = {}) {
             stream: false
         }
     )
-    if (!ret?.choices?.length || ret.choices[0].message.content.startsWith('无法识别与翻译')) {
+    if (!ret?.choices?.length) {
         return {ocr: '未识别', trans: '未识别'}
     }
-    try {
-        return JSON.parse(ret.choices[0].message.content)
-    } catch (e) {
-        logger.error(e)
+    const content = ret.choices[0]?.message?.content || ''
+    if (content.trim().startsWith('无法识别与翻译')) {
         return {ocr: '未识别', trans: '未识别'}
     }
+    /** 模型常把 JSON 包进 ```json 围栏，裸 JSON.parse 会误判为「未识别」：走三级容错抽取 */
+    const parsed = parseModelJson(content)
+    if (!parsed || (!parsed.ocr && !parsed.trans)) {
+        return {ocr: '未识别', trans: '未识别'}
+    }
+    return {ocr: parsed.ocr || '', trans: parsed.trans || ''}
 }
