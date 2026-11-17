@@ -17,6 +17,17 @@ export default defineConfig({
   hash: true,
 
   /**
+   * @name 压缩目标
+   * @description EmbedPDF 3.x 引擎链含 BigInt 字面量（不可降级转译），umi 默认的
+   * esbuild 压缩 target（es2015/chrome80）会直接报错，这里把压缩目标提到 es2020 档。
+   * 运行时兼容不受影响：BigInt 字面量在 Chrome 67+ / Safari 14+ 原生可用。
+   */
+  jsMinifier: 'esbuild',
+  jsMinifierOptions: {
+    target: ['es2020', 'chrome90', 'edge90', 'firefox90', 'safari14'],
+  },
+
+  /**
    * @name 兼容性设置
    * @description 设置 ie11 不一定完美兼容，需要检查自己使用的所有依赖
    * @doc https://umijs.org/docs/api/config#targets
