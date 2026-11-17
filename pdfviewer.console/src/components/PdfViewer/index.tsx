@@ -4,20 +4,17 @@ import {
   buildFontFallbackConfig,
   charsetUrlsFromBase,
   composeLayout,
+  FORK_ICONS,
   init,
-  legacyIcon,
   saveAnnotationsCommand,
   selectionActions,
   snapshotActions,
   type SnippetHandle,
   type SnapshotData,
 } from 'embedpdf-snippet-i18n'
-import {getAIIconPaths} from '@/icons/ai'
-import {getTransIconPaths} from '@/icons/trans'
 import {uuidV4} from '@/utils/util'
 import {getTheme} from '@/utils/runtimeTheme'
 import {useModel} from '@@/exports'
-import {getArrowLeftIconPaths} from '@/icons/arrowLeft'
 import {history} from '@umijs/max'
 
 export type {SnapshotData}
@@ -111,7 +108,7 @@ export default function PDFViewer(props: PDFViewerProps) {
     const back = {
       id: 'custom.toolbar.back',
       label: '返回',
-      icon: 'custom_arrow_left',
+      icon: 'custom_back',
       run: () => history.back(),
     }
 
@@ -130,11 +127,7 @@ export default function PDFViewer(props: PDFViewerProps) {
         // 随主题切换（docs/08 §5.4）：theme.json.pdfEngine.primary 缺省时回落现网旧值
         accent: theme.pdfEngine?.primary || '#08979c',
       },
-      icons: {
-        custom_ai: legacyIcon(getAIIconPaths()),
-        custom_trans: legacyIcon(getTransIconPaths()),
-        custom_arrow_left: legacyIcon(getArrowLeftIconPaths()),
-      },
+      icons: { ...FORK_ICONS },
       commands: [...sel.commands, ...snap.commands, save, back],
       // v2 的 mergeSchema 工具栏注入：隐藏标签栏，左侧返回，右侧保存 + 截图工具
       layout: composeLayout(sel.layout, snap.layout, (base) =>
