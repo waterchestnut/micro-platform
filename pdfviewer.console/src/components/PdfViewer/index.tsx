@@ -118,7 +118,7 @@ export default function PDFViewer(props: PDFViewerProps) {
       documents: [{src: pdfUrl || `${viewerBaseUrl}/demo/368653411.pdf`, name: fileName, active: true}],
       maxDocuments: 5,
       engine: {
-        wasmUrl: `${viewerBaseUrl}/embedpdf.wasm?v=3-3-0-1`,
+        wasmUrl: `${viewerBaseUrl}/embedpdf.wasm?v=3.3.0`,
         fallbackFonts: nativeFallbackFonts(`${viewerBaseUrl}/DroidSansFallbackFull.ttf`),
       },
       identity: {displayName: currentUser?.realName || '匿名用户'},
