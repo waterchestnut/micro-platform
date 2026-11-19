@@ -107,7 +107,7 @@ async function oneWave(wave, query) {
         const r = await fetch(`${BASE}/core/chat/stream`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json', Accept: 'text/event-stream', 'param-accessToken': TOKEN},
-            body: JSON.stringify({query, conversationCode, options: {channel: 'xxzx_common', protocol: 2, cache: false}}),
+            body: JSON.stringify({query, conversationCode, options: {channel: 'micro_common', protocol: 2, cache: false}}),
             signal: AbortSignal.timeout(180000),
         })
         /**

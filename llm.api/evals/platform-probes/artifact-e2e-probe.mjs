@@ -40,7 +40,7 @@ async function streamCollect({query, conversationCode, timeoutMs = 300000, colle
     const r = await fetch(`${BASE}/core/chat/stream`, {
         method: 'POST',
         headers: {...headers, Accept: 'text/event-stream'},
-        body: JSON.stringify({query, conversationCode, options: {channel: 'xxzx_common', protocol: 2, cache: false, memory: {enabled: false}}}),
+        body: JSON.stringify({query, conversationCode, options: {channel: 'micro_common', protocol: 2, cache: false, memory: {enabled: false}}}),
         signal: controller.signal,
     })
     if (!(r.headers.get('content-type') || '').includes('text/event-stream')) {

@@ -89,7 +89,7 @@ async function one(i) {
             body: JSON.stringify({
                 query: `闸压测 ${i}`,
                 conversationCode: `gate-${Date.now()}-${i}`,
-                options: {channel: 'xxzx_common', protocol: 2, cache: false},
+                options: {channel: 'micro_common', protocol: 2, cache: false},
             }),
             signal: AbortSignal.timeout(HOLD_MS + 25000),
         })

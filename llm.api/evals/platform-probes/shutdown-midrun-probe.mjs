@@ -47,7 +47,7 @@ async function startStream() {
                     body: JSON.stringify({
                         query: '请写一篇 600 字左右的散文，主题是深夜的图书馆，要求分段、有细节。',
                         conversationCode,
-                        options: {channel: 'xxzx_common', protocol: 2, cache: false},
+                        options: {channel: 'micro_common', protocol: 2, cache: false},
                     }),
                     signal: ac.signal,
                 })

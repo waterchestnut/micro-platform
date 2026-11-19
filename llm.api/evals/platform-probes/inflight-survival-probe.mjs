@@ -143,7 +143,7 @@ async function stream(i) {
             method: 'POST',
             /** 与 `rollout-drop-probe` 同一套鉴权头（`param-accessToken`）：这里写错一个头名就是整窗 401 */
             headers: {'Content-Type': 'application/json', Accept: 'text/event-stream', 'param-accessToken': TOKEN},
-            body: JSON.stringify({query: QUERY, conversationCode, options: {channel: 'xxzx_common', protocol: 2, cache: false}}),
+            body: JSON.stringify({query: QUERY, conversationCode, options: {channel: 'micro_common', protocol: 2, cache: false}}),
             signal: AbortSignal.timeout(420000),
         })
         http = r.status

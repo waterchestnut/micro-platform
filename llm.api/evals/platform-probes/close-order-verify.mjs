@@ -19,7 +19,7 @@ const base = {
     conversationCode,
     messageCode: 'close-verify-msg',
     userCode: 'menglb',
-    channel: 'xxzx_common',
+    channel: 'micro_common',
     phase: 'postCreate',
     seq: 1,
     messages: [{role: 'user', content: '探针'}],

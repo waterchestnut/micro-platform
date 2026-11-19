@@ -76,7 +76,7 @@ if (dropped.length) {
 const MAX_TOKENS = Number(valOf('maxTokens', 80))
 const COOLDOWN_MS = Number(valOf('cooldown', 4000))
 const USE_REDIS = !argv.includes('--no-redis')
-const CHANNEL = valOf('channel', 'xxzx_common')
+const CHANNEL = valOf('channel', 'micro_common')
 const log = (note, obj) => console.log(JSON.stringify({probe: 'capacity', note, ...obj}))
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 

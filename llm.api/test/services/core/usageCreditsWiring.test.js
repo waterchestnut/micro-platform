@@ -62,4 +62,12 @@ describe('M6 落账双处一致', () => {
         assert.match(fin, /budgetGate: async/, 'finalize 没把闸接上（列了位置没接线=假装有闸）')
         assert.match(fin, /budgetUsedTokens/, '树 token 累计没写回 root')
     })
+
+    test('§5-4 后半 runStats 消费面：usageDaily 在返回体且只查本人（底座刀四实锤：这行没守卫，搬漏过一次）', () => {
+        const root = read('routes/core/chat/root.js')
+        const rs = root.slice(root.indexOf("fastify.post('/runStats'"))
+        assert.match(rs, /import\('\.\.\/\.\.\/\.\.\/services\/core\/usageStats\.js'\)/, 'runStats 没接 usageStats（单源面被绕开）')
+        assert.match(rs, /getUserDailyUsage\(request\.userInfo\.userCode/, '日汇总没锁本人 userCode（可传任意人=枚举他人消耗）')
+        assert.match(rs, /usageDaily,/, 'usageDaily 没进返回体')
+    })
 })

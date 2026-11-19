@@ -68,7 +68,7 @@ async function runTurn(query, abortAfterMs = null) {
         const r = await fetch(`${BASE}/core/chat/stream`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json', Accept: 'text/event-stream', 'user-info': b64(USER)},
-            body: JSON.stringify({query, conversationCode, options: {channel: 'xxzx_common', protocol: 2, cache: false}}),
+            body: JSON.stringify({query, conversationCode, options: {channel: 'micro_common', protocol: 2, cache: false}}),
             signal: ac.signal,
         })
         const dec = new TextDecoder()

@@ -140,7 +140,7 @@ try {
         body: JSON.stringify({
             query: '请用固定四个字回答：测试通过',
             conversationCode,
-            options: {channel: 'xxzx_common', protocol: 2, cache: false},
+            options: {channel: 'micro_common', protocol: 2, cache: false},
         }),
         signal: AbortSignal.timeout(60000),
     })

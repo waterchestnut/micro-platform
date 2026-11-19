@@ -11,7 +11,7 @@
  * 用法（在 `src/` 下，只读）：
  *   node evals/platform-probes/usage-ledger.mjs                       # 全表
  *   node evals/platform-probes/usage-ledger.mjs --day=2026-11-09      # 某一天
- *   node evals/platform-probes/usage-ledger.mjs --channel=xxzx_common --limit=50000
+ *   node evals/platform-probes/usage-ledger.mjs --channel=micro_common --limit=50000
  *
  * 凭据不硬编码：mongo 连接串从 `conf/system.config.js` 的默认值解析（与 probe.mjs 同口径）。
  */

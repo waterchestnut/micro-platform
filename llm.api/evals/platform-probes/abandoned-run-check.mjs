@@ -89,7 +89,7 @@ async function longStream(conversationCode) {
             body: JSON.stringify({
                 query: '请连续写一篇 3000 字以上的长文，主题是那些没人接手的中断：发布、信号、以及没有留下的记录。要求分章节，不要调用工具。',
                 conversationCode,
-                options: {channel: 'xxzx_common', protocol: 2, cache: false},
+                options: {channel: 'micro_common', protocol: 2, cache: false},
             }),
             signal: AbortSignal.timeout(150000),
         })

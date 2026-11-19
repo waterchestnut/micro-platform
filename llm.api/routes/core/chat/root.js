@@ -1133,7 +1133,15 @@ export default async function (fastify, opts) {
         const s = snapshot()
         const cfg = llm.config.limits?.concurrentRuns || {}
         const ctlSnap = (await import('../../../services/core/session/runControl.js')).controlSnapshot()
+        /**
+         * §5-4 后半：调用者**本人**当日的消耗读数（credits 三值语义：null=当日只有历史/未知计价行，
+         * 不是免费）。只查自己的账——日汇总若可传任意 userCode 就变成枚举他人消耗的面，与禁 byUser 同理。
+         */
+        const {getUserDailyUsage} = await import('../../../services/core/usageStats.js')
+        const usageDaily = await getUserDailyUsage(request.userInfo.userCode, new Date().toISOString().slice(0, 10))
+            .catch((e) => ({error: String(e?.message || e).slice(0, 160)}))
         return {
+            usageDaily,
             active: s.active,
             admitted: s.admitted,
             rejected: s.rejected,

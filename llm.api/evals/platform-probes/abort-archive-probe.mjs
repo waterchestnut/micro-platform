@@ -83,7 +83,7 @@ async function runStream() {
         const r = await fetch(`${BASE}/core/chat/stream`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json', Accept: 'text/event-stream', 'param-accessToken': TOKEN},
-            body: JSON.stringify({query: QUERY, conversationCode, options: {channel: 'xxzx_common', protocol: 2, cache: false}}),
+            body: JSON.stringify({query: QUERY, conversationCode, options: {channel: 'micro_common', protocol: 2, cache: false}}),
             signal: controller.signal,
         })
         const dec = new TextDecoder()

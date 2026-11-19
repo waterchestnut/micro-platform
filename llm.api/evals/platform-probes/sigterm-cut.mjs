@@ -89,7 +89,7 @@ async function streamOnce() {
             body: JSON.stringify({
                 query: '请连续写一篇 3500 字以上的长文，主题是数据中心里的一次平滑发布：信号、端点摘除、以及那些没人接管的请求。要求分章节，不要调用工具，一次性写完。',
                 conversationCode,
-                options: {channel: 'xxzx_common', protocol: 2, cache: false},
+                options: {channel: 'micro_common', protocol: 2, cache: false},
             }),
             signal: AbortSignal.timeout(200000),
         })

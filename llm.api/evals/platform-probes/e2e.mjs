@@ -51,7 +51,7 @@ async function post(path, body, extraHeaders = {}, opt = {}) {
     const readerTask = (async () => {
         const r = await fetch(`${BASE}/core/chat/stream`, {
             method: 'POST', headers: hdr({Accept: 'text/event-stream'}),
-            body: JSON.stringify({query: '请写一篇 500 字左右的散文，主题是深夜的图书馆，要求分段、有细节。', conversationCode: cc, options: {channel: 'xxzx_common', protocol: 2, cache: false}}),
+            body: JSON.stringify({query: '请写一篇 500 字左右的散文，主题是深夜的图书馆，要求分段、有细节。', conversationCode: cc, options: {channel: 'micro_common', protocol: 2, cache: false}}),
             signal: ac.signal,
         })
         if (!r.ok) return {httpError: r.status, body: (await r.text()).slice(0, 200)}
@@ -90,7 +90,7 @@ async function post(path, body, extraHeaders = {}, opt = {}) {
     const cc = conv('tools')
     const r = await fetch(`${BASE}/core/chat/stream`, {
         method: 'POST', headers: hdr({Accept: 'text/event-stream'}),
-        body: JSON.stringify({query: '帮我搜一下 2026 年 11 月国内高校有哪些公开的教研相关新闻，简要列出来源。', conversationCode: cc, options: {channel: 'xxzx_common', protocol: 2, cache: false, streamToolResults: true}}),
+        body: JSON.stringify({query: '帮我搜一下 2026 年 11 月国内高校有哪些公开的教研相关新闻，简要列出来源。', conversationCode: cc, options: {channel: 'micro_common', protocol: 2, cache: false, streamToolResults: true}}),
     })
     if (!r.ok) { log('E-3', {httpError: r.status, body: (await r.text()).slice(0, 200)}) }
     else {
@@ -136,7 +136,7 @@ async function post(path, body, extraHeaders = {}, opt = {}) {
 
 /* ---------- E-4 >1MB body 被哪层拒 ---------- */
 {
-    const big = JSON.stringify({query: '你好', conversationCode: conv('big'), options: {channel: 'xxzx_common'}, junk: 'x'.repeat(1_200_000)})
+    const big = JSON.stringify({query: '你好', conversationCode: conv('big'), options: {channel: 'micro_common'}, junk: 'x'.repeat(1_200_000)})
     const r = await post('/core/chat/stream', big)
     const t = await r.text().catch(() => '')
     log('E-4 1.2MB body', {
@@ -155,7 +155,7 @@ async function post(path, body, extraHeaders = {}, opt = {}) {
     try {
         const r = await fetch(`${BASE}/core/chat/stream`, {
             method: 'POST', headers: hdr({Accept: 'text/event-stream'}),
-            body: JSON.stringify({query: '请分 8 段，逐段介绍中国古代的八大发明，每段不少于 120 字。', conversationCode: cc, options: {channel: 'xxzx_common', protocol: 2, cache: false}}),
+            body: JSON.stringify({query: '请分 8 段，逐段介绍中国古代的八大发明，每段不少于 120 字。', conversationCode: cc, options: {channel: 'micro_common', protocol: 2, cache: false}}),
             signal: AbortSignal.timeout(300000),
         })
         const dec = new TextDecoder()

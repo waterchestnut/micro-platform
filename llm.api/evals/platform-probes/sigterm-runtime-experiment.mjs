@@ -75,7 +75,7 @@ async function streamOnce() {
             body: JSON.stringify({
                 query: '请连续写一篇 3000 字以上的长文，主题是数据中心里的一次平滑发布：为什么信号会丢、谁会接手。要求分章节、不要调用工具、一次性写完。',
                 conversationCode,
-                options: {channel: 'xxzx_common', protocol: 2, cache: false},
+                options: {channel: 'micro_common', protocol: 2, cache: false},
             }),
             signal: AbortSignal.timeout(180000),
         })

@@ -126,7 +126,7 @@ async function stream(i) {
         const r = await fetch(`${BASE}/core/chat/stream`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json', Accept: 'text/event-stream', 'param-accessToken': TOKEN},
-            body: JSON.stringify({query: QUERY(i), conversationCode, options: {channel: 'xxzx_common', protocol: 2, cache: false}}),
+            body: JSON.stringify({query: QUERY(i), conversationCode, options: {channel: 'micro_common', protocol: 2, cache: false}}),
             signal: AbortSignal.timeout(300000),
         })
         http = r.status
