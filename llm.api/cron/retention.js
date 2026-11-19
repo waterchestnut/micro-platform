@@ -288,6 +288,36 @@ if (llm.config.limits?.conversationTaskQueue?.enabled === true && cronConfig.pum
 }
 
 /**
+ * 综合宽限窗到期排水器（§7-2）：注册条件=agentTask.fanOutOrchestration.synthGraceMs>0
+ * （0=现状即时综合，本 job 不注册，一个字节不多走）；运维细分同 cron_pumpEnabled。
+ * 与 serializedTurnPump 共用泵节奏（5s）——窗口的语义精度就到"下一个 tick"。
+ */
+if (llm.config.agentTask?.fanOutOrchestration?.synthGraceMs > 0 && cronConfig.pumpEnabled !== false) {
+    const synthPumpPattern = cronConfig.pumpPattern || '*/5 * * * * *'
+    const synthPumpJob = new CronJob(synthPumpPattern, () => runGuarded('synthTimerPump', async () => {
+        jobs.synthPump = jobs.synthPump || {executing: false}
+        if (jobs.synthPump.executing) {
+            logger.info('synthTimerPump-任务仍在执行，跳过本次触发')
+            return {skipped: true}
+        }
+        jobs.synthPump.executing = true
+        try {
+            const {runSynthTimerPump} = await import('../tasks/synthTimerPump.js')
+            return await runSynthTimerPump({})
+        } catch (e) {
+            logger.error(`synthTimerPump 任务异常: ${e.stack || e.message}`)
+            return {abnormal: String(e.message || e).slice(0, 300)}
+        } finally {
+            jobs.synthPump.executing = false
+        }
+    }), null, true, cronConfig.timezone || 'Asia/Shanghai')
+    registeredJobs.push(synthPumpJob)
+    logger.info(`cron/synthTimerPump 已注册 pattern=${synthPumpPattern}（synthGraceMs=${llm.config.agentTask?.fanOutOrchestration?.synthGraceMs}ms > 0）`)
+} else {
+    logger.info('cron/synthTimerPump 未启用（需 agentTask_fanOutOrchestrationSynthGraceMs>0；0=综合即时，无需闹钟）')
+}
+
+/**
  * @description 收到终止信号后的收尾：停注册 → 等在途 → 退出
  * @param {String} signal 信号名
  * @returns {Promise<void>} 结果

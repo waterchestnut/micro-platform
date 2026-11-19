@@ -228,6 +228,15 @@ export default {
             autoFollow: process.env['agentTask_fanOutOrchestrationAutoFollow'] === 'true',
             /** 保险帽：单次 finalize 内追活 spawn 的总行数上限（裁决预算 2+1 本身有界，这帽防循环 bug） */
             followSpawnCap: Number(process.env['agentTask_fanOutOrchestrationFollowSpawnCap']) || 8,
+            /**
+             * §7-2 综合宽限窗（属主拍板 (c) 起步形）。**0=逐字现状"树完成即综合"**。
+             * >0：树完成后不立刻综合——排 synth-timer 等待行，到点重算时看 root 原会话：
+             * 有用户新动作 ⇒ 从新动作起重新计时（"真·会话结束"=静默满窗）；
+             * 推迟最多 synthMaxPostpone 轮，到顶按事实综合（orchestration.synthNote 如实）。
+             * 5 秒 pump 精度（cron.pumpPattern），窗口粒度不必更细。
+             */
+            synthGraceMs: Number(process.env['agentTask_fanOutOrchestrationSynthGraceMs']) || 0,
+            synthMaxPostpone: Number(process.env['agentTask_fanOutOrchestrationSynthMaxPostpone']) || 3,
         },
         /**
          * 子任务澄清冒泡（§7-1，设计 :113/:142，属主拍板③）。**默认关**。

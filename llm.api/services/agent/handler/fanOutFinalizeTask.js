@@ -26,7 +26,7 @@ import { execChat } from '../../core/llmChat.js'
 import agentTaskDac from '../../../daos/core/dac/agentTaskDac.js'
 import messageDac from '../../../daos/core/dac/messageDac.js'
 import {getTreeUsage} from '../../core/usageStats.js'
-import { updateAgentTaskWithLock, insertSubAgentTask } from '../../core/agentTask.js'
+import { updateAgentTaskWithLock, insertSubAgentTask, addAgentTask } from '../../core/agentTask.js'
 import { finalizeFanOutRoot, buildSynthesisQuery } from '../fanOutFinalize.js'
 
 const tools = llm.tools
@@ -167,6 +167,75 @@ class FanOutFinalizeTask extends BaseHandler {
             }
         }
 
+        /**
+         * §7-2 综合宽限窗（graceMs<=0 ⇒ 逐字现状"树完成即综合"，本刀地基）：
+         * 树完成不再立刻综合——排 synth-timer 等待行，到点重算 finalize 时先问判据表：
+         * 用户在 root 原会话还有动作（窗内发过新消息）就重新计时；静默满窗才综合。
+         */
+        const graceMs = Number(orchCfg.synthGraceMs) || 0
+        if (graceMs > 0 && finFinal.dispatch?.needSynthesis === true && finFinal.cancelled !== true) {
+            const {decideSynthTiming, buildSynthTimerTaskSpec, SYNTH_TIMER_ROLE} = await import('../../core/session/synthScheduling.js')
+            const treeDoneAt = Number(p.treeDoneAt) || Date.now()
+            let lastUserMsgAt = null
+            try {
+                // 活性=发起会话里"树完成之后的非空 query 行"（综合在 root: 隔离会话，串不进来）
+                const act = await messageDac.getTop(1, {complexFilter: {
+                    conversationCode: root.conversationCode,
+                    query: {$nin: ['', null]},
+                    insertTime: {$gt: new Date(treeDoneAt)},
+                }}, {insertTime: -1})
+                lastUserMsgAt = act?.[0]?.insertTime ? new Date(act[0].insertTime).getTime() : null
+            } catch (e) {
+                /** 读不到活性按"无新动作"处理（保守方向是**敢综合不是永挂**：等错不如到点交付，
+                 *  账读故障留给用户下一条消息自己触发 defer） */
+                logger.warn(`fanOutFinalizeTask 综合窗口活性读数失败(按无动作): root=${rootCode} ${String(e?.message || e).slice(0, 160)}`)
+            }
+            const timing = decideSynthTiming({
+                graceMs, now: Date.now(), treeDoneAt, lastUserMsgAt,
+                round: Number(p.synthRound) || 0,
+                maxPostpone: Number(orchCfg.synthMaxPostpone) || 3,
+            })
+            if (timing.act === 'schedule') {
+                /**
+                 * 本次 finalize 跑在 timer 行上（pump 派发）⇒ **同一条就地重挂**：dueAt/round 刷新、
+                 * 行返回 handleStatus 0——execAgentTask 的收尾写回就是"这条闹钟还活着"的账。
+                 * 不复用的话（排新行）：泵派发时旧行仍是 0、排除自己后 others 为空会双排；
+                 * 旧行随收尾变 2 又变死表（母本探针 G5 两轮撞的就是这条缝）。
+                 * 首算（钩子的内存 fin- 任务）没有这条行可刷 ⇒ 走新排，返回 2 善终。
+                 */
+                if (Number(p.synthRound) > 0 && agentTaskInfo.agentRole === SYNTH_TIMER_ROLE) {
+                    await agentTaskDac.update({
+                        handleStatus: 0, 'params.dueAt': timing.dueAt,
+                        'params.synthRound': Number(p.synthRound) + 1, updateTime: new Date(),
+                    }, {agentCode: agentTaskInfo.agentCode})
+                    logger.info(`编排综合挂起宽限窗(重挂同表): root=${rootCode}, reason=${timing.reason}, dueAt=${new Date(timing.dueAt).toISOString()}, round=${Number(p.synthRound) + 1}`)
+                    return {handleStatus: 0, handleRet: {scheduled: true, reason: timing.reason, dueAt: timing.dueAt}, errorMsg: '', subsequentMode: '', subsequents: []}
+                }
+                /**
+                 * 幂等查询必须**排除自己**：timer 派发场景下 finalize 就跑在等待行身上
+                 * （execAgentTask 执行中不改行状态，行仍是 0）——不排除就命中自己、不排新行，
+                 * 旧行随执行终了变 2 ⇒ 闹钟销毁而倒计时没接上（顺延黑洞，母本诊断实锤）。
+                 */
+                const pend = await agentTaskDac.getTop(2, {complexFilter: {agentRole: SYNTH_TIMER_ROLE, handleStatus: 0, 'params.rootCode': rootCode}})
+                const others = (pend || []).filter((r) => r.agentCode !== agentTaskInfo.agentCode)
+                if (!others.length) {
+                    const timer = buildSynthTimerTaskSpec({
+                        rootCode, dueAt: timing.dueAt, treeDoneAt,
+                        round: (Number(p.synthRound) || 0) + 1,
+                        finParams: {originalQuery, channel: p.channel || root.params?.channel, protocol: p.protocol || 2},
+                        operator: root.operator, conversationCode: root.conversationCode,
+                    })
+                    await addAgentTask(timer)
+                }
+                logger.info(`编排综合挂起宽限窗: root=${rootCode}, reason=${timing.reason}, dueAt=${new Date(timing.dueAt).toISOString()}`)
+                return {handleStatus: 2, handleRet: {scheduled: true, reason: timing.reason, dueAt: timing.dueAt}, errorMsg: '', subsequentMode: '', subsequents: []}
+            }
+            if (timing.reason === 'postpone-exhausted') {
+                finFinal.synthNote = timing.reason // 推迟到顶的如实入账（不是"没问题"，是"不再等"）
+                logger.info(`编排综合推迟到顶收尾: root=${rootCode}, round=${p.synthRound}`)
+            }
+        }
+
         let synthesis = null
         if (finFinal.dispatch.needSynthesis && finFinal.synthesisInput && finFinal.cancelled !== true) {
             const conv = `root:${rootCode}`                        // 落 root 隔离会话，不回填用户聊天线（属主拍板）
@@ -225,6 +294,7 @@ class FanOutFinalizeTask extends BaseHandler {
                 sections: finFinal.synthesisInput?.sections || [],
                 ...(finFinal.cancelled === true ? {cancelled: true} : {}), // 用户意志随写回保留，不被旧裁决覆盖
                 ...(finFinal.clarifyNote ? {clarifyNote: finFinal.clarifyNote} : {}), // §7-1：cap 用尽的如实标注（不是"没问题"）
+                ...(finFinal.synthNote ? {synthNote: finFinal.synthNote} : {}), // §7-2：推迟到顶的如实标注
                 follow,
             },
             synthesis,
