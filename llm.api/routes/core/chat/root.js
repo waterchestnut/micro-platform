@@ -145,6 +145,10 @@ export default async function (fastify, opts) {
             const answer = await execChat(request.userInfo, request.reqParams.query, request.reqParams.conversationCode, {
                 ...request.reqParams.options,
                 messageCode,
+                /** 非交互收口：execChat 主 delta 环（llmChat L931/L1017/L1623 等）不加守卫裸调
+                 *  streamCallback，不传=TypeError 500（11-19 母本刀三实弹 pod 内真发抓出）。传 no-op
+                 *  接帧即弃——本档的权威文本是返回值，不是帧流；非交互性由"不建通道、不注事件日志"保证。 */
+                streamCallback: () => {},
             })
             /** execChat 的 'aborted' 终态在无 signal 的现实下不可达，但判据如实：非字符串=空答案 */
             return {answer: typeof answer === 'string' && answer !== 'aborted' ? answer : '', messageCode}

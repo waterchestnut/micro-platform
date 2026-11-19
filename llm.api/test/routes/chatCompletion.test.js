@@ -53,7 +53,9 @@ test('/core/chat/completion 接线锚（源码级，非交互档的定义特征�
     const block = route.slice(start, route.indexOf("fastify.post('/stream'", start))
 
     assert.ok(block.includes('execChat(request.userInfo'), '执行入口单源=execChat（不另造第二套主循环）')
-    assert.ok(!/streamCallback\s*:/.test(block), '非交互档：绝不传 streamCallback（传了=长出第二条 SSE 线）')
+    /** 11-19 实弹修正：no-op 收口必须有——execChat 主 delta 环裸调 streamCallback（不传=500），
+     *  但"非交互"由无 SSE 通道/无事件日志/无 resume 保证，不是由"无回调"保证 */
+    assert.ok(/streamCallback:\s*\(\)\s*=>\s*\{\}/.test(block), 'no-op 收口在位（接帧即弃）')
     assert.ok(!block.includes('createSseChannel'), '非交互档：不建 SSE 通道')
     assert.ok(!block.includes('admitRun'), '非交互档：不接 chat 并发闸（cron 短任务，边界入账）')
     assert.ok(block.includes('messageCode'), 'messageCode 透传（调用方对账锚 + 档案同键）')
