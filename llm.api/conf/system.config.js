@@ -373,6 +373,26 @@ export default {
             /** 每会话排队上限：满了才拒（新码 4292）；全局在途容量另归 concurrentRuns/taskAdmission */
             maxQueue: parseInt(process.env['limits_conversationTaskQueueMaxQueue'] || '50'),
         },
+        /**
+         * skill 写面幂等闸（B-4 二期前置，设计 §4:114，属主拍板②）。**默认关**：
+         * enabled 必须显式 `true`，关的时候 llmChat 的 other 工具段连闸模块都不 import
+         * （非写面/无键同样逐字节旧行为——判据穷举在 `skill/skillWriteIdempotency.js`）。
+         *
+         * 键=`${runCode}:${toolCallId}`（runCode=messageCode，与 artifact §7 line 741 同形）：
+         * 一次写面工具调用只许产生一次外部动作；done 行回放快照、started 残骸 refuse——
+         * 崩溃重放从"必然双跑"变成"最多拒跑"，`recoverPolicy.recoverDirectAllowed` 的
+         * orchestrated defer 才有解锁的事实基础（解锁两个事实都要：enabled=true **且**名单非空）。
+         *
+         * ⚠️ writeTools 是**运维声明**不是内容证明：名单说哪些是写面，闸只约束哪些。
+         * 格式=逗号分隔，精确名或 `前缀/*`（'doc_api/*' 命中 'doc_api/upload'）；
+         * 空名单=闸形同虚设——recoverPolicy 的注入面对此不许睁眼说瞎话。
+         */
+        skillWriteIdempotency: {
+            enabled: process.env['limits_skillWriteIdempotency'] === 'true',
+            writeTools: (process.env['limits_skillWriteIdempotencyWriteTools'] || '').split(',').map((s) => s.trim()).filter(Boolean),
+            /** 快照钳制：重放要给模型的"最小事实"上限（超限带 truncated 标，不冒充全文） */
+            snapshotMaxChars: parseInt(process.env['limits_skillWriteIdempotencySnapshotMaxChars'] || '8192'),
+        },
         toolResultTokens: parseInt(process.env['limits_toolResultTokens'] || 1200),
         toolResultHeadChars: parseInt(process.env['limits_toolResultHeadChars'] || 900),
         toolResultTailChars: parseInt(process.env['limits_toolResultTailChars'] || 300),

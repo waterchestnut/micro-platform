@@ -60,7 +60,7 @@ function checkDeps(deps) {
  * 3. **交接后不再由本函数释放**：direct 模式锁的所有权随 `{claim}` 交给执行侧，
  *    由它的 `finally` 释放；这里再放一次就会误删别人的锁（dev 实测：执行完成后键确实已消失）。
  */
-export async function recoverOneCandidate({task, maxRecover = 2, mode = DEFAULT_RECOVER_MODE, leaseMs, deps} = {}) {
+export async function recoverOneCandidate({task, maxRecover = 2, mode = DEFAULT_RECOVER_MODE, leaseMs, skillWriteBound = false, deps} = {}) {
     checkDeps(deps)
     const agentCode = task?.agentCode
     if (!agentCode) {
@@ -92,11 +92,12 @@ export async function recoverOneCandidate({task, maxRecover = 2, mode = DEFAULT_
 
     /**
      * 副作用闸（设计 §4，判据在 recoverPolicy.recoverDirectAllowed）：编排树内的 child/synthesis
-     * 在幂等键到位前**不自动重执行**——direct 会重跑模型循环触发 skill/MCP 写副作用（PPT/上传），
-     * requeue 也只是把同一副作用交给消费者重跑，两种模式都不安全，故与 mode 无关地 defer。
+     * 在写面幂等闸就位（skillWriteBound）前**不自动重执行**——direct 会重跑模型循环触发 skill/MCP
+     * 写副作用（PPT/上传），requeue 也只是把同一副作用交给消费者重跑，两种模式都不安全，故与 mode
+     * 无关地 defer。bound 由调用方从 config 事实计算（enabled 且名单非空，判据单源 recoverPolicy）。
      * 判据只依赖父行，取认领前就跑：defer 不碰认领、不烧 recoverCount 额度、不写数据（可反复扫到）。
      */
-    const gate = recoverDirectAllowed({task, parent, parentReadFailed})
+    const gate = recoverDirectAllowed({task, parent, parentReadFailed, skillWriteBound})
     if (!gate.allowed) {
         deps.log.info(`agentTask 恢复延后(副作用未界): ${agentCode}（${task.title || ''}）${gate.reason}`)
         return {outcome: 'deferred', reason: gate.reason, recoverCount}

@@ -1938,11 +1938,33 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                     }
 
                     // 执行工具调用（区分 MCP 工具和 Skill 工具）
-                    const otherResults = otherCalls.length
-                        ? (skillContext
-                            ? await skillChat.executeSkillToolCalls(otherCalls, skillContext)
-                            : await mcpToolManager.executeToolCalls(channel, otherCalls))
-                        : []
+                    let otherResults = []
+                    if (otherCalls.length) {
+                        /**
+                         * skill 写面幂等闸（B-4 二期前置，默认关）：开闸时逐条过 `skillWriteGate`
+                         * ——写面白名单命中且键齐 ⇒ 查账/claim/settle，其余档位**同序同形**直通
+                         * （旧执行面本来就是 for-await 串行，per-call 包裹不引入新并发）。
+                         * 关闸连闸模块都不 import——懒 import 纪律同 globalRunGate/artifact/intakeWiring。
+                         */
+                        const writeGateCfg = config.limits?.skillWriteIdempotency || {}
+                        if (writeGateCfg.enabled === true) {
+                            const {runToolCallsWithWriteGate} = await import('./skill/skillWriteGate.js')
+                            otherResults = await runToolCallsWithWriteGate({
+                                calls: otherCalls,
+                                /** 幂等键的 run 段=messageCode：与 artifact 键同口径（:1902 注释单源） */
+                                runCode: messageCode,
+                                cfg: writeGateCfg,
+                                context: {conversationCode, userCode: curUserInfo?.userCode || ''},
+                                execOne: (toolCall) => skillContext
+                                    ? skillChat.executeSkillToolCalls([toolCall], skillContext)
+                                    : mcpToolManager.executeToolCalls(channel, [toolCall]),
+                            })
+                        } else {
+                            otherResults = skillContext
+                                ? await skillChat.executeSkillToolCalls(otherCalls, skillContext)
+                                : await mcpToolManager.executeToolCalls(channel, otherCalls)
+                        }
+                    }
                     const toolResults = [...gateBlockedResults, ...memoryResults, ...overflowResults, ...codeResults, ...planResults, ...artifactResults, ...askResults, ...otherResults]
 
                     /*工具结果只带 tool_call_id，前端无法据此显示调用了哪个工具，这里补上名称*/

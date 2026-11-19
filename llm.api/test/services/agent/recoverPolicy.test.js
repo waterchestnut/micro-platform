@@ -3,7 +3,7 @@ import * as assert from 'node:assert'
 import {
     RECOVER_MODES, DEFAULT_RECOVER_MODE, resolveRecoverMode, recoverAction,
     DISPATCH_AGENT_TYPES, DEFAULT_RECOVER_WINDOW_MS, DEFAULT_RECOVER_STUCK_MS, resolveRecoverWindow, buildRecoverFilter,
-    recoverDirectAllowed,
+    recoverDirectAllowed, skillWriteIdempotencyBound,
 } from '../../../services/agent/recoverPolicy.js'
 
 /**
@@ -203,5 +203,41 @@ describe('recoverDirectAllowed（§4 副作用恢复口径）', () => {
         assert.equal(recoverDirectAllowed({task: {parentCode: 'P'}, parentReadFailed: true}).allowed, false)
         assert.equal(recoverDirectAllowed({task: {parentCode: 'P'}, parent: {orchestrated: false}, parentReadFailed: true}).reason,
             'parent-unknown', '读失败优先于任何 parent 内容——残缺快照不算"知道"')
+    })
+})
+
+describe('recoverDirectAllowed × skillWriteBound（B-4 二期解锁，属主拍板② 2026-11-19）', () => {
+    test('bound=true：编排 child 放行，理由如实是"写面已界"', () => {
+        assert.deepEqual(recoverDirectAllowed({task: {parentCode: 'P'}, parent: {orchestrated: true}, skillWriteBound: true}),
+            {allowed: true, reason: 'orchestrated-write-bound'})
+    })
+    test('bound 非显式 true（缺省/"true"/1/对象）都不解锁——defer 是默认，解锁要事实', () => {
+        for (const bad of [undefined, false, 'true', 1, {}, '']) {
+            const r = recoverDirectAllowed({task: {parentCode: 'P'}, parent: {orchestrated: true}, skillWriteBound: bad})
+            assert.deepEqual(r, {allowed: false, reason: 'orchestrated-side-effect-unbounded'}, `bound=${String(bad)}`)
+        }
+    })
+    test('bound 只动 orchestrated 档：顶层/legacy/parent-unknown 三档逐字不变', () => {
+        assert.deepEqual(recoverDirectAllowed({task: {agentCode: 'x'}, skillWriteBound: true}), {allowed: true, reason: 'top-level'})
+        assert.deepEqual(recoverDirectAllowed({task: {parentCode: 'P'}, parent: {}, skillWriteBound: true}), {allowed: true, reason: 'legacy-tree'})
+        assert.deepEqual(recoverDirectAllowed({task: {parentCode: 'P'}, parent: null, skillWriteBound: true}), {allowed: false, reason: 'parent-unknown'})
+    })
+})
+
+describe('skillWriteIdempotencyBound（解锁输入：两个事实缺一不可）', () => {
+    test('enabled=true 且名单非空 ⇒ true', () => {
+        assert.equal(skillWriteIdempotencyBound({limits: {skillWriteIdempotency: {enabled: true, writeTools: ['doc_api/upload']}}}), true)
+    })
+    test('只开闸不给名单 ⇒ false（闸形同虚设不许冒充保险）', () => {
+        assert.equal(skillWriteIdempotencyBound({limits: {skillWriteIdempotency: {enabled: true, writeTools: []}}}), false)
+    })
+    test('只给名单不开闸 ⇒ false', () => {
+        assert.equal(skillWriteIdempotencyBound({limits: {skillWriteIdempotency: {enabled: false, writeTools: ['a']}}}), false)
+    })
+    test('配置缺失/形状漂移一律 false（默认关=默认不解锁，双层保守）', () => {
+        assert.equal(skillWriteIdempotencyBound({}), false)
+        assert.equal(skillWriteIdempotencyBound(), false)
+        assert.equal(skillWriteIdempotencyBound({limits: {skillWriteIdempotency: {enabled: true, writeTools: 'doc_api/*'}}}), false,
+            '名单必须是数组：逗号串没在 conf 切过就是没接线，不许放行')
     })
 })

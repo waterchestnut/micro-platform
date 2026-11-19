@@ -27,7 +27,7 @@ import agentTaskDac from '../daos/core/dac/agentTaskDac.js'
 import {execAgentTask} from '../services/agent/index.js'
 import {acquireOnce} from '../daos/cache/l2Cache.js'
 import {sendMessage} from '../daos/kafka/client.js'
-import {resolveRecoverMode, recoverAction, resolveRecoverWindow, buildRecoverFilter, DISPATCH_AGENT_TYPES, DEFAULT_RECOVER_STUCK_MS} from '../services/agent/recoverPolicy.js'
+import {resolveRecoverMode, recoverAction, resolveRecoverWindow, buildRecoverFilter, skillWriteIdempotencyBound, DISPATCH_AGENT_TYPES, DEFAULT_RECOVER_STUCK_MS} from '../services/agent/recoverPolicy.js'
 import {acquireClaim, releaseClaim, leaseSafety, DEFAULT_LEASE_MS} from '../services/agent/execClaim.js'
 import {recoverOneCandidate} from '../services/agent/recoverCandidate.js'
 
@@ -191,6 +191,8 @@ export async function runAgentTaskRecover(params = {}) {
                 maxRecover,
                 mode: recoverModeCfg.mode,
                 leaseMs,
+                /** B-4 二期解锁事实：写面幂等闸 enabled 且名单非空才洗 orchestrated 为放行（判据单源） */
+                skillWriteBound: skillWriteIdempotencyBound(llm.config),
                 deps: recoverDeps,
             })
             if (r.outcome === 'triggered' || r.outcome === 'requeued') {

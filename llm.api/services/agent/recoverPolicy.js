@@ -173,21 +173,40 @@ export function buildRecoverFilter({now = Date.now(), stuckMs = DEFAULT_RECOVER_
  * 这里"不知道"必须默认危险——把 unknown 洗成 safe 就是设计禁止的授权旁路）：
  * - 无 parentCode 的顶层行（普通 chat 任务、serialized-turn 追问轮）⇒ 放行：重放语义=兑现用户
  *   本来要的那一轮，与正常轮的 direct 恢复同面，收紧它等于让追问轮静默消失；
- * - 父行 `orchestrated===true`（编排树内 child/synthesis）⇒ **defer**：等副作用面的幂等键
- *   （skill 写动作按 runCode+toolCallId 去重）到位再放开，那是另刀的活；
+ * - 父行 `orchestrated===true`（编排树内 child/synthesis）⇒ **默认 defer**：
+ *   `skillWriteBound`（写面幂等闸就位的事实，见 `skillWriteIdempotencyBound`）为 false 时维持
+ *   defer 原话；为 true 才放行（reason='orchestrated-write-bound'）——child 的写面工具调用
+ *   已由 `${runCode}:${toolCallId}` 账本兜底（done 回放/started refuse），重放不再必然双跑。
+ *   ⚠️ 这是**白名单覆盖面的运维承诺**：闸开着但名单漏了某写面工具，解锁就是授权旁路本身；
+ *   所以 bound 判据要求 enabled 与名单非空**两个事实**，名单内容靠配置评审兜（与 P-8 闸值同法）；
  * - 存量串行树（建课等，父非 orchestrated）⇒ 放行：它们是 direct 默认上线以来实测覆盖的现网面，
  *   收紧=改变已验收行为，不混进本刀；
  * - 父行读不到/读失败 ⇒ defer（"不知道"不洗成"safe"）。
  */
-export function recoverDirectAllowed({task, parent, parentReadFailed = false} = {}) {
+export function recoverDirectAllowed({task, parent, parentReadFailed = false, skillWriteBound = false} = {}) {
     if (!task?.parentCode) return {allowed: true, reason: 'top-level'}
     if (parentReadFailed || !parent) return {allowed: false, reason: 'parent-unknown'}
-    if (parent.orchestrated === true) return {allowed: false, reason: 'orchestrated-side-effect-unbounded'}
+    if (parent.orchestrated === true) {
+        return skillWriteBound === true
+            ? {allowed: true, reason: 'orchestrated-write-bound'}
+            : {allowed: false, reason: 'orchestrated-side-effect-unbounded'}
+    }
     return {allowed: true, reason: 'legacy-tree'}
+}
+
+/**
+ * "写面幂等闸就位"的事实判定（B-4 二期解锁输入，纯函数——config 形状变了这里红，不靠调用方自觉）。
+ * enabled 显式 true 且 writeTools 非空：只开闸不给名单=闸形同虚设，两个事实缺一个都不许洗成 safe。
+ * @param {Object} [config] llm.config 形状（测试注假表）
+ * @returns {Boolean} 闸是否真的在界内约束写面
+ */
+export function skillWriteIdempotencyBound(config = {}) {
+    const w = config?.limits?.skillWriteIdempotency || {}
+    return w.enabled === true && Array.isArray(w.writeTools) && w.writeTools.length > 0
 }
 
 export default {
     RECOVER_MODES, DEFAULT_RECOVER_MODE, resolveRecoverMode, recoverAction,
     DISPATCH_AGENT_TYPES, DEFAULT_RECOVER_WINDOW_MS, DEFAULT_RECOVER_STUCK_MS, resolveRecoverWindow, buildRecoverFilter,
-    recoverDirectAllowed,
+    recoverDirectAllowed, skillWriteIdempotencyBound,
 }
