@@ -63,6 +63,17 @@ export class ConversationDac extends BaseDac {
         if (tools.isExist(options.conversationType)) {
             params.$and.push({conversationType: {$eq: options.conversationType}})
         }
+        /**
+         * 可见性语义（conversationVisibility）：`internal` 必须在这里被认下——
+         * assembleParams 是键白名单，未认的键**静默丢弃**（"schema 未声明被丢"家族在
+         * filter 层的第四种形态；e2e V2 首红就是它：路由传了 {$ne:true}，dac 没组进查询）。
+         * 操作符对象（{$ne:true}）原样透传，等值（true/false）归一成 $eq。
+         */
+        if (!tools.isUndefined(options.internal)) {
+            const v = options.internal
+            const isOperatorObject = v && typeof v === 'object' && !Array.isArray(v)
+            params.$and.push({internal: isOperatorObject ? v : {$eq: v}})
+        }
         if (tools.isExist(options.keywords)) {
             let keywordReg = {$regex: new RegExpExt(options.keywords, 'i', true)}
             params.$and.push({

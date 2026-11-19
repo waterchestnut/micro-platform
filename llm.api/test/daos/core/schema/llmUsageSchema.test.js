@@ -22,7 +22,6 @@ describe('llmUsageSchema 的估算列', () => {
         assert.equal(p.instance, 'Number')
         assert.equal(p.defaultValue, 0, '默认必须是 0：聚合时 undefined 会变成"这行没数据"，与"生成了 0 字"混淆')
     })
-
     test('estPromptTokens 与 estCompletionTokens 都在，且与实测列是**不同的路径**', () => {
         assert.ok(paths.estPromptTokens, '在途刷新写的估算输入列')
         assert.ok(paths.estCompletionTokens, '断档行唯一的输出量级来源')
@@ -52,5 +51,26 @@ describe('llmUsageSchema 的估算列', () => {
         const doc = new M({messageCode: 'm-2', someFutureColumn: 1})
         assert.equal(doc.toObject().someFutureColumn, undefined,
             '严格模式下未知列被丢弃 ⇒ 加列要同时改 schema 与写入点，只改一边就是白写')
+    })
+})
+
+describe('llmUsageSchema 的 credits 列（M6）', () => {
+    test('credits/creditsPriced 显式声明，默认 0/false——priced 默认 false 是"未计价"而非"免费"', () => {
+        const c = paths.credits
+        const cp = paths.creditsPriced
+        assert.ok(c, '未声明 ⇒ 写入点传了也会被严格模式丢掉（上面那条测试说的就是这种"白写"）')
+        assert.ok(cp, 'creditsPriced 必须独立成列：0 credits 与"没配价"是两回事')
+        assert.equal(c.instance, 'Number')
+        assert.equal(c.defaultValue, 0)
+        assert.equal(cp.instance, 'Boolean')
+        assert.equal(cp.defaultValue, false, '本期不配权重 ⇒ 默认态就是"未计价"，不许默认 true 装作算过钱')
+    })
+
+    test('§5-4 任务关联列显式声明且**无默认值**——普通聊天行该是"没挂树"(undefined)，不是"挂了空树"', () => {
+        for (const f of ['rootCode', 'agentCode', 'agentRole']) {
+            const p = paths[f]
+            assert.ok(p, `schema 缺 ${f}（未声明=写入被 cast 静默丢，本项目已应验 3 次）`)
+            assert.equal(p.defaultValue, undefined, `${f} 不许有默认值：空串会伪造"挂过树"的事实`)
+        }
     })
 })

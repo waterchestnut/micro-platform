@@ -30,6 +30,12 @@ export const LIST_ABANDONED_SELECT = {
     channel: 1, llmModel: 1,
     billablePromptTokens: 1, completionTokens: 1, upstreamAttempts: 1,
     fallbackTo: 1, latencyMs: 1, insertTime: 1,
+    /**
+     * ↓ abandonedBackfill 的"usage 真值快照"（冻结事实复制，不是第二套活账——D66 防的是
+     * live 双写，终态行的 last-writer 复制与 estPromptTokens 同族）。缺这些键回填行就只能
+     * 报估计，前端过程账/`未产出` 归因（hasUsage:false）都哑掉。
+     */
+    promptTokens: 1, totalTokens: 1, credits: 1, creditsPriced: 1,
 }
 
 export class LlmUsageDac extends BaseDac {
@@ -72,10 +78,14 @@ export class LlmUsageDac extends BaseDac {
                     billablePromptTokens: {$sum: '$billablePromptTokens'},
                     completionTokens: {$sum: '$completionTokens'},
                     reasoningTokens: {$sum: '$reasoningTokens'},
+                    // §5-4 后半：credits 三计数只做 $sum，语义归约在 usageStats（dao 不持有口径）
+                    credits: {$sum: '$credits'},
+                    creditsUnpriced: {$sum: {$cond: [{$eq: ['$creditsPriced', false]}, 1, 0]}},
+                    creditsPricedTrue: {$sum: {$cond: [{$eq: ['$creditsPriced', true]}, 1, 0]}},
                 },
             },
         ])
-        return rows[0] || {runs: 0, modelCalls: 0, promptTokens: 0, cachedTokens: 0, billablePromptTokens: 0, completionTokens: 0, reasoningTokens: 0}
+        return rows[0] || {runs: 0, modelCalls: 0, promptTokens: 0, cachedTokens: 0, billablePromptTokens: 0, completionTokens: 0, reasoningTokens: 0, credits: 0, creditsUnpriced: 0, creditsPricedTrue: 0}
     }
 
     /**
@@ -132,11 +142,12 @@ export class LlmUsageDac extends BaseDac {
             filter.messageCode = {$ne: excludeMessageCode}
         }
         const row = await LlmUsage
-            .findOne(filter, {messageCode: 1, insertTime: 1})
+            .findOne(filter, {messageCode: 1, insertTime: 1, updateTime: 1})
             .sort({insertTime: -1})
             .lean()
             .exec()
-        return row ? {messageCode: row.messageCode, insertTime: row.insertTime} : null
+        // updateTime 供队列第二入口判心跳新鲜（decideQueueOnStaleOpenRun）；投影少这键=心跳恒 unknown、入口恒放行
+        return row ? {messageCode: row.messageCode, insertTime: row.insertTime, updateTime: row.updateTime} : null
     }
 
     /**
@@ -193,28 +204,6 @@ export class LlmUsageDac extends BaseDac {
      * 代价要写明：认领后写档前进程崩了，这条会变成"账本 abort、档案没有"。
      * 窗口是毫秒级，失败方会把 `messageCode` 留在日志里便于人工补——比写重复行的后果轻。
      */
-    /**
-     * @description 把仍在中途的账本行原子收尾成给定终态（抢不到就说明别人已写完或已是终态）
-     * @param {Object} params 参数
-     * @param {String} params.messageCode 本轮标识
-     * @param {String} params.progress 目标终态（finish/abort/error）
-     * @param {Object} [params.patch] 一并写入的字段
-     * @returns {Promise<Boolean>} 本次是否由我改成
-     * @description
-     * 判据在 `finalizeFilter`（纯函数、有穷举用例），这里只执行不拼条件。
-     * 返回 false 不是失败：它说的是"这行不需要我收尾了"，调用方应当只记日志、不重试。
-     */
-    async finalizeIfProcessing({messageCode, progress, patch = {}} = {}) {
-        if (!progress) {
-            throw new Error('progress 不能为空（收尾必须给终态）')
-        }
-        const r = await LlmUsage.updateOne(
-            finalizeFilter({messageCode}),
-            {$set: {progress, ...patch, updateTime: new Date()}},
-        )
-        return (r?.modifiedCount ?? 0) === 1
-    }
-
     async claimAbandoned({messageCode, olderThanMs = DEFAULT_OLDER_THAN_MS, now = Date.now} = {}) {
         if (!messageCode) {
             throw new Error('messageCode 不能为空')
@@ -222,6 +211,32 @@ export class LlmUsageDac extends BaseDac {
         const r = await LlmUsage.updateOne(
             {...abandonedQuery({olderThanMs, now}), messageCode},
             {$set: {progress: 'abort', updateTime: new Date()}},
+        )
+        return (r?.modifiedCount ?? 0) === 1
+    }
+
+    /**
+     * @description 把仍在中途的账本行原子收尾成给定终态（认领不到就说明别人已经写完或已是终态）
+     * @param {Object} params 参数
+     * @param {String} params.messageCode 本轮标识
+     * @param {String} params.progress 目标终态（finish/abort/error）
+     * @param {Object} [params.patch] 一并写入的字段（如 latencyMs）
+     * @returns {Promise<Boolean>} 本次是否由我改成
+     * @description
+     * filter 里带着 `progress: processing` 是这条方法存在的全部理由：
+     * 路由补写档案与 run 自己的收尾、与回填的 `claimAbandoned` **可能同时在动同一行**。
+     * 先读后写会覆盖（把人家刚写的 finish 改回 error），而条件更新只有"抢到的人说话"这一种结果。
+     *
+     * 也正因为带条件，返回 false 不是失败：它说的是"这行已经不需要我收尾了"，调用方应当只记日志、不重试。
+     */
+    async finalizeIfProcessing({messageCode, progress, patch = {}} = {}) {
+        if (!progress) {
+            throw new Error('progress 不能为空（收尾必须给终态）')
+        }
+        /** 判据在 `finalizeFilter`（纯函数、有穷举用例）：这里只负责执行，条件不在这里拼 */
+        const r = await LlmUsage.updateOne(
+            finalizeFilter({messageCode}),
+            {$set: {progress, ...patch, updateTime: new Date()}},
         )
         return (r?.modifiedCount ?? 0) === 1
     }

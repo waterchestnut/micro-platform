@@ -28,6 +28,19 @@ export const chatStreamBodySchema = {
                 channelCacheKey: {type: 'string', description: '缓存分组键'},
                 regeneratedFrom: {type: 'string', description: '重新生成的来源消息标识；带这个键时本轮不读也不写回答缓存', minLength: 1, maxLength: 128},
                 cacheIgnoreHistory: {type: ['boolean', 'number'], description: '跳过会话有历史则不使用缓存的保护，仅用于无状态批量场景'},
+                /**
+                 * 任务模式（PR-任务编排 M4b c2，属主拍板"显式进"）：为真值时这一条请求走扇出 planner
+                 * 判定/拆解，适合则建编排 root 异步执行、返回 `{taskAccepted, rootCode}` JSON（非 SSE）；
+                 * planner 判不适合或任何失败 ⇒ **回落普通回答**（SSE 照常），绝不把用户的话吃掉。
+                 * 生效还需服务端 `agentTask_fanOutPlanner=true`（默认关）；关时本字段被忽略、行为与现网一致。
+                 */
+                taskMode: {type: ['boolean', 'number'], description: '本条请求是否以任务模式(扇出规划)处理；缺省否'},
+                /**
+                 * 扇出受理幂等键（§5-1，客户端每次发送生成一次、随请求体固定）：
+                 * 网络/网关重发**同一请求体** ⇒ 同键命中已受理的树，返回同一 rootCode（不重复烧 planner、不建二树）。
+                 * 作用域=会话内唯一（partial unique 索引兜并发）；不传 ⇒ 无幂等（诚实默认，行为同前）。
+                 */
+                taskCode: {type: 'string', minLength: 1, maxLength: 64, pattern: '^[0-9a-zA-Z_.:-]+$', description: '任务受理幂等键（客户端生成，重发同值）'},
                 enableThinking: {type: ['boolean', 'number'], description: '是否开启深度思考，受模型配置约束'},
                 skillLoadMode: {type: 'string', enum: ['candidates', 'matched', 'full'], description: '技能加载模式'},
                 memory: {

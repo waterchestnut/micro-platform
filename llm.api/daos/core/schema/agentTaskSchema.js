@@ -70,6 +70,25 @@ const agentTaskSchema = new Schema({
     operator: {type: Object, description: '创建者'},
     status: {type: Number, default: 0, description: '状态', enum: StatusEnum.toValues()},
     tags: {type: [Tag], description: '标签'},
+    /**
+     * 会话任务编排（PR-任务编排）新增维度。刻意**不给默认值**：现有建课/并行/串行的 agentTask 不设这些，
+     * 就应保持"字段缺席"而不是被平白写上一个值（shared 集合，加字段可以，塞默认值要克制）。
+     * 声明在此只为：① 让 `bulkWrite` 的 cast 不再把它们当未知路径**静默丢弃**（这是 e2e 才能暴露的坑，
+     * 离线用例里记录是普通对象、不经 schema，看不见）；② 建索引供 pump 按 `agentRole+handleStatus+insertTime` 取排队轮。
+     */
+    conversationCode: {type: String, description: '编排：所属会话（serialized-turn 跑用户原会话；child 为 agent: 隔离）'},
+    rootCode: {type: String, description: '编排：所属 root 任务标识（self-root 时等于自身 agentCode，由接线方回填）'},
+    agentRole: {type: String, description: '编排：节点角色 root/serialized-turn/child'},
+    /**
+     * 编排 root 的**显式声明**：只有带 `orchestrated:true` 的行才允许 finalize 触发（B1）。
+     * 不给默认值——建课等存量行没有它 ⇒ `shouldTriggerFinalize` 的 orchestrated 侧恒 false，
+     * 这是"哪怕总开关被误开，老任务也绝不进编排收尾"的第二道闸。
+     */
+    orchestrated: {type: Boolean, description: '编排：root 是否声明需要 finalize 收尾'},
+    budgetUsedTokens: {type: Number, description: '编排：root 累计 token 预算占用'},
+    retryCount: {type: Number, description: '编排：已重试次数（与 recover 的 tags.recoverCount 不同轴）'},
+    /** 追活(f)：已 replan 换代数。finalize 写回，与 retryCount 同由 follow 循环维护——单写者=root finalize */
+    replanCount: {type: Number, description: '编排：已 replan 换代次数'},
     insertTime: {
         type: Date, default: function () {
             return new Date()
@@ -94,5 +113,27 @@ agentTaskSchema.index({agentCodePath: 1})
 agentTaskSchema.index({'operator.userCode': 1})
 agentTaskSchema.index({'tags.key': 1})
 agentTaskSchema.index({'tags.value': 1})
+/** 编排 pump：取某会话最旧的待执行追问轮（agentRole+handleStatus 过滤，insertTime 升序取队首） */
+agentTaskSchema.index({agentRole: 1, handleStatus: 1, insertTime: 1})
+agentTaskSchema.index({conversationCode: 1, handleStatus: 1})
+/**
+ * 幂等键（§5-1）两道 **partial unique**——DB 级兜"预查通过后两请求并发都来插"的窗口，
+ * 应用层先查只是省一次插入/一次模型调用，唯一性裁决权在库：
+ * - serialized-turn：同会话同一 messageCode 的**等待中**行至多一条（执行后 partialFilter 解除，
+ *   同码失败重推是合法动作，不永久锁死）；
+ * - 编排 root：同会话同一 idemKey **永久至多一条**（受理键一次性，duplicate 请求永远指回原树）。
+ * ⚠️ partialFilterExpression 的字段必须等值（这里 agentRole/handleStatus/orchestrated 都是等值）；
+ * 存量集合上 autoIndex 建索引若因**历史重复数据**失败只会打日志——探针要实证 index 真在（见 handoff §7）。
+ */
+agentTaskSchema.index({conversationCode: 1, 'params.messageCode': 1}, {
+    unique: true,
+    partialFilterExpression: {agentRole: 'serialized-turn', handleStatus: 0},
+    name: 'uniq_serializedTurn_messageCode',
+})
+agentTaskSchema.index({conversationCode: 1, 'params.idemKey': 1}, {
+    unique: true,
+    partialFilterExpression: {agentRole: 'root', orchestrated: true},
+    name: 'uniq_orchestratedRoot_idemKey',
+})
 
 export default agentTaskSchema

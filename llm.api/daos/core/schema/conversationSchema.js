@@ -44,6 +44,12 @@ const conversationSchema = new Schema({
     llmModel: {type: String, description: '大模型配置节点'},
     operator: {type: Object, description: '会话所属人'},
     userCodes: {type: [String], description: '参与会话的用户标识'},
+    /**
+     * 内部工作会话标记（编排 root:/agent: 隔离档，见 daos/core/policy/conversationVisibility.js）。
+     * 语义只有一条：不进用户会话列表。**成员归属与权限校验不受它影响**（allowedCodes 查询无此过滤，
+     * 有守卫钉分离）——标了 internal 的会话，其 byCode 读取照常。
+     */
+    internal: {type: Boolean, default: false, description: 'true=任务工作会话（列表排除，权限不减）'},
     status: {type: Number, default: 0, description: '状态', enum: StatusEnum.toValues()},
     tags: {type: [Tag], description: '标签'},
     insertTime: {

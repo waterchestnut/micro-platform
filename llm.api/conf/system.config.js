@@ -140,8 +140,34 @@ export default {
         recoverStuckMs: Number(process.env['cron_recoverStuckMs']) || 30 * 60 * 1000,
         recoverWindowMs: process.env['cron_recoverWindowMs'] || '',
         recoverMaxTimes: Number(process.env['cron_recoverMaxTimes']) || 2,
+        /**
+         * 会话任务队列排水器（PR-任务编排 M1-b 设计 A）：短周期把"该会话空闲后"的排队追问轮派发执行。
+         *
+         * 注册条件是两个都真：`limits.conversationTaskQueue.enabled===true`（总开关，路由侧入队与它同锁生死）
+         * 且本值不为 false。节奏默认 5 秒（`cron` 包支持 6 段含秒的表达式）；这与 recover 的 10 分钟
+         * 是两个用途——recover 救"进程蒸发的在途流水线"（慢、少），pump 排"会话串行的追问"（快、多）。
+         *
+         * 三条读码事实决定了本器的形状（详见源仓 handoff §3.0）：consumer 无会话级串行 ⇒ 不能靠投 Kafka 自动跑；
+         * `execAgentTask` 认领被占时也照样执行 ⇒ 取不到认领要在**外层就跳过**（复用 recoverOneCandidate 的
+         * 认领交接纪律），否则会双跑用户会话；每会话的"是否空闲"以账本 `findOpenRun` 为准（跨 worker）。
+         */
+        pumpEnabled: process.env['cron_pumpEnabled'] !== 'false',
+        pumpPattern: process.env['cron_pumpPattern'] || '*/5 * * * * *',
+        pumpBatch: Number(process.env['cron_pumpBatch']) || 20,
+        /** 单轮 redis 锁 TTL（秒）：应 < 触发间隔，一次抛错不至于把后续好几轮都挡死 */
+        pumpLockTtlSeconds: Number(process.env['cron_pumpLockTtlSeconds']) || 4,
         /** 显式锁时区，避免不同机器时区不一致导致错时 */
         timezone: process.env['cron_timezone'] || 'Asia/Shanghai',
+    },
+    /**
+     * credits 计价权重（PR-任务编排 M6）。**默认不配**：模型配置至今没有任何价格字段，
+     * 硬编一份就是假承诺（属主拍板：本期落 credits、不含汇率）。
+     * 不配 ⇒ 账本 `credits = prompt+completion` 的退化计数、`creditsPriced:false`（口径见 creditMeter）。
+     * 形状：`{"inputWeight":1,"outputWeight":4,"toolCallCost":0,"sandboxSecondCost":0,"tierWeights":{"qwen":{"input":0.8,"output":3}}}`
+     * ——JSON 串经 env 注入（与 `sandbox_defaultResourceLimits` 同法：坏 JSON 启动即炸，不静默吞）。
+     */
+    credits: {
+        weights: process.env['credits_weights'] ? JSON.parse(process.env['credits_weights']) : undefined,
     },
     /** 用户授权中心的配置 */
     ucenterConfig: {
@@ -179,6 +205,59 @@ export default {
          * 续期由 `execAgentTask` 按四分之一个租约的节奏自动 extend，所以它不需要等于最坏时长。
          */
         execLeaseMs: Number(process.env['agentTask_execLeaseMs']) || 15 * 60 * 1000,
+        /**
+         * fan-out 编排收尾（PR-任务编排 C/B1）：编排 root（`orchestrated:true && agentRole:'root'`）首次到
+         * 终态后，`updateParentAgentTaskWithLock` 在**锁外**派发一条 finalize task 跑 `fanOutFinalizeTask`
+         * （归约/裁决/synthesis 落 root）。**默认关**：关时 updateParent 逐字维持现网（建课等 fan-out 不受影响）。
+         *
+         * `dispatch` 两模式（与 `cron.recoverMode` 的 direct/requeue 同一先例，各有诚实代价）：
+         * - `kafka`（缺省）：与 nextAgentCode 派发同路数，持久、可被 consumer 重试；**要求 consumer 已部署
+         *   含 `fanOutFinalizeTask` 的代码**，否则新 handler 名在旧 consumer 上只会报错——这是开启前置条件。
+         * - `direct`：本进程动态 import 后 fire-and-forget，e2e/单实例调试用；**进程若在 finalize 前死掉，
+         *   root 停在机械终态无 orchestration**（finalize task 不在库里，recover 也救不到它——direct 的代价要说在前面）。
+         */
+        fanOutOrchestration: {
+            enabled: process.env['agentTask_fanOutOrchestration'] === 'true',
+            dispatch: process.env['agentTask_fanOutOrchestrationDispatch'] || 'kafka',
+            /**
+             * 追活（f）：finalize 判出 retry/replan 时**由 finalize 自己追加执行轮**（新行新槽标 retryOf/followRound，
+             * 绝不把 -1 终态行改回 0）。默认关：关时 orchestration.dispatch 原样如实回传、不派任何活——
+             * "裁决说要 retry"与"环境真去 retry"是两件事，分开可回退。replan 额外要求 fanOutPlanner 开着，
+             * 拿不到新计划时如实降级 report（绝不把 root 悬在 1"等一个不会来的 replan"）。
+             */
+            autoFollow: process.env['agentTask_fanOutOrchestrationAutoFollow'] === 'true',
+            /** 保险帽：单次 finalize 内追活 spawn 的总行数上限（裁决预算 2+1 本身有界，这帽防循环 bug） */
+            followSpawnCap: Number(process.env['agentTask_fanOutOrchestrationFollowSpawnCap']) || 8,
+        },
+        /**
+         * 生成式 planner（M4b）：一次**裸通道、非流式、低档**的 LLM 调用做"要不要扇出 + 怎么拆"，
+         * 输出经 `fanOutIntake`（语义严判）与 `fanOutPlanner`（预算裁剪）双闸后成为编排 root。
+         * 默认关；关时连模型都不碰。
+         * `timeoutMs/maxRetries` 必须短：planner 卡住＝把一次交互拖成 921s 事故（llmChat.js:24 的现网教训）。
+         */
+        fanOutPlanner: {
+            enabled: process.env['agentTask_fanOutPlanner'] === 'true',
+            model: process.env['agentTask_fanOutPlannerModel'] || 'relay_common_low',
+            /** 子任务上限（喂 normalizeFanOutPlan 的 subtaskCeiling；预算闸在 taskBudget，不在此重造） */
+            subtaskCeiling: Number(process.env['agentTask_fanOutPlannerSubtaskCeiling']) || 4,
+            timeoutMs: Number(process.env['agentTask_fanOutPlannerTimeoutMs']) || 30000,
+            maxRetries: Number(process.env['agentTask_fanOutPlannerMaxRetries'] || '1'),
+            maxTokens: Number(process.env['agentTask_fanOutPlannerMaxTokens']) || 512,
+            /** 综合阶段的执行选项（透传进 root.params.synthesisExecOptions，finalize 消费） */
+            synthesisExecOptions: process.env['agentTask_fanOutPlannerSynthesisExecOptions']
+                ? JSON.parse(process.env['agentTask_fanOutPlannerSynthesisExecOptions']) : undefined,
+            /**
+             * 任务模式入口（M4b c2，属主拍板"显式进"）：
+             * - `entryChannels`：逗号分隔频道白名单，命中即进 planner（默认空=没有频道自动进）；
+             * - 前端"任务模式"开关走请求体 `options.taskMode`，不在此配。
+             * `handleMode`：planner 建出的 root 怎么被执行——`queue`（生产：投 Kafka 交 consumer，
+             * **前置=consumer 已部署含 agentChat/parallelDispatch/fanOutFinalizeTask 的版本**，同 B1）；
+             * `manual`（只入库不自动跑，由调用方/探针驱动——联调与灰度早期用，防半部署状态下的孤儿树）。
+             */
+            entryChannels: process.env['agentTask_fanOutPlannerEntryChannels']
+                ? process.env['agentTask_fanOutPlannerEntryChannels'].split(',').map((s) => s.trim()).filter(Boolean) : [],
+            handleMode: process.env['agentTask_fanOutPlannerHandleMode'] === 'manual' ? 'manual' : 'queue',
+        },
     },
     /**
      * 分层长期记忆（memory-plan PR-4~8/11/12 迁移）。
@@ -277,6 +356,23 @@ export default {
      * answerCache 两项由 tasks/retention.js 直接读取）。
      */
     limits: {
+        /**
+         * 会话任务队列（PR-任务编排 M1-b，总开关默认关）。开起来后：同一会话撞上"上一轮还在跑"
+         * （`runOverlap` 已判拒 或 stale-open-run 心跳新鲜=真在跑）时，不再丢单/不再并发双跑，
+         * 而是落一条 serialized-turn 追问轮（`handleMode:'manual'` 持久不投 Kafka），
+         * 由 `tasks/serializedTurnPump` 在该会话空闲时按序忠实重放（决策 A：专用短周期 pump）。
+         * ⚠️ 三条来自读码的前提（写进源仓 handoff §3.0，别再烘错）：consumer 无会话级串行、
+         * agentChat 硬编 memory:off 不适于当轮 runner、唯一现成排水器 recover 是 ~30min 慢通道——
+         * 所以"路由入队 + 秒级 pump"必须成对上，别只开一半。
+         */
+        conversationTaskQueue: {
+            /** 唯一总开关：路由侧入队与 pump 注册都看它；缺省关（与现网逐字一致） */
+            enabled: process.env['limits_conversationTaskQueue'] === 'true',
+            /** 僵尸 open run 超过此刻视作"会话已空"可放行（与 runOverlap 陈旧不锁死同取向） */
+            staleMs: parseInt(process.env['limits_conversationTaskQueueStaleMs'] || '45000'),
+            /** 每会话排队上限：满了才拒（新码 4292）；全局在途容量另归 concurrentRuns/taskAdmission */
+            maxQueue: parseInt(process.env['limits_conversationTaskQueueMaxQueue'] || '50'),
+        },
         toolResultTokens: parseInt(process.env['limits_toolResultTokens'] || 1200),
         toolResultHeadChars: parseInt(process.env['limits_toolResultHeadChars'] || 900),
         toolResultTailChars: parseInt(process.env['limits_toolResultTailChars'] || 300),

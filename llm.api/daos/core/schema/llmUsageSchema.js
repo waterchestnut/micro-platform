@@ -92,6 +92,25 @@ const llmUsageSchema = new Schema({
     estCompletionTokens: {type: Number, default: 0, description: '本地估算的输出 token（非上游回传；被掐断的 run 唯一的量级来源）'},
     fallbackFrom: {type: String, default: '', description: '换档前的档位 key（未换为空）'},
     fallbackTo: {type: String, default: '', description: '换档后的档位 key（未换为空）'},
+    /**
+     * M6 credits（PR-任务编排）：无量纲规范化消耗 + 计价状态。
+     * 口径唯一在 `creditMeter.computeCredits`（本行由 run 的 token 计数派生，不是第二套账）。
+     * ⚠️ `creditsPriced:false` **不是坏数据**：本期没配权重（`llmModel.js` 无价格字段是实锤，汇率属产品），
+     * credits 退化为 token 计数、不假装是钱。查询侧要钱就先确认这批行 priced。
+     * 缺省 0/false 而不是 undefined：老行没有这两列，聚合 `$sum` 对缺失按 0 算，与"写了 0"同值——
+     * 但**判"未计价"必须看 priced**，0 credits 与"没配价"是两回事，别拿 credits=0 说"这轮免费"。
+     */
+    credits: {type: Number, default: 0, description: '规范化消耗（无量纲；未配权重时=token 计数）'},
+    creditsPriced: {type: Boolean, default: false, description: 'true=按注入权重计价；false=退化 token 计数（不是免费）'},
+    /**
+     * §5-4 任务关联列：把"这行账属于哪棵任务树的哪个节点"落在**账本**上（此前只能靠 conv 前缀
+     * `agent:`/`root:` 反解——前缀是执行细节不是账本语义，反解=在读取侧重建写入时的巧合）。
+     * 三列都由 `taskAccounting.extractTaskFields` 白名单产出；不写任务上下文的普通聊天行三列缺省
+     * （undefined，不是空串——"没挂树"与"挂了个空树号"必须能在查询里区分）。
+     */
+    rootCode: {type: String, description: '编排：所属 root 任务（普通聊天无）'},
+    agentCode: {type: String, description: '编排：本行对应的任务节点（child/turn/root 自身）'},
+    agentRole: {type: String, description: '编排：节点角色 root/serialized-turn/child/synthesis/finalize'},
     loopExit: {type: String, default: '', description: '主循环退出方式'},
     progress: {type: String, default: '', description: '本轮进度'},
     latencyMs: {type: Number, default: 0},
