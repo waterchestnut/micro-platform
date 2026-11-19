@@ -115,8 +115,9 @@ const ArtifactCard = ({a, onOpen}: {a: any; onOpen?: (code: string) => void}) =>
  * 长正文收放（属主 2026-11-19：AI 回答太长把页面撑得很高）：超阈值的文本块默认钳高，
  * 底部一条渐变遮罩 + "展开全文/收起"。阈值/是否折叠走 messageParts 判据（可离线测）。
  * renderText 由调用方注入（XMarkdown/div）——本组件只管收放，不碰渲染。
+ * 导出：TaskCard 的综合正文与 parts 正文共用这一个收放件（长回答不分路径漏网）。
  */
-const CollapsibleText = ({text, renderText}: {text: string; renderText: (t: string) => React.ReactNode}) => {
+export const CollapsibleText = ({text, renderText}: {text: string; renderText: (t: string) => React.ReactNode}) => {
   const [expanded, setExpanded] = useState(false)
   const collapsible = shouldCollapseText(text)
   const clamp = collapsible && !expanded

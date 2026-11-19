@@ -60,7 +60,7 @@ import {readTaskFlowError, taskFlowNoteText, upsertPendingTask, removePendingTas
 import {makeFetchWithTaskFlow} from '@/chatProviders/taskFlowFetch';
 import {projectMessageParts} from '@/chatProviders/messageParts';
 import {deriveRunStatus} from '@/chatProviders/runStatus';
-import MessageParts from '@/pages/Chat/components/MessageParts';
+import MessageParts, {CollapsibleText} from '@/pages/Chat/components/MessageParts';
 import RunStatusBar from '@/pages/Chat/components/RunStatusBar';
 import ArtifactWorkspace from '@/pages/Chat/components/ArtifactWorkspace';
 import TaskCard from '@/pages/Chat/components/TaskCard';
@@ -895,7 +895,7 @@ const Index: React.FC = () => {
                     const convNow = activeConvRef.current || ''
                     writePendingTasks(convNow, removePendingTask(readPendingTasks(convNow), rc))
                   }}
-                  renderBody={mdText}
+                  renderBody={(t) => <CollapsibleText text={t} renderText={mdText}/>}
                 />
               ) : null}
               {/*
