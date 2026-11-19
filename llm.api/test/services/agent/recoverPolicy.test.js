@@ -3,6 +3,7 @@ import * as assert from 'node:assert'
 import {
     RECOVER_MODES, DEFAULT_RECOVER_MODE, resolveRecoverMode, recoverAction,
     DISPATCH_AGENT_TYPES, DEFAULT_RECOVER_WINDOW_MS, DEFAULT_RECOVER_STUCK_MS, resolveRecoverWindow, buildRecoverFilter,
+    recoverDirectAllowed,
 } from '../../../services/agent/recoverPolicy.js'
 
 /**
@@ -180,5 +181,27 @@ describe('buildRecoverFilter：三个条件各治一个 dev 实测到的病', ()
         assert.deepEqual([...DISPATCH_AGENT_TYPES].sort(), ['dynamic', 'parallel', 'sequential'],
             '这三个是 AgentTypeEnum 里的 dispatch 型；改动它等于改变恢复的可见范围，要连带跑 dev 探针')
         assert.ok(Object.isFrozen(DISPATCH_AGENT_TYPES), '名单被运行时改一处就会波及查询，必须冻结')
+    })
+})
+
+describe('recoverDirectAllowed（§4 副作用恢复口径）', () => {
+    test('顶层行（无 parentCode）放行——含 serialized-turn 追问轮：重放=兑现用户本来要的那轮', () => {
+        const r = recoverDirectAllowed({task: {agentCode: 'x'}})
+        assert.deepEqual(r, {allowed: true, reason: 'top-level'})
+    })
+    test('编排树 child（父 orchestrated=true）⇒ defer，理由是副作用未界', () => {
+        const r = recoverDirectAllowed({task: {parentCode: 'P'}, parent: {orchestrated: true}})
+        assert.equal(r.allowed, false)
+        assert.equal(r.reason, 'orchestrated-side-effect-unbounded')
+    })
+    test('存量串行树（父无该旗标）放行——direct 默认上线以来实测覆盖的现网面，收紧要另刀', () => {
+        assert.deepEqual(recoverDirectAllowed({task: {parentCode: 'P'}, parent: {agentType: 'sequential'}}),
+            {allowed: true, reason: 'legacy-tree'})
+    })
+    test('"不知道"一律 defer：父行缺失或读失败不许被洗成 safe', () => {
+        assert.equal(recoverDirectAllowed({task: {parentCode: 'P'}, parent: null}).allowed, false)
+        assert.equal(recoverDirectAllowed({task: {parentCode: 'P'}, parentReadFailed: true}).allowed, false)
+        assert.equal(recoverDirectAllowed({task: {parentCode: 'P'}, parent: {orchestrated: false}, parentReadFailed: true}).reason,
+            'parent-unknown', '读失败优先于任何 parent 内容——残缺快照不算"知道"')
     })
 })

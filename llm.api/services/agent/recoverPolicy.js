@@ -160,7 +160,34 @@ export function buildRecoverFilter({now = Date.now(), stuckMs = DEFAULT_RECOVER_
     }
 }
 
+/**
+ * 恢复 direct 重执行的副作用判据（设计 §4"有副作用 child 的恢复口径"，2026-11-19 符合性验证的产物）。
+ *
+ * 验证结论先写在这：**现默认 direct 对编排 child 不符合该口径**——
+ * child 行是 `agentType:'local'` 带 parentCode，落在恢复扫描面内；而 child 的模型循环
+ * 可拿到 skill/MCP 工具（llmChat allTools 装配 :523-533），即设计点名的"doc.api 上传/PPT 类"
+ * 副作用面。**崩溃后整轮重跑 = 外部动作重复**，execClaim 只防"并发"防不了"完成后崩溃的重放"
+ * （副作用已发生、handleStatus 还是 0、租约已过期 ⇒ 恢复判"可救"）。
+ *
+ * 判据（保守方向与 conversationVisibility 相反面：那里"不知道"默认安全=false 不标；
+ * 这里"不知道"必须默认危险——把 unknown 洗成 safe 就是设计禁止的授权旁路）：
+ * - 无 parentCode 的顶层行（普通 chat 任务、serialized-turn 追问轮）⇒ 放行：重放语义=兑现用户
+ *   本来要的那一轮，与正常轮的 direct 恢复同面，收紧它等于让追问轮静默消失；
+ * - 父行 `orchestrated===true`（编排树内 child/synthesis）⇒ **defer**：等副作用面的幂等键
+ *   （skill 写动作按 runCode+toolCallId 去重）到位再放开，那是另刀的活；
+ * - 存量串行树（建课等，父非 orchestrated）⇒ 放行：它们是 direct 默认上线以来实测覆盖的现网面，
+ *   收紧=改变已验收行为，不混进本刀；
+ * - 父行读不到/读失败 ⇒ defer（"不知道"不洗成"safe"）。
+ */
+export function recoverDirectAllowed({task, parent, parentReadFailed = false} = {}) {
+    if (!task?.parentCode) return {allowed: true, reason: 'top-level'}
+    if (parentReadFailed || !parent) return {allowed: false, reason: 'parent-unknown'}
+    if (parent.orchestrated === true) return {allowed: false, reason: 'orchestrated-side-effect-unbounded'}
+    return {allowed: true, reason: 'legacy-tree'}
+}
+
 export default {
     RECOVER_MODES, DEFAULT_RECOVER_MODE, resolveRecoverMode, recoverAction,
     DISPATCH_AGENT_TYPES, DEFAULT_RECOVER_WINDOW_MS, DEFAULT_RECOVER_STUCK_MS, resolveRecoverWindow, buildRecoverFilter,
+    recoverDirectAllowed,
 }

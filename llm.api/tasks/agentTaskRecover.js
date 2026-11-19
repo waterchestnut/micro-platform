@@ -121,7 +121,7 @@ const recoverDeps = {
  */
 function roundLine(p) {
     return `agentTask 恢复轮结束: 扫到=${p.scanned}, 触发=${p.recovered}, 跳过=${p.skipped}, `
-        + `未处理=${p.idle}, 窗口外滞留=${p.stale}, 模式=${recoverModeCfg.mode}`
+        + `延后=${p.deferred ?? 0}, 未处理=${p.idle}, 窗口外滞留=${p.stale}, 模式=${recoverModeCfg.mode}`
 }
 
 /**
@@ -171,11 +171,12 @@ export async function runAgentTaskRecover(params = {}) {
         },
     })
     if (!rows?.length) {
-        logger.info(roundLine({scanned: 0, recovered: 0, skipped: 0, idle: 0, stale}))
+        logger.info(roundLine({scanned: 0, recovered: 0, skipped: 0, deferred: 0, idle: 0, stale}))
         return 0
     }
     let recovered = 0
     let skipped = 0
+    let deferred = 0
     let idle = 0
     for (const task of rows) {
         try {
@@ -196,6 +197,8 @@ export async function runAgentTaskRecover(params = {}) {
                 recovered++
             } else if (r.outcome === 'blocked') {
                 skipped++
+            } else if (r.outcome === 'deferred') {
+                deferred++
             } else {
                 idle++
             }
@@ -208,6 +211,6 @@ export async function runAgentTaskRecover(params = {}) {
             logger.error(`agentTask 恢复失败: ${task.agentCode} ${String(e?.stack || e?.message || e).slice(0, 400)}`)
         }
     }
-    logger.info(roundLine({scanned: rows.length, recovered, skipped, idle, stale}))
+    logger.info(roundLine({scanned: rows.length, recovered, skipped, deferred, idle, stale}))
     return recovered
 }

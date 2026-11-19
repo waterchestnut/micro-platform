@@ -75,6 +75,9 @@ function fakeDeps(opt = {}) {
         },
         getParent: async (code) => {
             calls.push({at: 'getParent', code})
+            if (opt.getParentThrows) {
+                throw opt.getParentThrows
+            }
             return opt.parent || null
         },
         send: async (task) => {
@@ -278,6 +281,52 @@ describe('还没轮到它的那些情况', () => {
         const r = await recoverOneCandidate({task: task({parentCode: 'P1'}), mode: 'direct', deps})
         assert.equal(r.outcome, 'triggered')
         assert.ok(seq(calls).startsWith('getParent>acquireClaim'), seq(calls))
+    })
+})
+
+/**
+ * 副作用闸（设计 §4 恢复口径，2026-11-19）：编排树 child/synthesis 在幂等键到位前不自动重执行。
+ * 共同断言形状：deferred 必须是**纯读**——除 getParent 外零副作用、不烧 recoverCount 额度、
+ * 不取认领（可反复扫到，直到副作用幂等上线）。
+ */
+describe('副作用闸：orchestrated 树行的恢复 defer', () => {
+    test('编排 child（父 orchestrated=true, direct）⇒ deferred；序列只有 getParent', async () => {
+        const {deps, calls, logs} = fakeDeps({parent: {orchestrated: true, subAgents: [{agentCode: 'AG-1', handleStatus: 0}]}})
+        const r = await recoverOneCandidate({task: task({parentCode: 'ROOT'}), mode: 'direct', deps})
+        assert.equal(r.outcome, 'deferred')
+        assert.equal(r.reason, 'orchestrated-side-effect-unbounded')
+        assert.equal(seq(calls), 'getParent', `defer 不许有任何写/认领动作：${seq(calls)}`)
+        assert.equal(r.recoverCount, 0, 'defer 不是恢复尝试，不烧额度')
+        assert.ok(logs.info.some(l => l.includes('恢复延后(副作用未界)')), '要留运维可见的痕')
+    })
+
+    test('requeue 模式同样 defer——重投给消费者 = 同一副作用再跑一遍，换个投递方式不豁免', async () => {
+        const {deps, calls} = fakeDeps({parent: {orchestrated: true}})
+        const r = await recoverOneCandidate({task: task({parentCode: 'ROOT'}), mode: 'requeue', deps})
+        assert.equal(r.outcome, 'deferred')
+        assert.ok(!calls.some(c => c.at === 'send'), 'defer 后不许投队列')
+    })
+
+    test('父行读不到（null）与读失败（throw）都 defer——"不知道"不许洗成 safe', async () => {
+        const missing = await recoverOneCandidate({task: task({parentCode: 'GONE'}), mode: 'direct', deps: fakeDeps().deps})
+        assert.equal(missing.outcome, 'deferred')
+        assert.equal(missing.reason, 'parent-unknown')
+        const {deps: d2, calls: c2} = fakeDeps({getParentThrows: new Error('db-down')})
+        const err = await recoverOneCandidate({task: task({parentCode: 'P1'}), mode: 'direct', deps: d2})
+        assert.equal(err.outcome, 'deferred')
+        assert.equal(seq(c2), 'getParent', '读失败也不该继续往下')
+    })
+
+    test('存量串行树（父无 orchestrated）照旧被救——闸只收紧编排树，不改已验收现网面', async () => {
+        const {deps} = fakeDeps({parent: {subAgents: [{agentCode: 'AG-1', handleStatus: 0}]}})
+        const r = await recoverOneCandidate({task: task({parentCode: 'P1'}), mode: 'direct', deps})
+        assert.equal(r.outcome, 'triggered')
+    })
+
+    test('serialized-turn 追问轮（顶层无 parentCode）不受闸影响——用户等的答案不能静默消失', async () => {
+        const {deps} = fakeDeps()
+        const r = await recoverOneCandidate({task: task({agentRole: 'serialized-turn'}), mode: 'direct', deps})
+        assert.equal(r.outcome, 'triggered')
     })
 })
 

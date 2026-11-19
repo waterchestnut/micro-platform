@@ -18,7 +18,7 @@
  * 不会再出现"用例和我的 mock 自洽、却与真库不同"的第二例（redlock 那次记在 §25 v1.83）。
  */
 import {claimDecision} from './execClaim.js'
-import {recoverAction, DEFAULT_RECOVER_MODE} from './recoverPolicy.js'
+import {recoverAction, recoverDirectAllowed, DEFAULT_RECOVER_MODE} from './recoverPolicy.js'
 
 /** 必须由调用方注入的副作用。列在这里就是这张接口的清单，缺项时报错也照这份报 */
 export const REQUIRED_DEPS = ['acquireClaim', 'releaseClaim', 'updateTask', 'getParent', 'send', 'exec', 'log']
@@ -50,7 +50,7 @@ function checkDeps(deps) {
  * @param {Number} [p.leaseMs] 认领租约长度
  * @param {Object} p.deps 注入的副作用（见 `REQUIRED_DEPS`）
  * @returns {Promise<Object>} `{outcome, reason?, state?, recoverCount}`，
- *          outcome ∈ `quota-exhausted` / `waiting-siblings` / `blocked` / `requeued` / `triggered`
+ *          outcome ∈ `quota-exhausted` / `waiting-siblings` / `blocked` / `requeued` / `triggered` / `deferred`
  * @throws {Error} 数据写失败等真异常照常上抛（由调用方计入错误日志），但**抛之前一定释放已持有的认领**
  *
  * 三条不可交换的顺序，各钉一个实测过的病：
@@ -72,8 +72,14 @@ export async function recoverOneCandidate({task, maxRecover = 2, mode = DEFAULT_
         return {outcome: 'quota-exhausted', recoverCount, reason: `recoverCount>=${cap}`}
     }
     // 防乱序：仅恢复"轮到它"的任务——同父前置兄弟任务须已终结（2/-1/3），否则等前置收敛
+    let parent = null
+    let parentReadFailed = false
     if (task.parentCode) {
-        const parent = await deps.getParent(task.parentCode)
+        try {
+            parent = await deps.getParent(task.parentCode)
+        } catch {
+            parentReadFailed = true
+        }
         const subs = parent?.subAgents || []
         const idx = subs.findIndex(s => s.agentCode === agentCode)
         if (idx > 0) {
@@ -82,6 +88,18 @@ export async function recoverOneCandidate({task, maxRecover = 2, mode = DEFAULT_
                 return {outcome: 'waiting-siblings', recoverCount, reason: `prev-pending@${idx}`}
             }
         }
+    }
+
+    /**
+     * 副作用闸（设计 §4，判据在 recoverPolicy.recoverDirectAllowed）：编排树内的 child/synthesis
+     * 在幂等键到位前**不自动重执行**——direct 会重跑模型循环触发 skill/MCP 写副作用（PPT/上传），
+     * requeue 也只是把同一副作用交给消费者重跑，两种模式都不安全，故与 mode 无关地 defer。
+     * 判据只依赖父行，取认领前就跑：defer 不碰认领、不烧 recoverCount 额度、不写数据（可反复扫到）。
+     */
+    const gate = recoverDirectAllowed({task, parent, parentReadFailed})
+    if (!gate.allowed) {
+        deps.log.info(`agentTask 恢复延后(副作用未界): ${agentCode}（${task.title || ''}）${gate.reason}`)
+        return {outcome: 'deferred', reason: gate.reason, recoverCount}
     }
 
     /**
