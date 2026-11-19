@@ -111,6 +111,65 @@ async function resumeFromMirror({messageCode, lastSeq, request, reply}) {
 
 export default async function (fastify, opts) {
 
+    /**
+     * 非交互补全（R8 订阅接入 D5 母本同步，micro 底座侧）：服务端调用档——聚合返回、无 SSE。
+     * 与 /stream 的差集刻意最小化：同一 body schema、同一身份线（user-info 401）、同一频道校验
+     * （未配置频道 400）、同一执行入口 execChat、同一异常补档线。
+     * 刻意不带：SSE 通道/事件日志/resume/并发闸/steer/answer/心跳（cron 短任务、无人在环）。
+     * 身份形态（W4 裁定）：内网 user-info 系统身份头，先例=本仓 tasks/artifactReconcile.js。
+     */
+    fastify.post('/completion', {
+        schema: {
+            description: '非交互式对话补全（服务端调用档：聚合返回 answer 文本，无 SSE；身份/频道校验与 /stream 同线）',
+            summary: '对话补全（非交互）',
+            body: chatStreamBodySchema,
+            tags: ['llm'],
+        },
+    }, async function (request, reply) {
+        if (!request.userInfo?.userCode) {
+            const err = new Error('缺少有效的用户身份（user-info）')
+            err.statusCode = 401
+            throw err
+        }
+        /*schema 收紧前置观测：与 /stream 同一条 auditBody，未声明字段只告警不改行为*/
+        auditBody({body: request.body, schema: chatStreamBodySchema})
+        const reqChannel = request.reqParams?.options?.channel
+        if (reqChannel && validateChannels([reqChannel]).length) {
+            const err = new Error(`无效的频道: ${reqChannel}，该频道未在配置中定义`)
+            err.statusCode = 400
+            throw err
+        }
+        /** messageCode：调用方可带（幂等/对账锚），缺省服务端生成；档案行由 execChat 按同键落 */
+        const messageCode = request.reqParams?.options?.messageCode || tools.getUUID()
+        try {
+            const answer = await execChat(request.userInfo, request.reqParams.query, request.reqParams.conversationCode, {
+                ...request.reqParams.options,
+                messageCode,
+            })
+            /** execChat 的 'aborted' 终态在无 signal 的现实下不可达，但判据如实：非字符串=空答案 */
+            return {answer: typeof answer === 'string' && answer !== 'aborted' ? answer : '', messageCode}
+        } catch (err) {
+            /** 补档不写在 try 里（archiveUncaughtErrorTurn 内部把失败收成返回值，绝不二次抛） */
+            const archived = await archiveUncaughtErrorTurn({
+                messageCode,
+                conversationCode: request.reqParams?.conversationCode || '',
+                query: request.reqParams?.query || '',
+                options: request.reqParams?.options || {},
+                userInfo: request.userInfo,
+                err,
+                defaultChannel,
+                defaultChannelGroup,
+            })
+            request.log[archived.action === 'written' ? 'warn' : 'info']({
+                messageCode,
+                conversationCode: archived.conversationCode,
+                action: archived.action,
+                reason: archived.reason,
+            }, 'chat/completion 未捕获异常的补档结果')
+            throw err
+        }
+    })
+
     fastify.post('/stream', {
         schema: {
             description: '大模型对话，以event-stream返回',
