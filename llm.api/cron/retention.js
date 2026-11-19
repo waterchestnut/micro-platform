@@ -25,6 +25,7 @@ import {runBackfill} from '../tasks/abandonedBackfill.js'
 import {runSleepTimeConsolidate} from '../tasks/sleepTimeConsolidate.js'
 import {runArtifactReconcile} from '../tasks/artifactReconcile.js'
 import {runAgentTaskRecover} from '../tasks/agentTaskRecover.js'
+import {runSerializedTurnPump} from '../tasks/serializedTurnPump.js'
 import {createDrainController, resolveDrainBudget} from '../daos/core/policy/drainPolicy.js'
 
 /** 定时进程不能被一次任务异常带走：记日志继续等下一个周期（参照 callin 的兜底写法） */
@@ -220,6 +221,37 @@ if (cronConfig.recoverEnabled) {
     logger.info(`cron/agentTaskRecover 已注册 pattern=${recoverPattern} nextDate=${String(recoverJob.nextDate?.() ?? '-')}`)
 } else {
     logger.info('cron/agentTaskRecover 未启用（需 cron_recoverEnabled=true）')
+}
+
+/**
+ * 会话追问轮排水器（PR-任务编排 M1-b 设计 A）：注册条件与路由侧入队**同一总开关**
+ * （`limits.conversationTaskQueue.enabled===true`），再加 `cron_pumpEnabled` 作运维细分。
+ * 关的时候既不注册本 job、路由侧也维持现网"拒 4291"——两端必须一起关，否则"入队无人排"或"排一个不会入队的队"。
+ */
+if (llm.config.limits?.conversationTaskQueue?.enabled === true && cronConfig.pumpEnabled !== false) {
+    const pumpPattern = cronConfig.pumpPattern || '*/5 * * * * *'
+    const pumpJob = new CronJob(pumpPattern, () => runGuarded('serializedTurnPump', async () => {
+        jobs.pump = jobs.pump || {executing: false}
+        if (jobs.pump.executing) {
+            logger.info('serializedTurnPump-任务仍在执行，跳过本次触发')
+            return {skipped: true}
+        }
+        jobs.pump.executing = true
+        try {
+            const ret = await runSerializedTurnPump({})
+            return ret
+        } catch (e) {
+            logger.error(`serializedTurnPump 任务异常: ${e.stack || e.message}`)
+            return {abnormal: String(e.message || e).slice(0, 300)}
+        } finally {
+            jobs.pump.executing = false
+        }
+    }), null, true, cronConfig.timezone || 'Asia/Shanghai')
+    registeredJobs.push(pumpJob)
+    logger.info(`cron/serializedTurnPump 已注册 pattern=${pumpPattern} 批量=${cronConfig.pumpBatch || 20} `
+        + `staleMs=${llm.config.limits?.conversationTaskQueue?.staleMs}（与路由侧入队同开关 conversationTaskQueue.enabled）`)
+} else {
+    logger.info('cron/serializedTurnPump 未启用（需 limits_conversationTaskQueue=true；细分 cron_pumpEnabled=false 亦可单独停）')
 }
 
 /**

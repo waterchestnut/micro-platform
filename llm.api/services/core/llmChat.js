@@ -7,6 +7,9 @@
 import {OpenAI} from 'openai'
 import retSchema from '../../daos/retSchema.js'
 import conversationDac from '../../daos/core/dac/conversationDac.js'
+import {isInternalConversationCode} from '../../daos/core/policy/conversationVisibility.js'
+import {buildUsageCreditsFields} from './session/creditMeter.js'
+import {extractTaskFields} from './session/taskAccounting.js'
 import llmChannelDataSet, {getChannelMemory} from '../../conf/llmChannel.js'
 import {pickModelKey, defaultModelKey, defaultVisionModelKey} from '../../conf/llmModel.js'
 import tmplParse from 'json-templates'
@@ -188,7 +191,13 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                 realName: curUserInfo.realName
             },
             status: 0,
-            userCodes: [curUserInfo.userCode]
+            userCodes: [curUserInfo.userCode],
+            /**
+             * 建档点固化语义（conversationVisibility 的设计说明）：编排/任务的工作会话
+             * （root:/agent: 前缀）在此打 internal 标 ⇒ 用户列表不被 1+N 条工作会话淹没。
+             * 只有**创建者**知道前缀的意义，读取侧此后只看字段不看前缀。
+             */
+            internal: isInternalConversationCode(conversationCode)
         })
     }
 
@@ -822,6 +831,13 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                         upstreamRetried: upstreamStats.retried,
                         fallbackFrom: upstreamStats.fallbackFrom,
                         fallbackTo: upstreamStats.fallbackTo,
+                        // M6：credits 与 tokens 同刻同源（helper 单一定义，见 buildUsageCreditsFields 处注释）
+                        ...buildUsageCreditsFields({
+                            promptTokens: runUsage.promptTokens, completionTokens: runUsage.completionTokens,
+                            model: cfg, weights: config.credits?.weights,
+                        }),
+                        // §5-4：任务关联三列（白名单抽取；普通聊天不带=键缺席，不写空串）
+                        ...extractTaskFields({taskContext: options.taskContext}),
                     }).catch((e) => tlog.warn(`在途刷新账本失败: ${String(e?.message || e).slice(0, 160)}`))
                 }
                 let client = openai
@@ -1294,6 +1310,14 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                 loopExit: loopExitNow,
                 progress,
                 latencyMs: Date.now() - turnStart,
+                // M6：与在途刷新**同一个 helper**——两处字段清单就是"双处白名单"，一致性靠共用构造器保证，
+                // 不靠"记得两边都改"（本仓 §2E-2 那类"配置漂移"就是两处各写一遍写出来的）
+                ...buildUsageCreditsFields({
+                    promptTokens: runUsage.promptTokens, completionTokens: runUsage.completionTokens,
+                    model: (config.models || {})[llmModelUsed], weights: config.credits?.weights,
+                }),
+                // §5-4：任务关联三列与在途刷新同一提取器（同一份白名单判定，两处不许各写一遍）
+                ...extractTaskFields({taskContext: options.taskContext}),
             })
         } catch (e) {
             tlog.error(`模型用量落账失败: messageCode=${messageCode}, ${String(e?.message || e).slice(0, 200)}`)

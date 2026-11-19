@@ -11,6 +11,11 @@ import messageDac from '../../../daos/core/dac/messageDac.js'
 import {socketCloseAbortDecision} from '../../../services/core/session/shutdownPolicy.js'
 import {isClosing, shutdownStatus} from '../../../services/core/session/shutdownState.js'
 import {decideOverlap, overlapNote} from '../../../services/core/session/runOverlap.js'
+import {decideQueueOnOverlap, decideQueueOnStaleOpenRun} from '../../../services/core/session/turnScheduler.js'
+import {rejectQueueFull} from '../../../services/core/session/taskAdmission.js'
+import {buildIdemFilter, pickIdempotentHit, isDuplicateKeyError} from '../../../services/core/session/taskIdempotency.js'
+import {decideFanOutEntry} from '../../../services/core/session/fanOutEntry.js'
+import {buildSerializedTurnTask} from '../../../services/core/session/taskQueueComposer.js'
 import {rejectResponse} from '../../../services/core/session/runGate.js'
 import llmUsageDac from '../../../daos/core/dac/llmUsageDac.js'
 
@@ -132,6 +137,68 @@ export default async function (fastify, opts) {
         }
 
         /**
+         * 任务模式入口（PR-任务编排 M4b c2；属主拍板**显式进**：前端开关 / 频道白名单，不做每条消息自动判定）。
+         * 判据在纯件 `fanOutEntry.decideFanOutEntry`（可离线穷举），这里只接线。
+         *
+         * 位置在并发闸与 overlap **之前**，两个理由都是刻意的：
+         * - planner 是一次最长 30s 的模型调用，让它占着并发闸的坑不划算；而扇出建树本来就不受 chat 闸计数
+         *   （与建课等现网 agentTask 同语义）——它的边界是 `taskBudget` 的单 root 子任务上限（≤4），不是这里。
+         * - 扇出不读会话历史（planner 只看本句 query），因此也不该被"上一轮还没完"拦住：
+         *   用户可以在一条回答还在流的时候下一条任务。
+         *
+         * **失败一律落回普通回答**：功能没开、模型抖动、输出不合规——都不该让用户拿不到答案。
+         * （漏判退化成一次普通回答＝无损；误判把用户的话拆成树＝事故。这条不对称与 `fanOutIntake` 同族。）
+         *
+         * ⚠️ 关时本块连 planner 服务都不加载：`fanOutPlannerService` 静态引 OpenAI SDK 且经 `core/agentTask`
+         *   触到 redlock/kafka，与 `globalRunGate`/`redisClient` 同规——重模块绝不进默认热路径。
+         */
+        const plannerCfg = llm.config.agentTask?.fanOutPlanner || {}
+        const fanOutEntryDecision = decideFanOutEntry({
+            enabled: plannerCfg.enabled === true,
+            taskMode: request.reqParams?.options?.taskMode,
+            channel: reqChannel,
+            entryChannels: plannerCfg.entryChannels || [],
+        })
+        if (fanOutEntryDecision.attempt) {
+            const { planFanOutFromRequest } = await import('../../../services/agent/fanOutPlannerService.js')
+            try {
+                const planned = await planFanOutFromRequest({
+                    query: request.reqParams.query,
+                    conversationCode: request.reqParams.conversationCode,
+                    operator: {userCode: request.userInfo.userCode, realName: request.userInfo.realName},
+                    request: request.reqParams.options || {},
+                    taskCode: request.reqParams.options?.taskCode, // §5-1 客户端幂等键（不传⇒无幂等，诚实默认）
+                })
+                if (planned.fanOut) {
+                    logger.info(`任务模式受理: rootCode=${planned.rootCode}, 子任务=${planned.subtasks?.length || 0}, duplicate=${planned.duplicate === true}, `
+                        + `via=${fanOutEntryDecision.via}, userCode=${request.userInfo.userCode}, conversationCode=${request.reqParams.conversationCode}`)
+                    /**
+                     * 200 + `success:true` + `data.taskAccepted`：**这一轮不是 SSE**（没有同步 run）。
+                     * 前端据此显示"任务已受理"；综合结果落 `root:<rootCode>` 会话，可用
+                     * `/core/message/list` 带该 conversationCode 取（过程区实时呈现属 M1-c/M8，
+                     * 现在只有"终态可读"，没有"直播"——不假装）。
+                     * §5-1：同 taskCode 重发命中幂等 ⇒ `duplicate:true` 指回原 rootCode（不二次调 planner、不建二树）。
+                     */
+                    return reply.code(200).send({
+                        success: true, code: 0, msg: '',
+                        data: {
+                            taskAccepted: true, rootCode: planned.rootCode,
+                            ...(planned.duplicate ? {duplicate: true} : {}),
+                            subtasks: (planned.subtasks || []).map((s) => ({title: s.title, query: s.query})),
+                        },
+                    })
+                }
+                /** 判不拆 / planner 失败 ⇒ 往下走普通回答（用户的话绝不丢） */
+                logger.info(`任务模式未成行(落回普通回答): reason=${planned.reason}, via=${fanOutEntryDecision.via}, conversationCode=${request.reqParams.conversationCode}`)
+            } catch (e) {
+                logger.error(`任务模式规划异常(落回普通回答): conversationCode=${request.reqParams.conversationCode} ${String(e?.message || e).slice(0, 300)}`)
+            }
+        } else if (fanOutEntryDecision.reason === 'task-mode-disabled') {
+            /** 用户按了任务模式但服务端没开：这是部署事实不是用户错误 ⇒ 普通回答照给，但要说在日志里 */
+            logger.warn(`收到 taskMode 但 fanOutPlanner 未启用(按普通回答处理): conversationCode=${request.reqParams.conversationCode}, userCode=${request.userInfo.userCode}`)
+        }
+
+        /**
          * 并发闸（PR-0.4）。**默认关**：`limit` 为 0 时连登记都不做，行为与改造前逐字一致。
          *
          * 位置必须在这里——`writeHead(200)` 之后就只能靠 SSE 帧表达拒绝，
@@ -211,6 +278,114 @@ export default async function (fastify, opts) {
                     reject: overlapCfg.reject,
                 })
                 runOverlap = overlapNote(od)
+                /**
+                 * M1-b 会话任务队列（PR-任务编排，默认关）。两个入口（判据各自穷举）：
+                 * 1. `runOverlap` 已判拒（1.5s 防重窗内双击）⇒ `decideQueueOnOverlap` 改判"持久入队返回
+                 *    queued"，不丢单；开关关时**逐字走现网拒绝体**（"开关关=现网不变"的判据）。
+                 * 2. **开闸测验实锤的第二入口（2026-11-19）**：overlap 放行但 `reason=stale-open-run`
+                 *    （账本行还在 processing、只是过了防重窗）⇒ 心跳新鲜（<staleMs）就是"会话真忙"，
+                 *    追问该排队而不是并发双跑——overlap 的窗只防双击，会话串行是队列层的职责。
+                 *    判据在 `turnScheduler.decideQueueOnStaleOpenRun`；入队形状共用 `buildSerializedTurnTask`。
+                 *
+                 * ⚠️ 三条来自读码的硬约束（详见 handoff §3.0），别"顺手改回去"：
+                 * 1. 入队用 `handleMode:'manual'`（`addAgentTask` 只在 queue 才投 Kafka）——consumer 无会话级串行，
+                 *    投 queue 会在上一轮还活着时并发跑同一 conversationCode，正是 runOverlap 要防的竞态；
+                 * 2. 执行体是 `turnRunner`（忠实重放用户轮）而非 `agentChat`（后者 memory:off，语义不符）；
+                 * 3. `addAgentTask`/`agentTaskDac` 走**动态 import**：本文件的原则是重模块（kafka/redlock）
+                 *    绝不进默认热路径（同 `globalRunGate`、`redisClient` 的处置），开关关时一行都不该加载。
+                 *    计数查询也只在"可能入队"的两种判定下才跑（普通消息 no-prev 不付这笔钱）。
+                 */
+                const qCfg = llm.config.limits?.conversationTaskQueue || {}
+                let queueDecision = null
+                let addAgentTask = null
+                let agentTaskDac = null
+                let queueCount = 0
+                if (qCfg.enabled === true && (!od.admit || od.reason === 'stale-open-run')) {
+                    ;({addAgentTask} = await import('../../../services/core/agentTask.js'))
+                    agentTaskDac = (await import('../../../daos/core/dac/agentTaskDac.js')).default
+                    try {
+                        queueCount = await agentTaskDac.getCount({
+                            complexFilter: {conversationCode: request.reqParams.conversationCode, agentRole: 'serialized-turn', handleStatus: 0},
+                        }) || 0
+                    } catch { /* 读不到排队数按 0，是否放行交给 maxQueue 判定 */ }
+                    if (!od.admit) {
+                        queueDecision = decideQueueOnOverlap({
+                            enabled: true, overlapAdmit: false, overlapReason: od.reason, queueCount, maxQueue: qCfg.maxQueue,
+                        })
+                    } else {
+                        const hbAge = prevOpen?.updateTime ? Date.now() - new Date(prevOpen.updateTime).getTime() : null
+                        queueDecision = decideQueueOnStaleOpenRun({
+                            enabled: true, overlapReason: od.reason, prevHeartbeatAgeMs: hbAge,
+                            queueCount, maxQueue: qCfg.maxQueue, staleMs: qCfg.staleMs,
+                        })
+                    }
+                }
+                if (queueDecision && queueDecision.decision === 'queue') {
+                    /**
+                     * §5-1 幂等：同一会话同一 messageCode（前端预生成码重发/网关重试同一请求体）只留一条等待行。
+                     * 快路径=入队前预查；**并发终裁=partial-unique 索引**（uniq_serializedTurn_messageCode），
+                     * 撞键回查胜者行 ⇒ 两次请求同一 rootCode。预查读失败不拦插入（"读不到"≠"不存在"）。
+                     */
+                    const idemFilter = buildIdemFilter({
+                        conversationCode: request.reqParams.conversationCode,
+                        agentRole: 'serialized-turn', keyField: 'messageCode', keyValue: messageCodeForGate,
+                    })
+                    try {
+                        const hit = pickIdempotentHit({
+                            rows: await agentTaskDac.getTop(5, idemFilter, {insertTime: 1}),
+                            keyField: 'messageCode', keyValue: messageCodeForGate,
+                        })
+                        if (hit) {
+                            logger.warn(`同会话追问重复入队(幂等回原 root): rootCode=${hit.agentCode}, conversationCode=${request.reqParams.conversationCode}`)
+                            // 位次如实=含命中行自身的排队数（queueCount 本就只数库里行，不+1——它不是新请求）
+                            return reply.code(200).send({success: true, code: 0, msg: '', data: {queued: true, idempotent: true, rootCode: hit.agentCode, queuePosition: Math.max(1, queueCount)}})
+                        }
+                    } catch { /* 预查失败照走插入，唯一索引兜底 */ }
+                    try {
+                        const turn = buildSerializedTurnTask({
+                            conversationCode: request.reqParams.conversationCode,
+                            messageCode: messageCodeForGate,
+                            query: request.reqParams.query,
+                            request: request.reqParams || {},
+                            options: request.reqParams.options,
+                            userInfo: request.userInfo,
+                            operator: {userCode: request.userInfo?.userCode, realName: request.userInfo?.realName},
+                            handler: 'turnRunner',
+                        })
+                        try {
+                            await addAgentTask(turn) // manual ⇒ 落库但不自动派发，等 pump 在会话空闲时忠实重放
+                        } catch (e) {
+                            if (!isDuplicateKeyError(e)) throw e
+                            const hit2 = pickIdempotentHit({
+                                rows: await agentTaskDac.getTop(5, idemFilter, {insertTime: 1}),
+                                keyField: 'messageCode', keyValue: messageCodeForGate,
+                            })
+                            if (!hit2) throw e // 报重复却回查无行：不装成功，落回拒绝给真话
+                            logger.warn(`同会话追问重复入队(竞态幂等回原 root): rootCode=${hit2.agentCode}, conversationCode=${request.reqParams.conversationCode}`)
+                            return reply.code(200).send({success: true, code: 0, msg: '', data: {queued: true, idempotent: true, rootCode: hit2.agentCode, queuePosition: Math.max(1, queueCount)}})
+                        }
+                        logger.warn(`同会话追问入队（排队非拒绝）: rootCode=${turn.agentCode}, 位次=${queueDecision.queuePosition}, `
+                            + `上一轮=${od.prevMessageCode}, 已跑ms=${od.ageMs}, 入口=${od.admit ? 'stale-open-run' : 'overlap-reject'}, userCode=${request.userInfo?.userCode}, conversationCode=${request.reqParams.conversationCode}`)
+                        /** 200 + success:true：这是"已受理并排队"，不是错误；前端据 `data.queued` 进排队态（呈现属 M1-c） */
+                        return reply.code(200).send({success: true, code: 0, msg: '', data: {queued: true, rootCode: turn.agentCode, queuePosition: queueDecision.queuePosition}})
+                    } catch (e) {
+                        /** 入队失败绝不谎称已排队：落回现网拒绝，用户至少拿到一句真话 */
+                        logger.error(`同会话追问入队失败，退回拒绝: conversationCode=${request.reqParams.conversationCode} ${String(e?.message || e).slice(0, 200)}`)
+                    }
+                } else if (queueDecision && queueDecision.reason === 'queue-full') {
+                    /**
+                     * 队列满：回 **4292 专用拒绝体**（`rejectQueueFull` 单源形态：200+success:false，
+                     * 非 2xx 各端读不到体）。active/limit 带上真实队列数与上限——前端要能说明
+                     * "排队已满（N/上限）"，这与 4291"上一条还在处理中"是两句不同的真话。
+                     * 造不出拒绝体（形状漂移⇒null）时落回 4291 体：宁可话不精确，不可无话。
+                     */
+                    logger.warn(`同会话排队已满，拒绝本轮: reason=${queueDecision.reason}, maxQueue=${qCfg.maxQueue}, 队列数=${queueCount}, conversationCode=${request.reqParams.conversationCode}`)
+                    const rq = rejectQueueFull({...queueDecision, active: queueCount, limit: qCfg.maxQueue})
+                    if (rq) {
+                        Object.entries(rq.headers || {}).forEach(([k, v]) => reply.header(k, v))
+                        return reply.code(rq.httpStatus).send(rq.body)
+                    }
+                }
                 if (!od.admit) {
                     const r = rejectResponse(od)
                     Object.entries(r.headers || {}).forEach(([k, v]) => reply.header(k, v))
