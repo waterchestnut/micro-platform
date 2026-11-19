@@ -13,11 +13,13 @@ const {MongoClient} = require2('mongodb')
 
 const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const cfgText = fs.readFileSync(path.join(SRC, 'conf/system.config.js'), 'utf8')
-const pick = (re, d) => (re.exec(cfgText) || [])[1] || d
-const uri = pick(/uri: process\.env\['mongodbConfig_uri'\] \|\| '([^']+)'/, 'mongodb://mongo7-124:27017')
-const user = pick(/user: process\.env\['mongodbConfig_options_user'\] \|\| '([^']+)'/, 'localuser')
-const pass = pick(/pass: process\.env\['mongodbConfig_options_pass'\] \|\| '([^']+)'/, 'yoprt123')
-const dbName = pick(/mongodbConfig_options_dbName'\] \|\| '([^']+)'/, 'xxzx-llm-api')
+// 刀七 fork 适配：底座 conf 是 env-only（MONGO_URI/MONGO_USER/MONGO_PASS/MONGO_DB），
+// 母本从源码正则抠硬编码回退串的写法在底座必失配——直读环境；丢弃母本 dev 字面量，
+// 免得 env 缺席时静默连上母本库（跨环境事故温床）。
+const uri = (process.env.MONGO_URI || 'mongodb://x')
+const user = (process.env.MONGO_USER || '')
+const pass = (process.env.MONGO_PASS || '')
+const dbName = (process.env.MONGO_DB || 'llm-api')
 const prefix = process.argv[2] || 'llmmodel-dev'
 
 const client = await MongoClient.connect(uri.replace(/^mongodb:\/\//, `mongodb://${user}:${pass}@`), {

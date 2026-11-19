@@ -48,11 +48,11 @@ const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64')
 const log = (note, obj) => console.log(JSON.stringify({probe: 'usage-crosscheck', note, ...obj}))
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 
-const uriBase = cfgDefault(/uri: process\.env\['mongodbConfig_uri'\] \|\| '([^']+)'/, 'mongodb://mongo7-124:27017')
-const user = cfgDefault(/user: process\.env\['mongodbConfig_options_user'\] \|\| '([^']+)'/, 'localuser')
-const pass = cfgDefault(/pass: process\.env\['mongodbConfig_options_pass'\] \|\| '([^']+)'/, 'yopit123')
-const authSource = cfgDefault(/authSource: process\.env\['mongodbConfig_options_authSource'\] \|\| '([^']+)'/, 'admin')
-const dbName = cfgDefault(/dbName: process\.env\['mongodbConfig_options_dbName'\] \|\| '([^']+)'/, 'xxzx-llm-api')
+const uriBase = (process.env.MONGO_URI || 'mongodb://x')
+const user = (process.env.MONGO_USER || '')
+const pass = (process.env.MONGO_PASS || '')
+const authSource = 'admin'
+const dbName = (process.env.MONGO_DB || 'llm-api')
 
 /**
  * @description 打一轮对话（可选中途打断），返回 conversationCode

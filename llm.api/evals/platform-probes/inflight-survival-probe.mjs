@@ -299,10 +299,10 @@ try {
     process.exit(2)
 }
 const client = await MongoClient.connect(
-    d(/uri: process\.env\['mongodbConfig_uri'\] \|\| '([^']+)'/, 'mongodb://mongo7-124:27017')
-        .replace(/^mongodb:\/\//, `mongodb://${d(/options_user'\] \|\| '([^']+)'/, 'localuser')}:${d(/options_pass'\] \|\| '([^']+)'/, 'yoprt123')}@`),
+    (process.env.MONGO_URI || 'mongodb://x')
+        .replace(/^mongodb:\/\//, `mongodb://${(process.env.MONGO_USER || '')}:${(process.env.MONGO_PASS || '')}@`),
     {serverSelectionTimeoutMS: 15000, maxPoolSize: 2})
-const db = client.db(d(/dbName: process\.env\['mongodbConfig_options_dbName'\] \|\| '([^']+)'/, 'xxzx-llm-api'))
+const db = client.db((process.env.MONGO_DB || 'llm-api'))
 
 /**
  * 覆盖判据的时钟问题（第一版就踩了）：`updateTime` **只在 touchInflight 时推进**，

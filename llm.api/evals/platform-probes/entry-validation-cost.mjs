@@ -24,8 +24,8 @@ const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
 const cfgText = fs.readFileSync(path.join(SRC, 'conf/system.config.js'), 'utf8')
 const d = (re, def) => (re.exec(cfgText) || [])[1] || def
-const uri = d(/uri: process\.env\['mongodbConfig_uri'\] \|\| '([^']+)'/, 'mongodb://mongo7-124:27017')
-    .replace(/^mongodb:\/\//, `mongodb://${d(/options_user'\] \|\| '([^']+)'/, 'localuser')}:${d(/options_pass'\] \|\| '([^']+)'/, 'yoprt123')}@`)
+const uri = (process.env.MONGO_URI || 'mongodb://x')
+    .replace(/^mongodb:\/\//, `mongodb://${(process.env.MONGO_USER || '')}:${(process.env.MONGO_PASS || '')}@`)
 
 const LINES = []
 /**
@@ -53,7 +53,7 @@ try {
     process.exit(2)
 }
 const client = await MongoClient.connect(uri, {serverSelectionTimeoutMS: 15000, maxPoolSize: 2})
-const db = client.db(d(/dbName: process\.env\['mongodbConfig_options_dbName'\] \|\| '([^']+)'/, 'xxzx-llm-api'))
+const db = client.db((process.env.MONGO_DB || 'llm-api'))
 const since = new Date(Date.now() - MINUTES * 60000)
 const rows = await db.collection('llmUsage').find({
     conversationCode: {$regex: '^(p10-|isv-|sfx-|aab-|logcheck-)'},

@@ -177,10 +177,10 @@ const cfgText = fs.readFileSync(path.join(SRC, 'conf/system.config.js'), 'utf8')
 const d = (re, def) => (re.exec(cfgText) || [])[1] || def
 const {MongoClient} = require2('mongodb')
 const client = await MongoClient.connect(
-    d(/uri: process\.env\['mongodbConfig_uri'\] \|\| '([^']+)'/, 'mongodb://mongo7-124:27017')
-        .replace(/^mongodb:\/\//, `mongodb://${d(/options_user'\] \|\| '([^']+)'/, 'localuser')}:${d(/options_pass'\] \|\| '([^']+)'/, 'yoprt123')}@`),
+    (process.env.MONGO_URI || 'mongodb://x')
+        .replace(/^mongodb:\/\//, `mongodb://${(process.env.MONGO_USER || '')}:${(process.env.MONGO_PASS || '')}@`),
     {serverSelectionTimeoutMS: 15000, maxPoolSize: 2})
-const dbName = d(/dbName: process\.env\['mongodbConfig_options_dbName'\] \|\| '([^']+)'/, 'xxzx-llm-api')
+const dbName = (process.env.MONGO_DB || 'llm-api')
 const msg = await client.db(dbName).collection('message').aggregate([
     {$match: {conversationCode}},
     {$project: {_id: 0, progress: 1, answerLen: {$strLenCP: {$ifNull: ['$answer', '']}}}},

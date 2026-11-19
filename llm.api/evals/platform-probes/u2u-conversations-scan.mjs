@@ -25,11 +25,11 @@ function cfgDefault(re, d) {
     return m ? m[1] : d
 }
 
-const uriBase = cfgDefault(/uri: process\.env\['mongodbConfig_uri'\] \|\| '([^']+)'/, 'mongodb://mongo7-124:27017')
-const user = cfgDefault(/user: process\.env\['mongodbConfig_options_user'\] \|\| '([^']+)'/, 'localuser')
-const pass = cfgDefault(/pass: process\.env\['mongodbConfig_options_pass'\] \|\| '([^']+)'/, 'yopit123')
-const auth = cfgDefault(/authSource: process\.env\['mongodbConfig_options_authSource'\] \|\| '([^']+)'/, 'admin')
-const dbName = cfgDefault(/dbName: process\.env\['mongodbConfig_options_dbName'\] \|\| '([^']+)'/, 'xxzx-llm-api')
+const uriBase = (process.env.MONGO_URI || 'mongodb://x')
+const user = (process.env.MONGO_USER || '')
+const pass = (process.env.MONGO_PASS || '')
+const auth = 'admin'
+const dbName = (process.env.MONGO_DB || 'llm-api')
 
 /** 可用凭据的账号前缀（sim/回归批次），只有这些才可能拿到 token */
 const MINTABLE = /^(T-SIM-|S-SIM-|T-THESIS-REG|S-THESIS-REG)/

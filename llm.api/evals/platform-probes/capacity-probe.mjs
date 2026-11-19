@@ -264,11 +264,11 @@ log('redis 前后对比', {before, after, 连接释放: 'after.connectedClients 
  */
 try {
     const {MongoClient} = require2('mongodb')
-    const uriBase = cfgDefault(/uri: process\.env\['mongodbConfig_uri'\] \|\| '([^']+)'/, 'mongodb://mongo7-124:27017')
-    const user = cfgDefault(/user: process\.env\['mongodbConfig_options_user'\] \|\| '([^']+)'/, 'localuser')
-    const pass = cfgDefault(/pass: process\.env\['mongodbConfig_options_pass'\] \|\| '([^']+)'/, 'yopit123')
-    const auth = cfgDefault(/authSource: process\.env\['mongodbConfig_options_authSource'\] \|\| '([^']+)'/, 'admin')
-    const dbName = cfgDefault(/dbName: process\.env\['mongodbConfig_options_dbName'\] \|\| '([^']+)'/, 'xxzx-llm-api')
+    const uriBase = (process.env.MONGO_URI || 'mongodb://x')
+    const user = (process.env.MONGO_USER || '')
+    const pass = (process.env.MONGO_PASS || '')
+    const auth = 'admin'
+    const dbName = (process.env.MONGO_DB || 'llm-api')
     const allCodes = results.flatMap(r => r.rows.map(x => x.conversationCode).filter(Boolean))
     const mc = await MongoClient.connect(
         uriBase.replace(/^mongodb:\/\//, `mongodb://${user}:${pass}@`) + `/${dbName}?authSource=${auth}`,

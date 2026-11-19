@@ -126,13 +126,13 @@ async function probeExecd() {
 /* ================= P-12：库存量审计（纯读） ================= */
 async function probeInventory() {
     const uri = process.env.MONGO_URI || (() => {
-        const u = cfgDefault(/uri: process\.env\['mongodbConfig_uri'\] \|\| '([^']+)'/, 'mongodbConfig.uri')
-        const user = cfgDefault(/user: process\.env\['mongodbConfig_options_user'\] \|\| '([^']+)'/, 'user')
-        const pass = cfgDefault(/pass: process\.env\['mongodbConfig_options_pass'\] \|\| '([^']+)'/, 'pass')
-        const auth = cfgDefault(/authSource: process\.env\['mongodbConfig_options_authSource'\] \|\| '([^']+)'/, 'authSource')
+        const u = (process.env.MONGO_URI || 'mongodb://x')
+        const user = (process.env.MONGO_USER || '')
+        const pass = (process.env.MONGO_PASS || '')
+        const auth = 'admin'
         return u.replace('://', `://${user}:${pass}@`) + `/?authSource=${auth}`
     })()
-    const dbName = cfgDefault(/dbName: process\.env\['mongodbConfig_options_dbName'\] \|\| '([^']+)'/, 'dbName')
+    const dbName = (process.env.MONGO_DB || 'llm-api')
     const req = createRequire(path.join(SRC, 'package.json'))
     const {MongoClient} = req('mongodb')
     const c = await MongoClient.connect(uri, {serverSelectionTimeoutMS: 8000, maxPoolSize: 2})

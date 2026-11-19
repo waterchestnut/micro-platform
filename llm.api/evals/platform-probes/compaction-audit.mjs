@@ -36,11 +36,11 @@ function cfgDefault(re, dflt) {
     return m ? m[1] : dflt
 }
 
-const uriBase = cfgDefault(/uri: process\.env\['mongodbConfig_uri'\] \|\| '([^']+)'/, 'mongodb://mongo7-124:27017')
-const user = cfgDefault(/user: process\.env\['mongodbConfig_options_user'\] \|\| '([^']+)'/, 'localuser')
-const pass = cfgDefault(/pass: process\.env\['mongodbConfig_options_pass'\] \|\| '([^']+)'/, 'yopit123')
-const authSource = cfgDefault(/authSource: process\.env\['mongodbConfig_options_authSource'\] \|\| '([^']+)'/, 'admin')
-const dbName = cfgDefault(/dbName: process\.env\['mongodbConfig_options_dbName'\] \|\| '([^']+)'/, 'xxzx-llm-api')
+const uriBase = (process.env.MONGO_URI || 'mongodb://x')
+const user = (process.env.MONGO_USER || '')
+const pass = (process.env.MONGO_PASS || '')
+const authSource = 'admin'
+const dbName = (process.env.MONGO_DB || 'llm-api')
 
 const limitIdx = process.argv.findIndex(a => a.startsWith('--limit='))
 const LIMIT = limitIdx >= 0 ? Number(process.argv[limitIdx].split('=')[1]) : 20000
