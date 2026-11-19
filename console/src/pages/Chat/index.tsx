@@ -93,6 +93,74 @@ const useStyles = createStyles(({token, css}) => ({
     .ant-bubble-start .ant-bubble-body {
       width: 100%;
     }
+
+    /**
+     * 深度美化（属主 2026-11-19，与母本同步）：会话区正文排版层——XMarkdown 输出的
+     * 标题/列表/表格/引用/代码此前吃默认值，长答案观感松散。只在气泡内容作用域内收紧。
+     */
+    .ant-bubble-content {
+      font-size: 14px;
+      line-height: 1.75;
+      word-break: break-word;
+    }
+    .ant-bubble-content h1,
+    .ant-bubble-content h2,
+    .ant-bubble-content h3,
+    .ant-bubble-content h4 {
+      margin: 16px 0 8px;
+      font-weight: 600;
+      line-height: 1.45;
+    }
+    .ant-bubble-content h1 {
+      font-size: 20px;
+    }
+    .ant-bubble-content h2 {
+      font-size: 18px;
+    }
+    .ant-bubble-content h3 {
+      font-size: 16px;
+    }
+    .ant-bubble-content ul,
+    .ant-bubble-content ol {
+      margin: 6px 0 10px;
+      padding-inline-start: 22px;
+    }
+    .ant-bubble-content li {
+      margin: 3px 0;
+    }
+    .ant-bubble-content blockquote {
+      margin: 8px 0;
+      padding: 2px 12px;
+      border-inline-start: 3px solid ${token.colorPrimaryBorder};
+      background: ${token.colorFillQuaternary};
+      color: ${token.colorTextSecondary};
+      border-radius: 0 8px 8px 0;
+    }
+    .ant-bubble-content table {
+      display: block;
+      max-width: 100%;
+      overflow-x: auto;
+      border-collapse: collapse;
+      margin: 10px 0;
+    }
+    .ant-bubble-content th,
+    .ant-bubble-content td {
+      border: 1px solid ${token.colorBorderSecondary};
+      padding: 6px 10px;
+      text-align: left;
+    }
+    .ant-bubble-content th {
+      background: ${token.colorFillQuaternary};
+      font-weight: 600;
+    }
+    .ant-bubble-content pre {
+      border-radius: 10px;
+      margin: 10px 0;
+    }
+    .ant-bubble-content img {
+      max-width: 100%;
+      border-radius: 8px;
+    }
   `,
   inputArea: css`
     padding: 16px 24px;
@@ -174,6 +242,10 @@ const providerFactory = (conversationKey: string) => {
 const Index: React.FC = () => {
   const {token} = theme.useToken()
   const {styles} = useStyles()
+  /** 底座当前用户走 getUserCache（登录时 setUserCache 落库的对象，含 avatarUrl/realName） */
+  const currentUser = useMemo<any>(() => {
+    try { return getUserCache() || {} } catch { return {} }
+  }, [])
   const [activeConv, setActiveConv] = useState<string>('')
   const [inputValue, setInputValue] = useState('')
   const [attachmentsOpen, setAttachmentsOpen] = useState(false)
@@ -714,6 +786,26 @@ const Index: React.FC = () => {
     setActiveConvLabel(conversationListRef?.current?.getConvLabelByKey?.(activeConv) || '')
   }, [activeConv, messages.length])
 
+  /**
+   * 深度美化（属主 2026-11-19，与母本 console 同步）·头像对：
+   * - 右侧=个人头像：有 avatarUrl 用真图；没有用**姓名首字+青碧渐变**——兜底也要像设计过的。
+   * - 左侧=AI：方角渐变徽标（蓝紫）；u2u 对方用圆形同款渐变。
+   */
+  const myAvatar = () => (
+    currentUser?.avatarUrl ? (
+      <Avatar size={30} src={getDocHttpUrl(currentUser.avatarUrl)}/>
+    ) : (
+      <Avatar size={30} style={{background: 'linear-gradient(135deg, #38b2a3, #1e8f83)', fontWeight: 600, fontSize: 13, flexShrink: 0}}>
+        {(currentUser?.realName || currentUser?.nickName || '我').trim().charAt(0)}
+      </Avatar>
+    )
+  )
+  const aiAvatar = () => (
+    <Avatar shape="square" size={30} style={{borderRadius: 9, background: 'linear-gradient(135deg, #5b8cff, #7a5cff)', flexShrink: 0}}>
+      <RobotOutlined style={{fontSize: 15}}/>
+    </Avatar>
+  )
+
   const memoRole: BubbleListProps['role'] = useMemo(
     () => ({
       ai: (data) => {
@@ -817,9 +909,7 @@ const Index: React.FC = () => {
               {'正在生成内容，敬请等待。。。'}
             </Space>
           ),
-          avatar: () => (
-            <Avatar icon={<RobotOutlined/>} style={{backgroundColor: token.colorPrimary}}/>
-          ),
+          avatar: aiAvatar,
         }
       },
       user: (data) => ({
@@ -827,15 +917,30 @@ const Index: React.FC = () => {
         header: '对方',
         contentRender,
         avatar: () => (
-          <Avatar icon={<UserOutlined/>} style={{backgroundColor: token.colorSuccess}}/>
+          <Avatar size={30} style={{background: 'linear-gradient(135deg, #5b8cff, #7a5cff)', flexShrink: 0}}>
+            <UserOutlined style={{fontSize: 15}}/>
+          </Avatar>
         ),
       }),
+      /**
+       * 自己的消息（属主复调 2026-11-19）：去名牌；个人头像（无图=姓名首字渐变）；
+       * 靠右浅主题底、右下角收小做"尾巴"。
+       */
       my: (data) => ({
         placement: 'end',
         typing: false,
         variant: 'filled' as const,
-        styles: {content: {maxWidth: 'min(640px, 100%)', borderRadius: 14}},
+        styles: {
+          content: {
+            maxWidth: 'min(640px, 100%)',
+            borderRadius: '14px 14px 4px 14px',
+            background: token.colorPrimaryBg,
+            color: token.colorText,
+            lineHeight: 1.7,
+          },
+        },
         contentRender,
+        avatar: myAvatar,
       }),
       notice: {
         variant: 'filled',
@@ -845,7 +950,7 @@ const Index: React.FC = () => {
         },
       },
     }),
-    [],
+    [currentUser?.avatarUrl, currentUser?.realName, currentUser?.nickName, token.colorPrimaryBg, token.colorText],
   )
 
   const senderHeader = (
