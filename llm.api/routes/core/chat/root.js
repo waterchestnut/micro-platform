@@ -141,17 +141,36 @@ export default async function (fastify, opts) {
         }
         /** messageCode：调用方可带（幂等/对账锚），缺省服务端生成；档案行由 execChat 按同键落 */
         const messageCode = request.reqParams?.options?.messageCode || tools.getUUID()
+        /** 聚合收口（母本 11-19 刀三实弹第二轮抓出）：execChat 的**返回值是终态哨兵**（'done'），
+         *  正文由 delta 帧承载——SSE 档靠通道推给浏览器，非交互档服务端必须自己消费帧才能拿到文本。
+         *  累加规则对齐前端消费面：role==='assistant' 且 content 为串的帧才计数；
+         *  'reset' 具名事件=答案重置，缓冲区清空。缓存命中整段一帧，同规则接住。 */
+        let answerBuf = ''
+        const streamCallback = (raw, event) => {
+            if (event === 'reset') {
+                answerBuf = ''
+                return
+            }
+            try {
+                const f = JSON.parse(raw)
+                if (f && f.role === 'assistant' && typeof f.content === 'string') {
+                    answerBuf += f.content
+                }
+            } catch {
+                /* 帧解析失败不反噬执行：权威副本在档案行，宁可少聚合也不炸这一轮 */
+            }
+        }
         try {
-            const answer = await execChat(request.userInfo, request.reqParams.query, request.reqParams.conversationCode, {
+            const ret = await execChat(request.userInfo, request.reqParams.query, request.reqParams.conversationCode, {
                 ...request.reqParams.options,
                 messageCode,
-                /** 非交互收口：execChat 主 delta 环（llmChat L931/L1017/L1623 等）不加守卫裸调
-                 *  streamCallback，不传=TypeError 500（11-19 母本刀三实弹 pod 内真发抓出）。传 no-op
-                 *  接帧即弃——本档的权威文本是返回值，不是帧流；非交互性由"不建通道、不注事件日志"保证。 */
-                streamCallback: () => {},
+                streamCallback,
             })
-            /** execChat 的 'aborted' 终态在无 signal 的现实下不可达，但判据如实：非字符串=空答案 */
-            return {answer: typeof answer === 'string' && answer !== 'aborted' ? answer : '', messageCode}
+            /** ret 正常是 'done' 哨兵；非哨兵非空串时按其就是文本的判据兜底 */
+            const answer = answerBuf.trim()
+                ? answerBuf
+                : (typeof ret === 'string' && ret !== 'done' && ret !== 'aborted' ? ret : '')
+            return {answer, messageCode}
         } catch (err) {
             /** 补档不写在 try 里（archiveUncaughtErrorTurn 内部把失败收成返回值，绝不二次抛） */
             const archived = await archiveUncaughtErrorTurn({

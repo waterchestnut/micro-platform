@@ -4,7 +4,8 @@
  * @description
  * 确定性路径集成：401（无身份，先于执行）、400（未配置频道）——两条都不触达 execChat，
  * 不烧模型配额；聚合成功路径（真跑 execChat）不在本文件断言，由源码锚钉接线形状：
- * 无 streamCallback（非交互档的定义特征）、messageCode 透传、aborted 防御、异常补档同线。
+ * 服务端消费帧聚合（execChat 返回值是 'done' 哨兵，正文只在 delta 帧里）、messageCode 透传、
+ * 哨兵/aborted 防御、异常补档同线。
  */
 import {test} from 'node:test'
 import * as assert from 'node:assert'
@@ -53,9 +54,13 @@ test('/core/chat/completion 接线锚（源码级，非交互档的定义特征�
     const block = route.slice(start, route.indexOf("fastify.post('/stream'", start))
 
     assert.ok(block.includes('execChat(request.userInfo'), '执行入口单源=execChat（不另造第二套主循环）')
-    /** 11-19 实弹修正：no-op 收口必须有——execChat 主 delta 环裸调 streamCallback（不传=500），
-     *  但"非交互"由无 SSE 通道/无事件日志/无 resume 保证，不是由"无回调"保证 */
-    assert.ok(/streamCallback:\s*\(\)\s*=>\s*\{\}/.test(block), 'no-op 收口在位（接帧即弃）')
+    /** 11-19 实弹两轮修正后的定义特征：不是"无回调"，而是**服务端自己消费帧聚合**——
+     *  execChat 返回值是 'done' 哨兵，正文只在 delta 帧里；不累帧=把哨兵当答案回传 */
+    assert.ok(/event === 'reset'/.test(block), "reset 具名事件清空缓冲（对齐前端消费语义）")
+    assert.ok(/f\.role === 'assistant' && typeof f\.content === 'string'/.test(block), 'assistant 内容帧才计数（meta/sources/工具帧排除）')
+    assert.ok(block.includes('answerBuf'), '聚合缓冲在位')
+    assert.ok(block.includes("ret !== 'done'"), "哨兵防御：'done' 不是答案")
+    assert.ok(block.includes("!== 'aborted'"), 'aborted 终态防御在位')
     assert.ok(!block.includes('createSseChannel'), '非交互档：不建 SSE 通道')
     assert.ok(!block.includes('admitRun'), '非交互档：不接 chat 并发闸（cron 短任务，边界入账）')
     assert.ok(block.includes('messageCode'), 'messageCode 透传（调用方对账锚 + 档案同键）')
