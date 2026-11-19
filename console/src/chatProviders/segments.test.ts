@@ -203,6 +203,25 @@ describe('段时间线条目（组件只渲染它，判断全在这里）', () =
     expect(v.description).toBe('42 字');
   });
 
+  test('`self-check` 段（PR-M 完成性复核补充）是 success，且兜底标题不是泛化的"执行过程"', () => {
+    // success：它是"复核后主动补了一段"，是完成的动作，不是 cancelled 那种被打断——不能标 error
+    const withServerTitle = segmentTimelineView({
+      seq: 5,
+      kind: 'self-check',
+      category: 'text',
+      title: '完成性复核后补充的内容',
+      ref: 'answer',
+      metrics: { chars: 88 },
+    });
+    expect(withServerTitle.status).toBe('success');
+    expect(withServerTitle.title).toBe('完成性复核后补充的内容');
+    expect(withServerTitle.bodyKind).toBe('hint'); // ref:answer ⇒ 指向回答，不在段内重复正文
+    // 服务端没给 title 时也必须落到 self-check 专属兜底，而不是泛化的"执行过程"
+    const noTitle = segmentTimelineView({ seq: 6, kind: 'self-check', category: 'text' });
+    expect(noTitle.title).toBe('完成性复核补充');
+    expect(segmentCategory({ seq: 6, kind: 'self-check' } as any)).toBe('text');
+  });
+
   test('`ref:"answer"` 的段用 hint 指向回答，且不可展开（正文不在这里）', () => {
     const v = segmentTimelineView({
       seq: 5,
@@ -303,6 +322,35 @@ describe('空正文轮次：三类各有各的说法，不许一律写成"内容
       process: { lostChars: 900 },
     });
     expect(n?.reason).toBe('abandoned');
+  });
+
+  test('PR-G 批二a：ongoing 行有半句正文也要说"仍在进行中"（还没完成≠完成得没内容）', () => {
+    const n = deriveEmptyRoundNotice({ content: '写了一半的正文', streamState: 'ongoing', process: {} });
+    expect(n?.reason).toBe('ongoing');
+    expect(n?.text).toContain('仍在进行中');
+    /** 无续接凭据不许承诺续接：服务端对缺游标是 400，"可从断点续接"没有按钮撑着就是假话 */
+    expect(n?.text).not.toContain('续接');
+    const withCursor = deriveEmptyRoundNotice({
+      content: '写了一半的正文',
+      streamState: 'ongoing',
+      process: { lastSeq: 7 },
+      resumeAvailable: true,
+    });
+    expect(withCursor?.text).toContain('可从断点续接');
+    /** ongoing 优先级在 text 检查之前：半句正文不许把进行中洗白成"没事" */
+    const bare = deriveEmptyRoundNotice({ content: '', streamState: 'ongoing' });
+    expect(bare?.reason).toBe('ongoing');
+    /** 非 ongoing 行为不变（done 行有正文照旧静默） */
+    expect(deriveEmptyRoundNotice({ content: '正文', streamState: 'done' })).toBeNull();
+  });
+
+  test('M8 刀一：taskNote 在位 ⇒ 空正文不说"未产出回答内容"（被后台收下≠没产出，两类事实）', () => {
+    const note = '上一条还在处理，本轮已排队（第 2 位），轮到后自动开始';
+    expect(deriveEmptyRoundNotice({ content: '', streamState: 'done', taskNote: note })).toBeNull();
+    /** 短路只在空正文处生效：ongoing 仍是 ongoing（真在流的轮不会被任务说明洗白） */
+    expect(deriveEmptyRoundNotice({ content: '', streamState: 'ongoing', taskNote: note })?.reason).toBe('ongoing');
+    /** 无 taskNote 的旧形状行为逐字不变（兜底句还在岗） */
+    expect(deriveEmptyRoundNotice({ content: '', streamState: 'done' })?.text).toContain('未产出回答内容');
   });
 });
 

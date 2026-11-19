@@ -14,7 +14,7 @@
  */
 
 /** 段的种类由服务端给全，前端不要从事件顺序反推（反推会把 finalize 猜成 tool-round） */
-export type ChatSegmentKind = 'tool-round' | 'skill-reload' | 'finalize' | 'answer' | 'cancelled';
+export type ChatSegmentKind = 'tool-round' | 'skill-reload' | 'finalize' | 'answer' | 'cancelled' | 'self-check';
 
 export type ChatSegmentMetrics = {
   chars?: number;
@@ -29,7 +29,7 @@ export type ChatSegment = {
   /** 渲染大类：tools / skill / text（服务端给，前端不猜） */
   category?: string;
   title?: string;
-  /** 段正文：`answer`/`finalize`/`cancelled` 三类为空，全文在 message.answer（`ref:'answer'` 就是指针） */
+  /** 段正文：`answer`/`finalize`/`cancelled`/`self-check` 这几类为空，全文在 message.answer（`ref:'answer'` 就是指针） */
   text?: string;
   ref?: string | null;
   tools?: string[];
@@ -146,6 +146,7 @@ const CATEGORY_BY_KIND: Record<string, string> = {
   finalize: 'text',
   answer: 'text',
   cancelled: 'text',
+  'self-check': 'text',
 };
 
 /**
@@ -199,6 +200,7 @@ const KIND_LABEL: Record<string, string> = {
   finalize: '整理最终回答',
   answer: '最终回答',
   cancelled: '被中断的一段',
+  'self-check': '完成性复核补充',
 };
 
 /**
@@ -258,7 +260,7 @@ export type EmptyRoundNotice = {
   tone: 'warning' | 'info';
   text: string;
   /** 分类标签，写日志/埋点用，便于日后统计到底是哪类多 */
-  reason: 'has-segments' | 'abandoned' | 'no-content';
+  reason: 'has-segments' | 'abandoned' | 'no-content' | 'ongoing';
 };
 
 /**
@@ -291,9 +293,28 @@ export function deriveEmptyRoundNotice(p: {
   error?: string;
   process?: any;
   streamState?: string;
+  /** 续接入口真的可用（有游标、有 runner）才允许承诺"可从断点续接"——服务端对缺游标是 400，无凭据的承诺是假话 */
+  resumeAvailable?: boolean;
+  /** M8 刀一：编排受理结论行存在 ⇒ 空正文不是"未产出"（见函数内短路注释） */
+  taskNote?: string;
 }): EmptyRoundNotice | null {
   const text = (p?.content || '').trim();
+  /** PR-G 批二a：进行中行（processing/waiting 的历史映射）——有半句正文也要说，
+   *  它不是"完成得没内容"而是"还没完成"，判据顺序必须在 text 检查之前 */
+  if (p?.streamState === 'ongoing') {
+    return {
+      tone: 'info',
+      reason: 'ongoing',
+      text: p.resumeAvailable ? '本轮仍在进行中，可从断点续接' : '本轮仍在进行中',
+    };
+  }
   if (text) return null;
+  /**
+   * M8 刀一：有任务受理说明行（taskAccepted/queued）⇒ 这不是"空轮"三类里的任何一种——
+   * 事实是"被后台收下了"，说"本轮未产出回答内容"就是拿判据表演假话。
+   * taskNote 自己会作为结论行渲染（与 resumeNote 同通道），这里只需闭嘴。
+   */
+  if (p?.taskNote) return null;
   const segs = p?.segments || [];
   const proc = p?.process || {};
   const err = String(p?.error || '');
