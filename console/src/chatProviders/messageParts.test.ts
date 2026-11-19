@@ -2,7 +2,7 @@
  * Message Part 投影判据（Agent UI 刀 A）。投影规则的每条都有被绕过的可能——
  * 顺序、剔除、取末份、防御归一，全靠用例钉死；渲染层只消费这里的结论。
  */
-import {projectMessageParts, projectPlan, projectArtifactFromCall} from './messageParts';
+import {projectMessageParts, projectPlan, projectArtifactFromCall, projectToolRuns, shouldCollapseText} from './messageParts';
 
 describe('projectPlan：取最后一份有效计划（整份替换语义）', () => {
   test('args 为 JSON 字符串（档案形）与对象（流式形）都认', () => {
@@ -128,5 +128,39 @@ describe('产物块接线进消息投影（刀 B）', () => {
       ],
     })
     expect(parts.filter((p) => p.type === 'artifact').map((p: any) => p.artifactCode)).toEqual(['a1', 'a2'])
+  })
+})
+
+describe('projectToolRuns：连续同名同状态折行（属主 2026-11-19）', () => {
+  test('三连搜索折成一行 ×3；穿插代码后重新起算（时间节奏不许抹平）', () => {
+    const runs = projectToolRuns([
+      {id: '1', name: 'search_web', status: 'done'},
+      {id: '2', name: 'search_web', status: 'done'},
+      {id: '3', name: 'search_web', status: 'done'},
+      {id: '4', name: 'run_code', status: 'done'},
+      {id: '5', name: 'search_web', status: 'done'},
+    ])
+    expect(runs.map((r) => [r.name, r.status, r.count])).toEqual([['search_web', 'done', 3], ['run_code', 'done', 1], ['search_web', 'done', 1]])
+  })
+  test('状态参与分组：done×2 + pending×1 不折成"已完成 ×3"（那是谎报）', () => {
+    const runs = projectToolRuns([
+      {id: '1', name: 'get_website', status: 'done'},
+      {id: '2', name: 'get_website', status: 'done'},
+      {id: '3', name: 'get_website', status: 'pending'},
+    ])
+    expect(runs.map((r) => [r.status, r.count])).toEqual([['done', 2], ['pending', 1]])
+  })
+  test('status 缺省=done（与 resolveToolCalls 同口径）；空/非组输入不崩', () => {
+    expect(projectToolRuns([{name: 'search_web'}])).toEqual([{key: 'i0', name: 'search_web', status: 'done', count: 1}])
+    expect(projectToolRuns([])).toEqual([])
+    expect(projectToolRuns(null as any)).toEqual([])
+  })
+})
+
+describe('shouldCollapseText：长文折叠阈值', () => {
+  test('严格大于 1000 字才折；短文本/非串 false（不给人添一次点击）', () => {
+    expect(shouldCollapseText('字'.repeat(1000))).toBe(false)
+    expect(shouldCollapseText('字'.repeat(1001))).toBe(true)
+    for (const bad of [undefined, null, '', 'x']) expect(shouldCollapseText(bad as any)).toBe(false)
   })
 })

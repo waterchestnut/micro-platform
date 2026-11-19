@@ -93,6 +93,34 @@ export function projectPlan(calls: any[]): {steps: PlanStep[]; note?: string} | 
 }
 
 /**
+ * @description 工具行的连续归并（属主 2026-11-19）：相邻**同名同状态**的调用折成一行 ×N。
+ * 只算"连续"不做全局分组——时间顺序是过程的一部分，跳着合并会把"搜索→代码→又搜索"
+ * 的节奏抹平；状态参与分组是因为 pending/done 折一行会谎报"已完成 ×N"。
+ */
+export function projectToolRuns(calls: any[] | null | undefined): Array<{key: string; name?: string | null; status: string; count: number}> {
+  const runs: Array<{key: string; name?: string | null; status: string; count: number}> = []
+  for (const c of calls || []) {
+    const status = c?.status || 'done'
+    const name = c?.name ?? null
+    const last = runs[runs.length - 1]
+    if (last && last.name === name && last.status === status) { last.count++; continue }
+    runs.push({key: String(c?.id ?? `i${runs.length}`), name, status, count: 1})
+  }
+  return runs
+}
+
+/**
+ * 长回答收放（属主 2026-11-19：太长把页面撑得很高）：纯文本 parts 超过阈值才给"展开/收起"。
+ * 阈值按字符数（判据可离线测；jsdom 没有布局，量高度只能等上架），钳高按 px。
+ * 1000 字≈一屏半到两屏的阅读墙——低于它不折叠是噪音，高于它整段摊开才是噪音。
+ */
+export const TEXT_COLLAPSE_MIN_CHARS = 1000
+export const TEXT_CLAMP_PX = 420
+export function shouldCollapseText(text?: string): boolean {
+  return typeof text === 'string' && text.length > TEXT_COLLAPSE_MIN_CHARS
+}
+
+/**
  * @description message 字段 → parts 序列（顺序=结果优先；空块过滤）
  * @param {Object} m CommonChatMessage（或历史行的等价形状）
  */
@@ -147,4 +175,4 @@ export function projectMessageParts(m: any): MessagePart[] {
   return parts
 }
 
-export default {projectMessageParts, projectPlan, projectArtifactFromCall, parseArgs}
+export default {projectMessageParts, projectPlan, projectArtifactFromCall, projectToolRuns, shouldCollapseText, parseArgs}

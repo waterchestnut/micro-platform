@@ -91,4 +91,37 @@ describe('MessageParts 映射', () => {
     expect(screen.getByText('产物保存失败')).toBeTruthy();
     expect(container.textContent).toContain('✗'); // 失败行红标字符在位（antd Collapse 内部 span 结构不钉选择器）
   })
+
+  test('连续相同工具折成一行 ×N（15 行搜索墙→1 行；工具块是摘要层）', () => {
+    render(
+      <MessageParts
+        parts={[{type: 'tools', calls: [
+          {id: '1', name: 'search_web', status: 'done'},
+          {id: '2', name: 'search_web', status: 'done'},
+          {id: '3', name: 'search_web', status: 'done'},
+        ]}]}
+        renderText={rt}
+      />,
+    );
+    expect(screen.getByText('已完成网络搜索')).toBeTruthy();
+    expect(screen.getByText('×3')).toBeTruthy();
+  })
+
+  test('长正文默认钳高+"展开全文"，点击放开/收起；短正文不摆这个钮', () => {
+    const long = '字'.repeat(1200)
+    const {unmount} = render(<MessageParts parts={[{type: 'text', text: long}]} renderText={rt}/>)
+    const toggle = screen.getByText('展开全文')
+    const md = screen.getByTestId('md')
+    const clampDiv = md.parentElement as HTMLElement // 钳高容器是注入渲染体的直接父级
+    expect(clampDiv.style.maxHeight).toBe('420px') // 折叠态钳高在位
+    fireEvent.click(toggle)
+    expect(screen.getByText('收起')).toBeTruthy()
+    expect((screen.getByTestId('md').parentElement as HTMLElement).style.maxHeight).toBe('')
+    fireEvent.click(screen.getByText('收起'))
+    expect(screen.getByText('展开全文')).toBeTruthy()
+    unmount()
+    // 短正文：无折叠钮
+    render(<MessageParts parts={[{type: 'text', text: '短'}]} renderText={rt}/>)
+    expect(screen.queryByText('展开全文')).toBeNull()
+  })
 })

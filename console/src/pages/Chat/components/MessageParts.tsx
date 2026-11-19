@@ -9,9 +9,10 @@
  * 依赖注入纪律（TaskCard 同款）：text 渲染器由调用方注入（生产=XMarkdown，测试=div）——
  * x-markdown/mermaid 的 ESM 链进不了 jest，判据与渲染都必须可在无三方链下被真跑。
  */
-import React from 'react';
+import React, {useState} from 'react';
 import {Collapse, Flex, Tag, Typography} from 'antd';
 import type {MessagePart, PlanStepStatus} from '@/chatProviders/messageParts';
+import {projectToolRuns, shouldCollapseText, TEXT_CLAMP_PX} from '@/chatProviders/messageParts';
 import {toolBusinessLabel} from '@/chatProviders/toolSemantics';
 import {artifactDisplayName, formatArtifactSize} from '@/chatProviders/artifactView';
 
@@ -72,14 +73,15 @@ const ToolsBlock = ({calls, toolLabel}: {calls: any[]; toolLabel?: (n?: string |
       label: <Text type="secondary" style={{fontSize: 12}}>工具调用</Text>,
       children: (
         <Flex vertical gap={2}>
-          {calls.map((c: any, i: number) => (
-            <div key={c.id || i} style={{fontSize: 12, overflowWrap: 'anywhere'}}>
-              <span style={{color: c.status === 'pending' ? '#1677ff' : c.status === 'failed' ? '#ff4d4f' : '#52c41a', marginRight: 6}}>
-                {c.status === 'pending' ? '◐' : c.status === 'failed' ? '✗' : '✓'}
+          {projectToolRuns(calls).map((r) => (
+            <div key={r.key} style={{fontSize: 12, overflowWrap: 'anywhere'}}>
+              <span style={{color: r.status === 'pending' ? '#1677ff' : r.status === 'failed' ? '#ff4d4f' : '#52c41a', marginRight: 6}}>
+                {r.status === 'pending' ? '◐' : r.status === 'failed' ? '✗' : '✓'}
               </span>
-              {/* 两层展示（调研第五章）：业务语义行为主，技术名降为次要小字 */}
-              <span>{(toolLabel || toolBusinessLabel)(c.name, c.status)}</span>
-              {c.name ? <Text type="secondary" style={{fontSize: 11, marginLeft: 6}}>{c.name}</Text> : null}
+              {/* 两层展示（调研第五章）：业务语义行为主，技术名降为次要小字；连续同名同状态折成 ×N */}
+              <span>{(toolLabel || toolBusinessLabel)(r.name, r.status)}</span>
+              {r.count > 1 ? <Text type="secondary" style={{fontSize: 12, marginLeft: 4}}>×{r.count}</Text> : null}
+              {r.name ? <Text type="secondary" style={{fontSize: 11, marginLeft: 6}}>{r.name}</Text> : null}
             </div>
           ))}
         </Flex>
@@ -105,6 +107,30 @@ const ArtifactCard = ({a, onOpen}: {a: any; onOpen?: (code: string) => void}) =>
         </Text>
       </div>
       {onOpen ? <a onClick={() => onOpen(a.artifactCode)} style={{whiteSpace: 'nowrap'}}>打开</a> : null}
+    </div>
+  )
+}
+
+/**
+ * 长正文收放（属主 2026-11-19：AI 回答太长把页面撑得很高）：超阈值的文本块默认钳高，
+ * 底部一条渐变遮罩 + "展开全文/收起"。阈值/是否折叠走 messageParts 判据（可离线测）。
+ * renderText 由调用方注入（XMarkdown/div）——本组件只管收放，不碰渲染。
+ */
+const CollapsibleText = ({text, renderText}: {text: string; renderText: (t: string) => React.ReactNode}) => {
+  const [expanded, setExpanded] = useState(false)
+  const collapsible = shouldCollapseText(text)
+  const clamp = collapsible && !expanded
+  return (
+    <div>
+      <div style={clamp ? {maxHeight: TEXT_CLAMP_PX, overflow: 'hidden', position: 'relative'} : undefined}>
+        {renderText(text)}
+        {clamp ? <div style={{position: 'sticky', bottom: 0, height: 56, pointerEvents: 'none', background: 'linear-gradient(to bottom, rgba(255,255,255,0), #fff)'}}/> : null}
+      </div>
+      {collapsible ? (
+        <a onClick={() => setExpanded((v) => !v)} style={{fontSize: 12, userSelect: 'none'}}>
+          {expanded ? '收起' : '展开全文'}
+        </a>
+      ) : null}
     </div>
   )
 }
@@ -136,7 +162,7 @@ const MessageParts: React.FC<MessagePartsProps> = ({parts, renderText, toolLabel
           case 'error':
             return <Text key={i} type="danger" style={{fontSize: 13}}>{p.text}</Text>
           case 'text':
-            return <div key={i}>{renderText(p.text)}</div>
+            return <CollapsibleText key={i} text={p.text} renderText={renderText}/>
           case 'artifact':
             return <ArtifactCard key={i} a={p} onOpen={onOpenArtifact}/>
           case 'plan':
