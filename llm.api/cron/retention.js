@@ -58,10 +58,33 @@ async function runGuarded(name, body) {
         logger.info(`${name}-进程停机中，不开新轮`)
         return
     }
+    /** 档案面记录（2026-11-16 立档：pod 日志随重启丢失三日实锤后的结构性修法）——
+     *  at=进入时刻（曲线要"到点没有"），result=任务体返回；写失败吞错记日志，仪器不成故障源 */
+    const startedAt = new Date()
+    const t0 = Date.now()
     try {
-        await body()
+        const ret = await body()
+        await recordCronRun({name, startedAt, ms: Date.now() - t0, ret})
+    } catch (e) {
+        await recordCronRun({name, startedAt, ms: Date.now() - t0, error: e})
+        throw e
     } finally {
         drain.finish(name)
+    }
+}
+
+/**
+ * @description 一轮 firing 的落库（形状判据在 session/cronRunRecord.js 单源）
+ * @param {Object} args 见 buildRunRecord
+ * @returns {Promise<void>} 结果
+ */
+async function recordCronRun(args) {
+    try {
+        const {CronRunLog} = await import('../daos/core/schema/index.js')
+        const {buildRunRecord} = await import('../services/core/session/cronRunRecord.js')
+        await CronRunLog.create(buildRunRecord(args))
+    } catch (e) {
+        logger.error(`cronRunLog 写入失败（不影响任务本身）: ${e.message}`)
     }
 }
 
@@ -71,14 +94,16 @@ if (cronConfig.retentionEnabled) {
         jobs.retention = jobs.retention || {executing: false}
         if (jobs.retention.executing) {
             logger.info('retention-任务仍在执行，跳过本次触发')
-            return
+            return {skipped: true}
         }
         jobs.retention.executing = true
         try {
             const ret = await runRetention({})
             logger.info(`retention 完成: ${JSON.stringify(ret)}`)
+            return ret
         } catch (e) {
             logger.error(`retention 任务异常: ${e.stack || e.message}`)
+            return {abnormal: String(e.message || e).slice(0, 300)}
         } finally {
             jobs.retention.executing = false
         }
@@ -100,14 +125,16 @@ if (cronConfig.backfillEnabled) {
         jobs.backfill = jobs.backfill || {executing: false}
         if (jobs.backfill.executing) {
             logger.info('abandonedBackfill-任务仍在执行，跳过本次触发')
-            return
+            return {skipped: true}
         }
         jobs.backfill.executing = true
         try {
             const ret = await runBackfill({})
             logger.info(`abandonedBackfill 完成: ${JSON.stringify(ret)}`)
+            return ret
         } catch (e) {
             logger.error(`abandonedBackfill 任务异常: ${e.stack || e.message}`)
+            return {abnormal: String(e.message || e).slice(0, 300)}
         } finally {
             jobs.backfill.executing = false
         }
@@ -132,7 +159,7 @@ if (cronConfig.sleepTimeEnabled === true) {
         jobs.sleepTime = jobs.sleepTime || {executing: false}
         if (jobs.sleepTime.executing) {
             logger.info('sleepTimeConsolidate-任务仍在执行，跳过本次触发')
-            return
+            return {skipped: true}
         }
         jobs.sleepTime.executing = true
         try {
@@ -141,8 +168,10 @@ if (cronConfig.sleepTimeEnabled === true) {
                 模式: ret.dryRun === undefined ? (ret.skipped || '未知') : (ret.dryRun ? '计划' : '执行'),
                 ns: `${ret.namespacesScanned ?? '-'}/${ret.namespacesIdle ?? '-'}`, 合计: ret.totals, 失败ns: ret.failures?.length,
             })}`)
+            return ret
         } catch (e) {
             logger.error(`sleepTimeConsolidate 任务异常: ${e.stack || e.message}`)
+            return {abnormal: String(e.message || e).slice(0, 300)}
         } finally {
             jobs.sleepTime.executing = false
         }
@@ -166,7 +195,7 @@ if (cronConfig.artifactReconcileEnabled === true) {
         jobs.artifactReconcile = jobs.artifactReconcile || {executing: false}
         if (jobs.artifactReconcile.executing) {
             logger.info('artifactReconcile-任务仍在执行，跳过本次触发')
-            return
+            return {skipped: true}
         }
         jobs.artifactReconcile.executing = true
         try {
@@ -175,8 +204,10 @@ if (cronConfig.artifactReconcileEnabled === true) {
                 模式: ret.dryRun === undefined ? (ret.skipped || '未知') : (ret.dryRun ? '干跑' : '执行'),
                 行: ret.scanned, counts: ret.counts, 动作: ret.executedAll,
             })}`)
+            return ret
         } catch (e) {
             logger.error(`artifactReconcile 任务异常: ${e.stack || e.message}`)
+            return {abnormal: String(e.message || e).slice(0, 300)}
         } finally {
             jobs.artifactReconcile.executing = false
         }
@@ -203,7 +234,7 @@ if (cronConfig.recoverEnabled) {
         jobs.recover = jobs.recover || {executing: false}
         if (jobs.recover.executing) {
             logger.info('agentTaskRecover-任务仍在执行，跳过本次触发')
-            return
+            return {skipped: true}
         }
         jobs.recover.executing = true
         try {
@@ -211,8 +242,10 @@ if (cronConfig.recoverEnabled) {
             if (ret) {
                 logger.info(`agentTaskRecover 完成: 重排 ${ret} 条`)
             }
+            return ret
         } catch (e) {
             logger.error(`agentTaskRecover 任务异常: ${e.stack || e.message}`)
+            return {abnormal: String(e.message || e).slice(0, 300)}
         } finally {
             jobs.recover.executing = false
         }

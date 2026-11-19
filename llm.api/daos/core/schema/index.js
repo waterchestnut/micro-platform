@@ -23,6 +23,7 @@ import sessionCheckpointSchema from './sessionCheckpointSchema.js'
 import sandboxUsageSchema from './sandboxUsageSchema.js'
 import llmUsageSchema from './llmUsageSchema.js'
 import artifactSchema from './artifactSchema.js'
+import cronRunLogSchema from './cronRunLogSchema.js'
 
 const mongodbConfig = llm.config.mongodbConfig
 
@@ -66,3 +67,5 @@ export const SandboxUsage = conn.model('SandboxUsage', sandboxUsageSchema, 'sand
 export const LlmUsage = conn.model('LlmUsage', llmUsageSchema, 'llmUsage')
 /** PR-H2 产物登记账本：一行一个版本（版本链/幂等键/对账状态都在行上） */
 export const Artifact = conn.model('Artifact', artifactSchema, 'artifact')
+/** cron firing 档案面记录（TTL 30 天，写点在 cron/retention.js runGuarded 单点） */
+export const CronRunLog = conn.model('CronRunLog', cronRunLogSchema, 'cronRunLog')
