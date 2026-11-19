@@ -68,7 +68,11 @@ class AgentChat extends BaseHandler {
                 channel: p.channel,
                 protocol: p.protocol,
                 llmModel: p.llmModel,
-                attachments: p.attachments,
+                // §3/§6 附件安全红线（B-2）：**child 不透传附件**。child 跑在 `agent:` 隔离会话，
+                // 把用户 fileCode 随 execChat 存档=让文件标识进入与授权面不同的第二条落库路径；
+                // 现阶段 child 无消费面（planner 只看 query 文本、llmChat 对 attachments 只存档不解析），
+                // 真要用文件（附件 B/PDF 入库二期）必须走"fileCode 绑定发起 userCode + messageScope 同款
+                // 归属校验"的显式通道，不开透传后门。turnRunner（用户自己的会话=同归属忠实重放）不受此限。
                 signal: controller.signal,
                 streamCallback: () => {},
                 reqId: p.reqId,

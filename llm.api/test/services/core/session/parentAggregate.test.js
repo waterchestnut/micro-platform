@@ -78,6 +78,23 @@ describe('reduceParentStatus：现网基线（isDone→2/3；break→3；toParen
         assert.deepEqual(r.toUpdate.handleRet, { k1: { v: 9 } })
     })
 
+    test('重复完成（§4 审计）：同 key 两次调用恒产出单键对象——判据层就造不出"叠加"形状', () => {
+        const once = reduceParentStatus({
+            subAgents: [sub('a', 2)],
+            curAgentTaskInfo: { agentCode: 'a', errorMode: 'continue', toParentOutputKey: 'k1' },
+            curRet: { handleStatus: 2, handleRet: { v: 'first' } },
+        })
+        const twice = reduceParentStatus({
+            subAgents: [sub('a', 2)],
+            curAgentTaskInfo: { agentCode: 'a', errorMode: 'continue', toParentOutputKey: 'k1' },
+            curRet: { handleStatus: 2, handleRet: { v: 'second' } },
+        })
+        // 每轮产出都只是 {k1: 本次值}：写层 $set 该键=覆盖；两轮之间没有任何 append/concat/push 的形状可言
+        assert.deepEqual(Object.keys(once.toUpdate.handleRet), ['k1'])
+        assert.deepEqual(Object.keys(twice.toUpdate.handleRet), ['k1'])
+        assert.deepEqual(twice.toUpdate.handleRet.k1, { v: 'second' }, '后写覆盖先写（last-write-wins）')
+    })
+
     test('空 subAgents 的退化形态：isDone 真值 ⇒ 2（照抄现状，别顺手加护栏——B0 只建基线）', () => {
         const r = reduceParentStatus({ subAgents: [], curAgentTaskInfo: { agentCode: 'x' }, curRet: { handleStatus: 2 } })
         assert.equal(r.toUpdate.handleStatus, 2)

@@ -1,5 +1,8 @@
 import { test, describe } from 'node:test'
 import * as assert from 'node:assert'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
     buildChildExecOptions,
     mapChildOutcome,
@@ -106,5 +109,26 @@ describe('reduceChildResult', () => {
 
     test('全空格正文也不 usable（trim 判定，防"看起来有其实空"）', () => {
         assert.equal(reduceChildResult({ answer: '   ' }).usable, false)
+    })
+})
+
+/**
+ * §3/§6 附件安全红线（B-2，2026-11-19）：child（`agent:` 隔离会话）不得拿到用户附件——
+ * 现状 llm.api 对 attachments **只存档不解析**（无内容消费面），但 fileCode 若随 execChat
+ * 落进隔离会话档案，就是给未来"任意 fileCode 可读"留了第二条落库路径。
+ * 封堵点在唯一入口 agentChat（childTurn 的通用能力保留：turnRunner 忠实重放跑在**用户
+ * 自己的会话**=同归属，不经此入口、不受此限）。真要用文件走二期显式通道：
+ * fileCode 绑定发起 userCode + messageScope 同款归属校验。守卫只钉源码位——删注释可以，
+ * 把透传加回来不行。
+ */
+describe('附件红线：agentChat 不透传 attachments（源码位守卫）', () => {
+    const src = fs.readFileSync(path.resolve(fileURLToPath(import.meta.url), '../../../..') + '/services/agent/handler/agentChat.js', 'utf8')
+        .replace(/\r/g, '').split('\n').filter((l) => !/^\s*(\*|\/\/)/.test(l.trim())).join('\n')
+    test('agentChat 不再把 attachments 交给 buildChildExecOptions（fileCode 不进 agent: 会话档案）', () => {
+        assert.ok(!/attachments:\s*p\.attachments/.test(src), 'agentChat 把用户附件透传给了隔离会话 child——红线违例')
+    })
+    test('封堵点旁必须留着历史注（防后来者当冗余参数"顺手补上"）', () => {
+        const raw = fs.readFileSync(path.resolve(fileURLToPath(import.meta.url), '../../../..') + '/services/agent/handler/agentChat.js', 'utf8')
+        assert.ok(raw.includes('附件安全红线'), '红线注释被删——下一双眼睛就会把透传加回来')
     })
 })
