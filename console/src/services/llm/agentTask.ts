@@ -35,6 +35,23 @@ export async function researchTaskCancel(rootCode: string): Promise<{ok: boolean
 }
 
 /**
+ * §7-1 澄清答复（动作面，语义同 cancel：失败必须如实回，不静默）。
+ * 允许部分答复（答一个重派一个——判据在 llm.api matchClarifyAnswers，这里不重算）；
+ * data 原样带回 {requeued, missing, stillWaiting, unknown}，卡片据此说"哪些真转起来了"。
+ */
+export async function researchTaskClarifyAnswer(
+  rootCode: string, answers: Array<{agentCode: string; response: string}>,
+): Promise<{ok: boolean; msg: string; data?: any}> {
+  if (!rootCode || !answers.length) return {ok: false, msg: '缺少答复内容'};
+  try {
+    const ret: any = await llmRequest('/core/agentTask/clarifyAnswer', {method: 'POST', data: {agentCode: rootCode, answers}});
+    return {ok: ret?.code === 0, msg: String(ret?.msg || (ret?.code === 0 ? '' : '答复未生效')), data: ret?.data};
+  } catch (e: any) {
+    return {ok: false, msg: String(e?.message || '网络异常，答复未送达')};
+  }
+}
+
+/**
  * 综合正文读回：detail 的 synthesis 只有 {messageCode,usable}（**没有正文**，llm.api 事实），
  * 正文在 `root:<rootCode>` 隔离会话末条非空 answer——pickLatestAnswer 判据单源，读不到 ⇒ null
  * （卡片会说"未读到"，不拿标题凑一段）。

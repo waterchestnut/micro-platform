@@ -64,7 +64,7 @@ import MessageParts, {CollapsibleText} from '@/pages/Chat/components/MessagePart
 import RunStatusBar from '@/pages/Chat/components/RunStatusBar';
 import ArtifactWorkspace from '@/pages/Chat/components/ArtifactWorkspace';
 import TaskCard from '@/pages/Chat/components/TaskCard';
-import {researchTaskDetail, researchTaskCancel, loadSynthesisBody} from '@/services/llm/agentTask';
+import {researchTaskDetail, researchTaskCancel, researchTaskClarifyAnswer, loadSynthesisBody} from '@/services/llm/agentTask';
 import {listConversationArtifacts, readArtifactPage} from '@/services/llm/artifact';
 import {makeToolResultLoader} from '@/services/llm/toolResultClient'
 import {formatUploadFile, getDocHttpUrl, isArray, uuidV4} from '@/utils/util'
@@ -889,6 +889,7 @@ const Index: React.FC = () => {
                   note={partsActive ? undefined : data.extraInfo?.taskNote}
                   loadDetail={researchTaskDetail}
                   cancelTask={researchTaskCancel}
+                  answerClarify={researchTaskClarifyAnswer}
                   loadSynthesis={loadSynthesisBody}
                   onSettled={(rc: string) => {
                     // 终局=唯一清理凭据（卡片已把结局说出口，跟进账目可以销账）

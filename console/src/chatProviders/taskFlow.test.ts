@@ -13,6 +13,7 @@ import {
   readTaskFlowError,
   taskFlowNoteText,
   phaseText,
+  pickClarify,
   mapCardProgress,
   groupSlots,
   elapsedText,
@@ -162,6 +163,36 @@ describe('phaseText（golden 对拍）', () => {
     expect(phaseText('done-with-error')).toBe('完成（有异常）');
     expect(phaseText('whatever-new')).toBe('状态未知');
     expect(phaseText(undefined)).toBe('状态未知');
+  });
+  test('§7-1 awaiting_input 有人话且**不是**"卡住/超时"——它在等用户，语义是"待你补充"', () => {
+    expect(phaseText('awaiting_input')).toBe('待你补充');
+    expect(TASK_FLOW_TERMINAL_PHASES).not.toContain('awaiting_input'); // 等答复的树必须继续被盯，不是终局
+  });
+});
+
+describe('pickClarify（golden 对拍，§7-1）', () => {
+  test('正常题单：pending 齐字段，options 只收干净字符串', () => {
+    const r = pickClarify({
+      phase: 'awaiting_input',
+      clarify: {requests: [{agentCode: 'a1', question: ' 用哪个环境？ ', options: ['生产', '', 42 as any], title: '部署'}], capped: [], sealedAt: 't'},
+    });
+    expect(r.pending).toEqual([{agentCode: 'a1', question: '用哪个环境？', options: ['生产'], title: '部署'}]);
+  });
+  test('坏形滤掉不演题：缺 agentCode/空 question 的"题"答了没人收，不进 pending', () => {
+    const r = pickClarify({
+      clarify: {requests: [{question: '没把手'}, {agentCode: 'a2'}, {agentCode: 'a3', question: 'ok'}, null as any]},
+    });
+    expect(r.pending.map((x) => x.agentCode)).toEqual(['a3']);
+  });
+  test('clarify 缺位/坏值 ⇒ 全空（UI 不造空态也不崩）', () => {
+    expect(pickClarify(undefined)).toEqual({pending: [], capped: []});
+    expect(pickClarify({clarify: null})).toEqual({pending: [], capped: []});
+    expect(pickClarify({clarify: 'junk' as any}).pending).toEqual([]);
+  });
+  test('capped 如实带出（超限不再等≠待答，渲染层分开说话）', () => {
+    const r = pickClarify({clarify: {requests: [], capped: [{agentCode: 'c1', question: '问过的问题'}]}});
+    expect(r.pending).toHaveLength(0);
+    expect(r.capped).toEqual([{agentCode: 'c1', question: '问过的问题'}]);
   });
 });
 

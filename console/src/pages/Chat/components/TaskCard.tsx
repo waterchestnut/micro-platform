@@ -17,11 +17,12 @@
  *    不拿标题凑一段。
  */
 import React, {useEffect, useRef, useState} from 'react';
-import {Alert, Button, Space, Typography} from 'antd';
+import {Alert, Button, Input, Space, Typography} from 'antd';
 import {
   mapCardProgress,
   phaseText,
   elapsedText,
+  pickClarify,
   type TaskDetailLite,
 } from '@/chatProviders/taskFlow';
 
@@ -39,6 +40,11 @@ export type TaskCardProps = {
    */
   loadDetail: (rootCode: string) => Promise<TaskDetailLite | null>;
   cancelTask: (rootCode: string) => Promise<{ok: boolean; msg: string}>;
+  /**
+   * §7-1 澄清答复（动作面注入，同 cancel 纪律）。不给 ⇒ 只出题不答（降级面：
+   * 文案照样如实"该入口暂不支持答复"，不许演一个按不动的按钮）。
+   */
+  answerClarify?: (rootCode: string, answers: Array<{agentCode: string; response: string}>) => Promise<{ok: boolean; msg: string; data?: any}>;
   loadSynthesis: (rootCode: string) => Promise<string | null>;
   renderBody?: (text: string) => React.ReactNode;
   /**
@@ -58,6 +64,7 @@ const TaskCard: React.FC<TaskCardProps> = ({
   wallMs = 30 * 60 * 1000,
   loadDetail,
   cancelTask,
+  answerClarify,
   loadSynthesis,
   renderBody,
   onSettled,
@@ -70,6 +77,11 @@ const TaskCard: React.FC<TaskCardProps> = ({
   /** 只有"服务端收下了取消"才收按钮；失败必须留着重试的门（错误提示 ≠ 已处置） */
   const [cancelRequested, setCancelRequested] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  // §7-1 澄清面：pending 题单（服务端账上快照）+ 每题草稿 + 答复回执（说"转起来了"要凭 requeued）
+  const [clarify, setClarify] = useState<ReturnType<typeof pickClarify>>({pending: [], capped: []});
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [clarifyMsg, setClarifyMsg] = useState<string | null>(null);
+  const [answeringCode, setAnsweringCode] = useState<string | null>(null);
   const stoppedRef = useRef(false);
   // 生命周期守卫=effect 闭包里的 `dead`（React 18 卸载后 setState 是无害 no-op，
   // 曾另挂 mountedRef 反而让 TS 把初值 true 收窄成字面量类型——判据少一层间接更好读）
@@ -90,6 +102,8 @@ const TaskCard: React.FC<TaskCardProps> = ({
       if (dead) return;
       const m = mapCardProgress(view);
       if (m) setProgress(m);
+      // 澄清清单每帧跟账走（服务端 hold 收缩 ⇒ 题目自然消失；这里不缓存"答过的题"演进度）
+      setClarify(pickClarify(view));
       if (m && m.terminal) {
         stoppedRef.current = true;
         onSettled?.(rootCode); // 结局已说出口 ⇒ 页面的续跟进账可以清了（终局是唯一清理凭据）
@@ -119,6 +133,27 @@ const TaskCard: React.FC<TaskCardProps> = ({
     setCancelMsg(r.ok
       ? '已请求取消：不再聚合结果（在途子任务可能仍会跑完，但不会再写入结果）'
       : `取消未生效：${r.msg || '未知原因'}`);
+  };
+
+  /** §7-1 答复一题：成功要说"转起来了"（凭 requeued），失败留草稿与重试的门——同 cancel 纪律 */
+  const onAnswer = async (agentCode: string) => {
+    if (!answerClarify) return;
+    const text = String(drafts[agentCode] || '').trim();
+    if (!text) return;
+    setAnsweringCode(agentCode);
+    const r = await answerClarify(rootCode, [{agentCode, response: text}]);
+    setAnsweringCode(null);
+    if (r.ok) {
+      const requeued = Array.isArray(r.data?.requeued) ? r.data.requeued : [];
+      if (requeued.includes(agentCode)) {
+        setClarifyMsg('已答复：子任务将带着补充重跑，到齐后统一综合。');
+        setDrafts((d) => ({...d, [agentCode]: ''}));
+      } else {
+        setClarifyMsg('答复已收下，但未能转成重派（子任务状态可能已变化，稍后以进度为准）。');
+      }
+    } else {
+      setClarifyMsg(`答复未被接受：${r.msg || '未知原因'}`);
+    }
   };
 
   // slots=有明细行时的分组面；items=兜底平铺（视图行缺 slot 字段的旧形状也不会空转）
@@ -158,6 +193,36 @@ const TaskCard: React.FC<TaskCardProps> = ({
           {progress && !slots.length ? progress.items.map((it, i) => (
             <div key={i} style={{overflowWrap: 'anywhere'}}>· {it.title}（{it.label}）</div>
           )) : null}
+          {clarify.pending.length ? (
+            <div style={{margin: '4px 0', padding: '6px 8px', background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 6}}>
+              <div style={{fontWeight: 600, marginBottom: 2}}>任务有 {clarify.pending.length} 个问题想请你补充（答复后带着补充继续跑，不答复会等到上限为止）</div>
+              {clarify.pending.map((q) => (
+                <div key={q.agentCode} style={{marginBottom: 6, overflowWrap: 'anywhere'}}>
+                  <div>· {q.title ? `${q.title}：` : ''}{q.question}</div>
+                  {answerClarify ? (
+                    <Space style={{marginTop: 2}} wrap>
+                      {q.options.map((o) => (
+                        <Button key={o} size="small" onClick={() => setDrafts((d) => ({...d, [q.agentCode]: o}))}>{o}</Button>
+                      ))}
+                      <Input size="small" style={{width: 220}} placeholder="你的答复"
+                        value={drafts[q.agentCode] || ''}
+                        onChange={(e) => setDrafts((d) => ({...d, [q.agentCode]: e.target.value}))}
+                        onPressEnter={() => void onAnswer(q.agentCode)} />
+                      <Button size="small" type="primary" loading={answeringCode === q.agentCode}
+                        disabled={!(drafts[q.agentCode] || '').trim()}
+                        onClick={() => void onAnswer(q.agentCode)}>答复</Button>
+                    </Space>
+                  ) : (
+                    <div style={{color: '#999'}}>该入口暂不支持答复（可取消任务后重新发起并写清楚）</div>
+                  )}
+                </div>
+              ))}
+              {clarify.capped.length ? clarify.capped.map((q, i) => (
+                <div key={`cap-${i}`} style={{color: '#999'}}>· {q.question}（澄清次数到上限，已不再等待答复）</div>
+              )) : null}
+              {clarifyMsg ? <div style={{marginTop: 2}}>{clarifyMsg}</div> : null}
+            </div>
+          ) : null}
           {timedOut ? <div style={{color: '#999', marginTop: 2}}>超过观测时限仍未见到终局（任务可能仍在执行或已停在无人续跑的状态，这不代表它失败）</div> : null}
           {cancelMsg ? <div style={{marginTop: 2}}>{cancelMsg}</div> : null}
           {bodyState === 'missing' ? <div style={{color: '#999', marginTop: 2}}>综合已完成但未读到正文（可稍后在任务会话中查看）</div> : null}

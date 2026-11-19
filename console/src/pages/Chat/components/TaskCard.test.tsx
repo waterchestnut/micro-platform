@@ -152,3 +152,106 @@ describe('TaskCard 轮询与终局', () => {
     expect(screen.getByRole('button', {name: '取消任务'})).toBeTruthy();
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* §7-1 澄清答复面：题目来自 detail.clarify（判据 pickClarify 已 golden 对拍），             */
+/* 这里钉"卡片把题说了、答复动作如实、失败留门"。                                            */
+/* ------------------------------------------------------------------ */
+const awaitingView = {
+  phase: 'awaiting_input',
+  subtasks: [
+    {agentCode: 'c1', title: '部署', phase: 'done', active: true},
+    {agentCode: 'c2', title: '资料', phase: 'done', active: true},
+  ],
+  clarify: {
+    requests: [{agentCode: 'c1', question: '部署到哪个环境？', options: ['生产', '预发'], title: '部署'}],
+    capped: [{agentCode: 'c9', question: '更早的一个问题'}],
+  },
+};
+
+describe('TaskCard 澄清答复（§7-1）', () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  test('awaiting_input 帧：题目/选项/输入框/答复按钮上屏，capped 如实标注不再等待', async () => {
+    render(
+      <TaskCard rootCode="r1" loadDetail={jest.fn().mockResolvedValue(awaitingView)}
+        cancelTask={jest.fn()} loadSynthesis={jest.fn()}
+        answerClarify={jest.fn()} intervalMs={100}/>,
+    );
+    await flush();
+    expect(screen.getByText(/任务待你补充（2\/2）/)).toBeTruthy();
+    expect(screen.getByText(/部署：部署到哪个环境？/)).toBeTruthy();
+    // antd 双中文字按钮会插空格（"生 产"/"答 复"）——name 一律用 \s* 容忍形
+    expect(screen.getByRole('button', {name: /^生\s*产$/})).toBeTruthy();
+    expect(screen.getByRole('button', {name: /^答\s*复$/})).toBeTruthy();
+    expect(screen.getByText(/更早的一个问题（澄清次数到上限，已不再等待答复）/)).toBeTruthy();
+  });
+
+  test('没注入 answerClarify ⇒ 出题但明说"暂不支持答复"（不演按不动的按钮）', async () => {
+    render(
+      <TaskCard rootCode="r1" loadDetail={jest.fn().mockResolvedValue(awaitingView)}
+        cancelTask={jest.fn()} loadSynthesis={jest.fn()} intervalMs={100}/>,
+    );
+    await flush();
+    expect(screen.getByText(/该入口暂不支持答复/)).toBeTruthy();
+    expect(screen.queryByRole('button', {name: '答复'})).toBeNull();
+  });
+
+  test('答复成功：调用形状对、回执说"转起来了"、草稿清空（题的消失等服务端下一拍，不自演）', async () => {
+    const answerClarify = jest.fn().mockResolvedValue({ok: true, msg: '', data: {requeued: ['c1']}});
+    render(
+      <TaskCard rootCode="r1" loadDetail={jest.fn().mockResolvedValue(awaitingView)}
+        cancelTask={jest.fn()} loadSynthesis={jest.fn()} answerClarify={answerClarify} intervalMs={100}/>,
+    );
+    await flush();
+    const input = screen.getByPlaceholderText('你的答复');
+    await act(async () => { fireEvent.change(input, {target: {value: '用生产，窗口周五'}}); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', {name: /^答\s*复$/})); });
+    await flush();
+    expect(answerClarify).toHaveBeenCalledWith('r1', [{agentCode: 'c1', response: '用生产，窗口周五'}]);
+    expect(screen.getByText(/已答复：子任务将带着补充重跑/)).toBeTruthy();
+    expect((input as HTMLInputElement).value).toBe('');
+  });
+
+  test('选项点击=填草稿（答复按钮从 disabled 变可用）', async () => {
+    const answerClarify = jest.fn().mockResolvedValue({ok: true, msg: '', data: {requeued: ['c1']}});
+    render(
+      <TaskCard rootCode="r1" loadDetail={jest.fn().mockResolvedValue(awaitingView)}
+        cancelTask={jest.fn()} loadSynthesis={jest.fn()} answerClarify={answerClarify} intervalMs={100}/>,
+    );
+    await flush();
+    const btn = screen.getByRole('button', {name: /^答\s*复$/});
+    expect((btn as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => { fireEvent.click(screen.getByRole('button', {name: /^预\s*发$/})); });
+    expect((screen.getByRole('button', {name: /^答\s*复$/}) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  test('答复失败不演成功：念回执、草稿留着（同 cancel 的门）', async () => {
+    const answerClarify = jest.fn().mockResolvedValue({ok: false, msg: '该任务当前没有待答的澄清'});
+    render(
+      <TaskCard rootCode="r1" loadDetail={jest.fn().mockResolvedValue(awaitingView)}
+        cancelTask={jest.fn()} loadSynthesis={jest.fn()} answerClarify={answerClarify} intervalMs={100}/>,
+    );
+    await flush();
+    const input = screen.getByPlaceholderText('你的答复');
+    await act(async () => { fireEvent.change(input, {target: {value: '答案'}}); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', {name: /^答\s*复$/})); });
+    await flush();
+    expect(screen.getByText(/答复未被接受：该任务当前没有待答的澄清/)).toBeTruthy();
+    expect((input as HTMLInputElement).value).toBe('答案');
+  });
+
+  test('ok 但 requeued 不含本题 ⇒ 说"收下但未转成重派"（回执语义逐字对齐端点 data）', async () => {
+    const answerClarify = jest.fn().mockResolvedValue({ok: true, msg: '', data: {requeued: [], missing: ['c1']}});
+    render(
+      <TaskCard rootCode="r1" loadDetail={jest.fn().mockResolvedValue(awaitingView)}
+        cancelTask={jest.fn()} loadSynthesis={jest.fn()} answerClarify={answerClarify} intervalMs={100}/>,
+    );
+    await flush();
+    await act(async () => { fireEvent.change(screen.getByPlaceholderText('你的答复'), {target: {value: 'x'}}); });
+    await act(async () => { fireEvent.click(screen.getByRole('button', {name: /^答\s*复$/})); });
+    await flush();
+    expect(screen.getByText(/答复已收下，但未能转成重派/)).toBeTruthy();
+  });
+});

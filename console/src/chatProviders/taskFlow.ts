@@ -91,20 +91,54 @@ export interface TaskSubtaskLite {
   updateTime?: string | null;
 }
 
+/** detail 的 clarify 面（llm.api §7-1 冒泡挂起清单；缺位=没有澄清，UI 不造空态） */
+export interface TaskClarifyLite {
+  requests?: Array<{agentCode?: string; question?: string; options?: string[]; title?: string}>;
+  capped?: Array<{agentCode?: string; question?: string}>;
+  sealedAt?: string | null;
+}
+
 /** /core/agentTask/detail 的 data 形状（只声明本 UI 消费的字段，其余透传不猜） */
 export interface TaskDetailLite {
   phase?: string;
   subtasks?: TaskSubtaskLite[];
   usage?: {tokens?: number; credits?: number; byRole?: Record<string, {rows?: number}>};
   orchestration?: {cancelled?: boolean; credits?: {priced?: boolean; missing?: unknown[]}};
+  clarify?: TaskClarifyLite | null;
 }
 
 /** 相位→人话映射（root+child 两表并集；未收录值"状态未知"——服务端扩值时 UI 绝不猜能看的词） */
 const PHASE_TEXT: Record<string, string> = {
   queued: '排队中', running: '执行中', synthesizing: '收尾中', synthesized: '已完成', done: '已完成',
   'done-with-error': '完成（有异常）', partial: '部分完成', failed: '失败', cancelled: '已取消',
+  // §7-1 澄清冒泡：树没挂死、没失败——它在等**你**补一句话（文案不许写成"卡住/超时"）
+  awaiting_input: '待你补充',
 };
 export const phaseText = (p?: string): string => PHASE_TEXT[String(p || '')] || '状态未知';
+
+/**
+ * detail → 待答澄清清单的归一提取（判据单源，TaskCard 只渲染）。
+ * 形状纪律：requests 里 question 非空且 agentCode 非空的才算"能答的题"（没把手的题答了也没人收）；
+ * options 只收字符串数组的干净项；capped（超限不再等的）原样如实带出——它不是待答，是历史。
+ */
+export function pickClarify(view: TaskDetailLite | null | undefined): {
+  pending: Array<{agentCode: string; question: string; options: string[]; title: string}>;
+  capped: Array<{agentCode: string; question: string}>;
+} {
+  const c = view?.clarify;
+  const pending = (Array.isArray(c?.requests) ? c!.requests : [])
+    .filter((r) => r && typeof r.agentCode === 'string' && r.agentCode && typeof r.question === 'string' && r.question.trim())
+    .map((r) => ({
+      agentCode: r!.agentCode as string,
+      question: String(r!.question).trim(),
+      options: Array.isArray(r?.options) ? (r!.options as unknown[]).filter((o) => typeof o === 'string' && o) as string[] : [],
+      title: String(r?.title || ''),
+    }));
+  const capped = (Array.isArray(c?.capped) ? c!.capped : [])
+    .filter((r) => r && typeof r.question === 'string' && r.question.trim())
+    .map((r) => ({agentCode: String(r?.agentCode || ''), question: String(r!.question).trim()}));
+  return {pending, capped};
+}
 
 /** 树终局相位（轮询该停的判据；synthesizing 不在列——"收尾中"恰恰是最要盯的窗口） */
 export const TASK_FLOW_TERMINAL_PHASES = ['synthesized', 'partial', 'failed', 'cancelled'];
