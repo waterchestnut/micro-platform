@@ -45,7 +45,44 @@ export const BACKFILL_MARKER = 'abandoned-backfill'
  */
 export const BACKFILL_ROW_FIELDS = [
     'messageCode', 'conversationCode', 'userCode', 'progress', 'updateTime', 'modelCalls', 'estPromptTokens',
+    // usage 真值快照面（backfillUsageSnapshot 读；漂移守卫与 LIST_ABANDONED_SELECT 对账）
+    'promptTokens', 'completionTokens', 'totalTokens', 'credits', 'creditsPriced',
 ]
+
+/**
+ * @description 从遗弃的 llmUsage 行复制一份**终态 usage 快照**进回填档（纯函数）
+ * @param {Object} row listAbandoned 投影出的账本行
+ * @returns {Object} {hasUsage, modelCalls, promptTokens?, completionTokens?, totalTokens?, credits?, creditsPriced?}
+ * @description
+ * 三种事实三种形状，都不造数：
+ * - 首 token 前就死（在途刷新从没跑过）⇒ `{hasUsage:false, modelCalls}`——这不是空对象凑数，
+ *   三端 `segments.ts` 早按 `hasUsage===false` 说"本轮在模型开始输出前已被取消"，回填行缺这个
+ *   键就只能落回最笼统的"未产出回答内容"——精确归因白白丢掉。
+ * - 有真值 ⇒ tokens 照抄（**缺哪个键不写哪个**，total 不用 p+c 派生——那是同一数字再造一套
+ *   口径，D66 之训）；credits 同理（M6 的"缺席如实 null"移植到这）。
+ * - 这复制只对**终态冻结行**成立。活行的 usage 仍只有 llmUsage 一个家；回填之后 llmUsage
+ *   行不再变化，复制品与原件不可能分叉——分叉空间恰是 D66 反对的那种。
+ */
+export function backfillUsageSnapshot(row = {}) {
+    const num = (v) => (Number.isFinite(Number(v)) && Number(v) >= 0 ? Math.trunc(Number(v)) : null)
+    const p = num(row.promptTokens)
+    const c = num(row.completionTokens)
+    const modelCalls = num(row.modelCalls) ?? 0
+    if (!(p > 0 || c > 0)) {
+        return {hasUsage: false, modelCalls}
+    }
+    const out = {hasUsage: true, modelCalls}
+    if (p !== null) out.promptTokens = p
+    if (c !== null) out.completionTokens = c
+    const t = num(row.totalTokens)
+    if (t !== null) out.totalTokens = t
+    const cr = Number(row.credits)
+    if (Number.isFinite(cr)) {
+        out.credits = cr
+        out.creditsPriced = row.creditsPriced === true
+    }
+    return out
+}
 
 /**
  * @description 从检查点里把"用户当时问了什么"捞回来（纯函数，可离线测）
@@ -122,6 +159,8 @@ export function planBackfill({row, hasArchive = false, archiveProgress = '', che
                 'extInfo.lostChars': null,
                 'extInfo.modelCalls': row.modelCalls || 0,
                 'extInfo.estPromptTokens': row.estPromptTokens || 0,
+                // usage 快照：有真值照抄、无真值 {hasUsage:false}（三端"首 token 前取消"归因的凭据）
+                'extInfo.usage': backfillUsageSnapshot(row),
             },
         }
     }
@@ -154,6 +193,8 @@ export function planBackfill({row, hasArchive = false, archiveProgress = '', che
             lostChars: null,
             modelCalls: row.modelCalls || 0,
             estPromptTokens: row.estPromptTokens || 0,
+            // 同 flip 支：usage 快照（同一判据函数，两处不许各写一份形状）
+            usage: backfillUsageSnapshot(row),
         },
     }
     /** 复用主动落档那套"值不值得写"的判据：没正文也不空转——这里问题就是内容 */
