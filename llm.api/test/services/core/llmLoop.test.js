@@ -31,6 +31,11 @@ import {
 /* ========================= 协议协商 ========================= */
 
 test('resolveProtocol：缺省走协议 1，不下发工具结果', () => {
+    /**
+     * `emitSegments` 是协议 3 新增的契约字段（段事件）。
+     * 这两个用例本来就把返回对象**整体**钉住，所以契约一变就必须显式改——
+     * 这正是它们存在的意义：如果当初写成"只查关心的键"，协议 3 上线就不会惊动任何人。
+     */
     assert.deepEqual(resolveProtocol({}), {protocol: 1, emitToolResults: false, emitSegments: false})
     assert.deepEqual(resolveProtocol({protocol: 1}), {protocol: 1, emitToolResults: false, emitSegments: false})
 })
@@ -39,8 +44,9 @@ test('resolveProtocol：协议 2 默认下发工具结果，字符串数字也�
     assert.deepEqual(resolveProtocol({protocol: 2}), {protocol: 2, emitToolResults: true, emitSegments: false})
     assert.deepEqual(resolveProtocol({protocol: '2'}), {protocol: 2, emitToolResults: true, emitSegments: false})
     /**
-     * 旧断言写的是"高于 2 的按 2 处理"——那是协议 3 还不存在时的契约。
-     * 现在 3 是真实档位（段事件），更高请求值收敛到已实现的最高档，不静默退回 1。
+     * 旧断言写的是"高于 2 的按 2 处理"——那是**协议 3 还不存在时**的契约。
+     * 现在协议 3 是真实档位（PR-B2 的段事件），所以按 3 处理；
+     * 更高的请求值仍收敛到已实现的最高档，不静默退回 1。
      */
     assert.deepEqual(resolveProtocol({protocol: 3}), {protocol: 3, emitToolResults: true, emitSegments: true})
     assert.deepEqual(resolveProtocol({protocol: 7}), {protocol: 3, emitToolResults: true, emitSegments: true})
@@ -122,23 +128,47 @@ const PREDS = {
     isMemoryTool: (n) => String(n).startsWith('memory_'),
     isOverflowTool: (n) => n === 'read_tool_result',
     isCodeTool: (n) => n === 'run_code',
+    isPlanTool: (n) => n === 'update_plan',
+    isArtifactTool: (n) => n === 'save_artifact',
 }
 
-test('classifyToolCalls：四类互斥且并集完整', () => {
+test('classifyToolCalls：六类互斥且并集完整', () => {
     const calls = [
         {id: '1', function: {name: 'memory_save'}},
         {id: '2', function: {name: 'memory_search'}},
         {id: '3', function: {name: 'read_tool_result'}},
         {id: '4', function: {name: 'run_code'}},
+        {id: '6', function: {name: 'update_plan'}},
+        {id: '7', function: {name: 'save_artifact'}},
         {id: '5', function: {name: 'searxng_http/search'}},
     ]
     const r = classifyToolCalls(calls, PREDS)
     assert.equal(r.memoryCalls.length, 2)
     assert.equal(r.overflowCalls.length, 1)
     assert.equal(r.codeCalls.length, 1)
+    assert.equal(r.planCalls.length, 1)
+    assert.equal(r.artifactCalls.length, 1)
     assert.equal(r.otherCalls.length, 1)
-    const total = r.memoryCalls.length + r.overflowCalls.length + r.codeCalls.length + r.otherCalls.length
+    const total = r.memoryCalls.length + r.overflowCalls.length + r.codeCalls.length + r.planCalls.length + r.artifactCalls.length + r.otherCalls.length
     assert.equal(total, calls.length, '不能有调用被丢掉，也不能被算两次')
+})
+
+/**
+ * 这条单拎出来测，因为它是 PR-M 接线里最容易被漏的一半：
+ * 加了 planCalls 的 filter 却忘了在 otherCalls 的取反串里加 `!isPlan` ⇒
+ * update_plan 会**同时**进 planCalls 和 otherCalls，然后被 mcpToolManager 找不到实现。
+ */
+test('classifyToolCalls：update_plan 绝不漏进 otherCalls（取反串必须包含它）', () => {
+    const r = classifyToolCalls([{id: '1', function: {name: 'update_plan'}}], PREDS)
+    assert.equal(r.planCalls.length, 1)
+    assert.equal(r.otherCalls.length, 0, 'update_plan 被当成 MCP 工具丢给别的通道了')
+})
+
+/** PR-H2 同款陷阱重演不得：save_artifact 漏出取反串 = 丢给 mcpToolManager 找不到实现 */
+test('classifyToolCalls：save_artifact 绝不漏进 otherCalls', () => {
+    const r = classifyToolCalls([{id: '1', function: {name: 'save_artifact'}}], PREDS)
+    assert.equal(r.artifactCalls.length, 1)
+    assert.equal(r.otherCalls.length, 0, 'save_artifact 被当成 MCP 工具丢给别的通道了')
 })
 
 /** PR-E 同款：ask_user 漏出取反串 = 模型提问被丢进 MCP 通道石沉大海（挂起永远不发生） */
@@ -152,8 +182,6 @@ test('classifyToolCalls：ask_user 绝不漏进 otherCalls（注入 isAskTool �
     assert.equal(off.askCalls.length, 0)
     assert.equal(off.otherCalls.length, 1)
 })
-
-
 
 test('classifyToolCalls：谓词缺失时全部落到 otherCalls，不抛错', () => {
     const r = classifyToolCalls([{id: '1', function: {name: 'whatever'}}], {})

@@ -527,8 +527,8 @@ export function parseRetryAfterMs(headers) {
 /** 兜底上限：与抽取前的硬编码值一致，保证不配置时行为不变 */
 export const DEFAULT_MAX_ITERATIONS = 6
 
-/** 允许的上限天花板：请求级/频道级配置都不能突破，防止一次会话把上游打爆 */
-export const MAX_ITERATIONS_CEILING = 20
+/** 允许的上限天花板：请求级/频道级配置都不能突破 */
+export const MAX_ITERATIONS_CEILING = 40
 
 /**
  * @description 解析本轮的工具迭代上限（原先是硬编码 6）

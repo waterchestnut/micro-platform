@@ -137,6 +137,98 @@ test('drainAssistantStream：reasoning_content 单独成帧也不计入正文', 
     assert.equal(r.chunkCount, 3, '末帧 usage 也算看过')
 })
 
+test('drainAssistantStream：shouldStop 命中即早停，且**已生成的正文一个都不丢**（这是 abort 能落档的前提）', async () => {
+    const chunks = [textChunk('第一段'), textChunk('第二段'), textChunk('第三段'), finishChunk('stop')]
+    /** 数一数实际被消费了几帧：早停必须真的停止消费，而不是"读完再丢" */
+    let pulled = 0
+    const counted = (async function* () {
+        for (const c of chunks) {
+            pulled++
+            yield c
+        }
+    })()
+    let n = 0
+    const r = await drainAssistantStream(counted, {shouldStop: async () => (++n >= 3 ? 'aborted' : null)})
+    assert.equal(pulled, 3, '只消费到第 3 帧就退出：断开之后不再花上游的钱')
+    assert.equal(r.stopped, 'aborted')
+    assert.equal(r.content, '第一段第二段', '早停前已累计的正文必须完整带回（v1.38：漏掉这一段，档案就只能写空 abort）')
+    /**
+     * `chunkCount` 保持抽取前的语义：**从流里取出的帧数**，所以被停下的那一帧也算看过（3），
+     * 而它没有被处理——这一点由 `content` 只有两段证明。
+     * 改这里的口径会让历史样本不可比，所以宁可让测试说明它，也不去动计数含义。
+     */
+    assert.equal(r.chunkCount, 3, '取出来但没处理的那一帧仍计入 chunkCount（沿用抽取前口径）')
+    assert.equal(r.deltaCount, 2, '真正下发的增量只有两帧')
+})
+
+test('drainAssistantStream：不传 shouldStop 时 stopped 为 null，行为与抽取前逐字一致', async () => {
+    const r = await drainAssistantStream([textChunk('a'), textChunk('b'), finishChunk('stop')])
+    assert.equal(r.stopped, null)
+    assert.equal(r.content, 'ab')
+    assert.equal(r.finishReason, 'stop')
+})
+
+test('drainAssistantStream：stopped 原样带回调用方给的原因串，**不归一化成 aborted**（抢救路径用的是 shutdown-archive）', async () => {
+    /**
+     * 这条用例是被真实滚动验收逼出来的（§25 v1.40）：
+     * 调用方（抢救）给的停止位是 `shutdown-archive`，而消费侧曾写 `stopped === 'aborted'` 等值判断
+     * ⇒ 整个早停分支被漏掉，run 跑完、finish 被幂等挡掉、档案停在 0 字 abort。
+     * 所以这里钉死：drain 不许改写原因串，判据必须写成真值判断。
+     */
+    const r = await drainAssistantStream([textChunk('甲'), textChunk('乙'), textChunk('丙')],
+        {shouldStop: async () => 'shutdown-archive'})
+    assert.equal(r.stopped, 'shutdown-archive', '原因串必须原样传出，消费方才分得清是谁让它停的')
+    assert.equal(r.content, '', '第一帧前就停：正文由调用方的实时快照负责，不该由 drain 兜')
+})
+
+test('drainAssistantStream：shouldStop 恒真时一帧都不消费，但仍返回空正文（调用方据此判"要不要写空 abort"）', async () => {
+    const r = await drainAssistantStream([textChunk('a')], {shouldStop: async () => 'aborted'})
+    assert.equal(r.stopped, 'aborted')
+    assert.equal(r.content, '')
+    assert.equal(r.chunkCount, 1, '第一帧被取出即触发停止：取出但未处理')
+})
+
+test('drainAssistantStream：上游抛错必须原样抛出、**不被折算成"停止"**——这条钉死了两个落库点的可达性', async () => {
+    /**
+     * 来自 2026-11-13 一次失败的复现（§25）：我想用客户端 abort 触发 `finalize-interrupted`，
+     * 装置确实通电（中继日志 `是收尾调用=true`、客户端 `AbortError`），库里却落成 `finish`/`error` + `writtenBy=normal`。
+     * 原因就在这里：`shouldStop` 只在**每帧之前**问一次，而 abort 会让**正在 await 的那一帧直接抛错**
+     * ⇒ 控制流从 `for await` 出去，`stopped` 永远是 `null`，`finalizeInterrupted` 根本置不起来。
+     * ⇒ `finalize-interrupted` 与 `rescue` **只能由优雅关闭触发**（停止位置起、上游连接不断、帧还在流）。
+     * 这条用例的价值是防反向漂移：将来谁在这里加 catch 并"顺手"记成停止，
+     * 现网就会把"用户按停止"写成"发版拆连接"（`interruptedBy` 与 `loopExit` 双双错）。
+     */
+    let asks = 0
+    let deltas = 0
+    const chunks = (async function* () {
+        yield textChunk('甲')
+        throw new Error('aborted by client abort signal')
+    })()
+    const err = await drainAssistantStream(chunks, {
+        shouldStop: async () => {
+            asks++
+            return null
+        },
+        onDelta: () => {
+            deltas++
+        },
+    }).then(() => null, (e) => e)
+    assert.ok(err instanceof Error, '流错误必须抛出，不能被当成"正常早停"返回')
+    assert.match(String(err.message), /aborted by client/, '抛出的还是上游那句，没有被改写')
+    assert.equal(deltas, 1, '抛错之前到达的那一帧照常消费（已送达的正文不该被吞）')
+    assert.equal(asks, 1, '停止判据只在帧之前问：没有帧，就没有第二次询问，也就没有 stopped')
+})
+
+test('drainAssistantStream：usage 在早停前已经取到，abort 落档时 token 不会凭空变成 0', async () => {
+    /** 顺序敏感：网关在增量里带 usage（每帧都带），早停时这批必须已经并入 */
+    const withUsage = (t) => ({choices: [{delta: {content: t}}], usage: {prompt_tokens: 10, completion_tokens: 2, total_tokens: 12}})
+    let n = 0
+    const r = await drainAssistantStream([withUsage('甲'), withUsage('乙'), withUsage('丙')],
+        {shouldStop: async () => (++n >= 2 ? 'aborted' : null)})
+    assert.equal(r.content, '甲')
+    assert.equal(r.usage.completionTokens, 2, '早停只停后续消费，不停已经量到的用量')
+})
+
 test('drainAssistantStream：async generator 与数组形态结果一致', async () => {
     const chunks = [reasonChunk('r'), textChunk('a'), toolChunk(0, 'c1', 'search_web', '{"q":1}'), finishChunk('tool_calls')]
     const fromArray = await drainAssistantStream(chunks)
@@ -433,7 +525,7 @@ const toolRounds = (n, withText) => Array.from({length: n}, (unused, i) => toolR
 
 /* ---------- 迭代上限与收尾补救的纯函数 ---------- */
 
-test('resolveMaxIterations：请求 > 频道 > 全局 > 兜底，并钳到 1..20', () => {
+test('resolveMaxIterations：请求 > 频道 > 全局 > 兜底，并钳到 1..40', () => {
     assert.equal(resolveMaxIterations({}), DEFAULT_MAX_ITERATIONS, '什么都不配就是 6，与抽取前一致')
     assert.equal(resolveMaxIterations({configValue: 10}), 10)
     assert.equal(resolveMaxIterations({configValue: 10, channelValue: 8}), 8, '频道盖过全局')
@@ -445,6 +537,15 @@ test('resolveMaxIterations：请求 > 频道 > 全局 > 兜底，并钳到 1..20
     assert.equal(resolveMaxIterations({requestValue: 7.9}), 7, '向下取整')
     assert.equal(resolveMaxIterations({requestValue: 'abc', channelValue: null}), DEFAULT_MAX_ITERATIONS)
     assert.equal(resolveMaxIterations({fallback: 3}), 3)
+})
+
+test('2026-11-16 放宽裁定钉值：天花板 40、调研频道 24 走频道级、默认 6 不动', () => {
+    // 用户裁定"不要整体限制太死"——值本身被裁定过就要被钉，动态引用天花板等于没钉
+    assert.equal(MAX_ITERATIONS_CEILING, 40, '20→40：深度限制不再兼职流量闸门（并发闸与熔断负责流量）')
+    assert.equal(resolveMaxIterations({requestValue: 25}), 25, '25 在旧天花板 20 下会被静默压掉——放宽的意义就在这')
+    assert.equal(resolveMaxIterations({requestValue: 999}), 40)
+    assert.equal(resolveMaxIterations({configValue: 6, channelValue: 24}), 24, 'xxzx_common 场景化配置压过全局默认')
+    assert.equal(DEFAULT_MAX_ITERATIONS, 6, '普通聊天的默认不动（行为不变面最小）')
 })
 
 test('finalizationDecision：只有 exhausted 且末段为空才补救', () => {
