@@ -75,6 +75,34 @@ describe('路由：检测在 writeHead 之前，且拒绝与放行都留痕', ()
     })
 })
 
+describe('queue-full ⇒ 4292 专用拒绝体接线（M8 刀三解锁件；M5 后住共享体）', () => {
+    const code = codeOnly(linesOf('routes/core/chat/root.js'))
+    const i = (re) => code.findIndex((l) => re.test(l))
+    test('queue-full 分支走 rejectQueueFull 单源回法，不再落回 4291 体说"上一条还在处理中"', () => {
+        assert.ok(code.some((l) => /rejectQueueFull\(/.test(l)), '4292 体没接线 ⇒ 队列满时用户听到错话')
+        const def = i(/const rejectQueueFullReply = /)
+        const branch = i(/queueDecision\.reason === 'queue-full'/)
+        const gateBranch = i(/d\.reason\.startsWith\('queue-full'\)/)
+        assert.ok(def >= 0, '找不到共享 4292 体构造 rejectQueueFullReply')
+        assert.ok(branch > def && gateBranch > def, `两个队列满入口都必须调用共享体（定义要在前）：def=${def + 1} overlap=${branch + 1} gate=${gateBranch + 1}`)
+        const body = code.slice(def, def + 10).join('\n')
+        assert.match(body, /rejectQueueFull\(\{\s*\.\.\.decisionish/, '共享体没走 rejectQueueFull 单源构造')
+        assert.match(body, /reply\.code\(rq\.httpStatus\)\.send\(rq\.body\)/, '构造了不回=安慰剂')
+    })
+    test('队列数/上限随体透传（active/limit）——前端说明"已满 N/上限"的数据源，不许前端猜配置', () => {
+        const def = i(/const rejectQueueFullReply = /)
+        const call = code.slice(def, def + 10).find((l) => /rejectQueueFull\(\{/.test(l)) || ''
+        assert.ok(/active:\s*queueCount/.test(call) && /limit:\s*qCfg\.maxQueue/.test(call),
+            `构造处没带 active/limit：${call.trim().slice(0, 120)}`)
+    })
+    test('M5：4292 回法保持"200+success:false"通道（非 2xx 各端读不到体）——rejectQueueFull 返回 null 时闸分叉落回原拒绝不硬造', () => {
+        const def = i(/const queueOnCapacityGate = async/)
+        const body = code.slice(def, def + 30).join('\n')
+        assert.match(body, /return rejectQueueFullReply\(/, '闸的 queue-full 没走共享体')
+        assert.match(body, /return null/, '构造失败没有回落路径（宁可话不精确，不可无话/双发）')
+    })
+})
+
 describe('DAO 与档案：投影字段齐、落库与视图都带上', () => {
     test('findOpenRun 的投影必须包含 decideOverlap 真正读的字段（缺字段=永远放行且看起来正常）', () => {
         const ls = codeOnly(linesOf('daos/core/dac/llmUsageDac.js'))
@@ -90,8 +118,8 @@ describe('DAO 与档案：投影字段齐、落库与视图都带上', () => {
         assert.ok(projLine, '找不到 findOne(filter, 投影) 这一行')
         const projBody = (/findOne\(\s*filter\s*,\s*\{([^}]*)\}/.exec(projLine) || [])[1] || ''
         const projKeys = projBody.split(',').map((s) => s.split(':')[0].trim()).filter(Boolean)
-        for (const f of ['messageCode', 'insertTime']) {
-            assert.ok(projKeys.includes(f), `投影缺 ${f} ⇒ 判定会走 unreadable-time/no-prev 静默放行，实际投影键=${JSON.stringify(projKeys)}`)
+        for (const f of ['messageCode', 'insertTime', 'updateTime']) {
+            assert.ok(projKeys.includes(f), `投影缺 ${f} ⇒ 判定会走 unreadable-time/no-prev 静默放行（updateTime 缺则队列第二入口恒 unknown），实际投影键=${JSON.stringify(projKeys)}`)
         }
         const body = ls.slice(i, i + 24).join('\n')
         assert.ok(/progress:\s*LEDGER_PROGRESS\.PROCESSING/.test(body), '没按未终态过滤 ⇒ 会把已完成的历史轮当并发')
@@ -128,6 +156,7 @@ describe('DAO 与档案：投影字段齐、落库与视图都带上', () => {
         const hits = body.filter((l) => /runOverlap:\s*options\.runOverlap \|\| null/.test(l))
         assert.equal(hits.length, 1, `persistTurn 里的落库点应恰好一处（写两处会互相覆盖），实际 ${hits.length}`)
     })
+
     test('messageView 暴露 runOverlap（前端读不到就等于没说）', () => {
         const ls = codeOnly(linesOf('services/core/messageView.js'))
         assert.ok(ls.some((l) => /runOverlap:\s*info\.runOverlap \|\| null/.test(l)), '视图没带这个字段')

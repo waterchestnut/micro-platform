@@ -56,6 +56,30 @@ class TurnRunner extends BaseHandler {
         }
         const messageCode = p.messageCode || agentTaskInfo.agentCode || tools.getUUID()
 
+        /**
+         * M5（容量闸排队分叉的下半场）：排队轮由 cron 直连派发，**绕过了 HTTP 侧的闸**——
+         * "满时排队"若出场不查闸，开闸后出队就没有上限，limit 形同虚设。
+         * 闸关（默认 `limits_concurrentRunsGlobal !== true`）⇒ 连模块都不 import，行为逐字不变。
+         * 槽位满的返回形状两个要点：
+         * - `handleStatus:0`=行留在等待，execAgentTask 的 finally 释放认领，下一轮 pump 再来——
+         *   "等得到槽位"与"失败"是两件事，绝不置 -1 丢单；
+         * - `handleRet` **必须回带原值**：execAgentTaskCore 完成时无条件写回 handleStatus/handleRet，
+         *   回 null 会把入队载荷（query/messageCode/options）抹掉。
+         */
+        const gateCfg = llm.config.limits?.concurrentRuns || {}
+        let gateHeld = null
+        if (gateCfg.global?.enabled === true) {
+            const G = await import('../../core/session/globalRunGate.js')
+            const R = await import('../../../daos/cache/redisClient.js')
+            const store = G.createRedisStore(R.default.client, gateCfg)
+            const g = await G.admitGlobal({store, messageCode, userCode, cfg: gateCfg, logger})
+            if (!g.admit) {
+                logger.info(`turnRunner 让位并发闸(槽满，等下一轮 pump): ${agentTaskInfo.agentCode} reason=${g.decision?.reason} 在途=${g.decision?.active}/${g.decision?.limit}`)
+                return { handleStatus: 0, handleRet: agentTaskInfo.handleRet, errorMsg: '', subsequentMode: '', subsequents: [] }
+            }
+            gateHeld = {mod: G, store}
+        }
+
         const timeoutMs = Number(p.turnTimeoutMs) > 0 ? Number(p.turnTimeoutMs) : DEFAULT_TURN_TIMEOUT_MS
         const controller = new AbortController()
         const timer = setTimeout(() => {
@@ -78,6 +102,13 @@ class TurnRunner extends BaseHandler {
             })
         } finally {
             clearTimeout(timer)
+            // 闸位与 run 同生命周期：execChat 无论成败/抛错都要归还（归还失败只 warn——
+            // maxRunAgeMs 死账清理是兜底，不该因它还不上就把手里的执行结果也变红）
+            if (gateHeld) {
+                await gateHeld.mod.releaseGlobal({store: gateHeld.store, messageCode, userCode, logger}).catch((e) => {
+                    logger.warn(`turnRunner 归还并发闸位失败(等 maxRunAgeMs 兜底): ${String(e?.message || e).slice(0, 160)}`)
+                })
+            }
         }
 
         const aborted = controller.signal?.aborted === true

@@ -114,9 +114,12 @@ describe('config 与 schema：默认关 + 双闸', () => {
         assert.match(schema, /unique:\s*true,[\s\S]*?partialFilterExpression:\s*\{agentRole:\s*'root',\s*orchestrated:\s*true\}/,
             '编排 root 缺 partial-unique（同 taskCode 并发双树）')
         const root = linesOf('routes/core/chat/root.js').join('\n')
-        assert.match(root, /if \(queueDecision && queueDecision\.decision === 'queue'\) \{[\s\S]{0,800}pickIdempotentHit\(/,
-            '入队分支没有幂等预查（锚=第二入口重构后的合流形状：queueDecision && decision===queue）')
-        assert.match(root, /isDuplicateKeyError\(e\)[\s\S]{0,600}hit2/, '入队分支没有 E11000 竞态回查')
+        // M5 重构后的合流形状：幂等预查/竞态回查住进共享入队体 enqueueSerializedTurn，
+        // 四个入口（overlap-reject/stale-open-run/gate-local-full/gate-global-full）都够到同一份——
+        // 锚跟着搬家，一条没减（断"预查在入队之前"仍靠 pickIdempotentHit 先于 addAgentTask 的体内顺序）。
+        assert.match(root, /const enqueueSerializedTurn = async[\s\S]*?pickIdempotentHit\(\{[\s\S]*?await addAgentTask\(turn\)/,
+            '共享入队体没有幂等预查（或预查跑在落库之后=窗口颠倒）')
+        assert.match(root, /isDuplicateKeyError\(e\)[\s\S]{0,600}hit2/, '入队体没有 E11000 竞态回查')
         assert.ok(!/idempotent:\s*true[\s\S]{0,200}statusCode\s*=\s*4/.test(root), '幂等命中不许回 4xx（重复请求=同一受理，不是错误）')
         const svc = linesOf('services/agent/fanOutPlannerService.js').join('\n')
         assert.match(svc, /if \(idemKey\) \{[\s\S]{0,300}findRootByKey/, 'service 缺 planner 前的幂等预查（重发要白烧一次模型）')

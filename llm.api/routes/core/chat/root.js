@@ -12,7 +12,7 @@ import {socketCloseAbortDecision} from '../../../services/core/session/shutdownP
 import {isClosing, shutdownStatus} from '../../../services/core/session/shutdownState.js'
 import {decideOverlap, overlapNote} from '../../../services/core/session/runOverlap.js'
 import {decideQueueOnOverlap, decideQueueOnStaleOpenRun} from '../../../services/core/session/turnScheduler.js'
-import {rejectQueueFull} from '../../../services/core/session/taskAdmission.js'
+import {decideTaskAdmission, rejectQueueFull} from '../../../services/core/session/taskAdmission.js'
 import {buildIdemFilter, pickIdempotentHit, isDuplicateKeyError} from '../../../services/core/session/taskIdempotency.js'
 import {decideFanOutEntry} from '../../../services/core/session/fanOutEntry.js'
 import {buildSerializedTurnTask} from '../../../services/core/session/taskQueueComposer.js'
@@ -289,6 +289,120 @@ export default async function (fastify, opts) {
          */
         const gateCfg = llm.config.limits?.concurrentRuns || {}
         const messageCodeForGate = request.reqParams?.options?.messageCode || tools.getUUID()
+        /**
+         * M5（容量闸排队分叉，与母本 f3f110b 同步）共享件：排队载荷与入队体。四个入口——
+         * overlap 判拒、stale-open-run、并发闸局部满、并发闸全局满——**共用同一段入队**，
+         * 差异只剩 entryLabel 与上下文注记；"两处真相"的分叉形状在这里被函数边界掐死。
+         * conversationTaskQueue.enabled !== true ⇒ 下面的闸分叉一个字节都不执行（默认关=现网逐字不变）。
+         */
+        const qCfg = llm.config.limits?.conversationTaskQueue || {}
+        /** 本会话排队深度（四入口同口径：serialized-turn 且 handleStatus=0）。读失败按 0 交给 maxQueue 判定 */
+        const readQueueDepth = async () => {
+            const agentTaskDac = (await import('../../../daos/core/dac/agentTaskDac.js')).default
+            try {
+                return await agentTaskDac.getCount({
+                    complexFilter: {conversationCode: request.reqParams.conversationCode, agentRole: 'serialized-turn', handleStatus: 0},
+                }) || 0
+            } catch { return 0 }
+        }
+        /**
+         * 入队体（manual 不投 Kafka；§5-1 幂等预查+竞态回查；成功=200+data.queued）。
+         * @returns {Promise<Object|null>} 已发 reply 返回其对象；入队失败返回 null ⇒ 调用方落回各自的拒绝体
+         */
+        const enqueueSerializedTurn = async ({queueDecision, queueCount, entryLabel, contextNote}) => {
+            const {addAgentTask} = await import('../../../services/core/agentTask.js')
+            const agentTaskDac = (await import('../../../daos/core/dac/agentTaskDac.js')).default
+            /**
+             * §5-1 幂等：同一会话同一 messageCode（前端预生成码重发/网关重试同一请求体）只留一条等待行。
+             * 快路径=入队前预查；**并发终裁=partial-unique 索引**（uniq_serializedTurn_messageCode），
+             * 撞键回查胜者行 ⇒ 两次请求同一 rootCode。预查读失败不拦插入（"读不到"≠"不存在"）。
+             */
+            const idemFilter = buildIdemFilter({
+                conversationCode: request.reqParams.conversationCode,
+                agentRole: 'serialized-turn', keyField: 'messageCode', keyValue: messageCodeForGate,
+            })
+            try {
+                const hit = pickIdempotentHit({
+                    rows: await agentTaskDac.getTop(5, idemFilter, {insertTime: 1}),
+                    keyField: 'messageCode', keyValue: messageCodeForGate,
+                })
+                if (hit) {
+                    logger.warn(`同会话追问重复入队(幂等回原 root): rootCode=${hit.agentCode}, conversationCode=${request.reqParams.conversationCode}`)
+                    // 位次如实=含命中行自身的排队数（queueCount 本就只数库里行，不+1——它不是新请求）
+                    return reply.code(200).send({success: true, code: 0, msg: '', data: {queued: true, idempotent: true, rootCode: hit.agentCode, queuePosition: Math.max(1, queueCount)}})
+                }
+            } catch { /* 预查失败照走插入，唯一索引兜底 */ }
+            try {
+                const turn = buildSerializedTurnTask({
+                    conversationCode: request.reqParams.conversationCode,
+                    messageCode: messageCodeForGate,
+                    query: request.reqParams.query,
+                    request: request.reqParams || {},
+                    options: request.reqParams.options,
+                    userInfo: request.userInfo,
+                    operator: {userCode: request.userInfo?.userCode, realName: request.userInfo?.realName},
+                    handler: 'turnRunner',
+                })
+                try {
+                    await addAgentTask(turn) // manual ⇒ 落库但不自动派发，等 pump 在会话空闲时忠实重放
+                } catch (e) {
+                    if (!isDuplicateKeyError(e)) throw e
+                    const hit2 = pickIdempotentHit({
+                        rows: await agentTaskDac.getTop(5, idemFilter, {insertTime: 1}),
+                        keyField: 'messageCode', keyValue: messageCodeForGate,
+                    })
+                    if (!hit2) throw e // 报重复却回查无行：不装成功，落回拒绝给真话
+                    logger.warn(`同会话追问重复入队(竞态幂等回原 root): rootCode=${hit2.agentCode}, conversationCode=${request.reqParams.conversationCode}`)
+                    return reply.code(200).send({success: true, code: 0, msg: '', data: {queued: true, idempotent: true, rootCode: hit2.agentCode, queuePosition: Math.max(1, queueCount)}})
+                }
+                logger.warn(`同会话追问入队（排队非拒绝）: rootCode=${turn.agentCode}, 位次=${queueDecision.queuePosition}, `
+                    + `${contextNote}, 入口=${entryLabel}, userCode=${request.userInfo?.userCode}, conversationCode=${request.reqParams.conversationCode}`)
+                /** 200 + success:true：这是"已受理并排队"，不是错误；前端据 `data.queued` 进排队态（呈现属 M1-c） */
+                return reply.code(200).send({success: true, code: 0, msg: '', data: {queued: true, rootCode: turn.agentCode, queuePosition: queueDecision.queuePosition}})
+            } catch (e) {
+                /** 入队失败绝不谎称已排队：落回现网拒绝，用户至少拿到一句真话 */
+                logger.error(`同会话追问入队失败，退回拒绝: conversationCode=${request.reqParams.conversationCode} ${String(e?.message || e).slice(0, 200)}`)
+                return null
+            }
+        }
+        /** 队列满 ⇒ 4292 专用体（rejectQueueFull 单源形态）。返回已发 reply；形状漂移返回 null ⇒ 调用方落回原拒绝 */
+        const rejectQueueFullReply = ({decisionish, queueCount, entryLabel}) => {
+            logger.warn(`同会话排队已满，拒绝本轮: reason=${decisionish.reason}, maxQueue=${qCfg.maxQueue}, 队列数=${queueCount}, 入口=${entryLabel}, conversationCode=${request.reqParams.conversationCode}`)
+            const rq = rejectQueueFull({...decisionish, active: queueCount, limit: qCfg.maxQueue})
+            if (!rq) return null
+            Object.entries(rq.headers || {}).forEach(([k, v]) => reply.header(k, v))
+            return reply.code(rq.httpStatus).send(rq.body)
+        }
+        /**
+         * M5 分叉主体（并发闸拒绝点调用）：闸满走 taskAdmission 四档判据（单源，不另造一套阈值比较），
+         * 未满档/判据说不 ⇒ null=调用方逐字走原 4290 拒绝体。
+         * decision.reason 词表映射：'global-full'→global 档、'user-full'→user 档（runGate/globalRunGate 共用形状）。
+         */
+        const queueOnCapacityGate = async (decision, entryLabel) => {
+            if (qCfg.enabled !== true || !request.reqParams?.conversationCode) return null
+            const tier = decision?.reason === 'user-full'
+                ? {userActive: decision.active, userLimit: decision.limit}
+                : decision?.reason === 'global-full'
+                    ? {globalActive: decision.active, globalLimit: decision.limit}
+                    : null
+            if (!tier) return null // 不认识的拒绝理由不硬排队——原话原样回给用户
+            const queueCount = await readQueueDepth()
+            const d = decideTaskAdmission({
+                ...tier, queueDepth: queueCount, maxQueue: qCfg.maxQueue,
+                retryAfterMs: decision.retryAfterMs || gateCfg.retryAfterMs || 1500,
+            })
+            if (d.action === 'queue') {
+                return await enqueueSerializedTurn({
+                    queueDecision: {decision: 'queue', queuePosition: queueCount + 1, reason: d.reason},
+                    queueCount, entryLabel,
+                    contextNote: `闸=${d.limitedBy}, 在途=${d.active}/${d.limit}`,
+                })
+            }
+            if (d.action === 'reject' && d.reason.startsWith('queue-full')) {
+                return rejectQueueFullReply({decisionish: d, queueCount, entryLabel})
+            }
+            return null
+        }
         /** 全局闸的句柄（开且占位成功才非 null）——finally 成对释放靠它 */
         let globalGate = null
         if (Number(gateCfg.limit) > 0) {
@@ -299,6 +413,10 @@ export default async function (fastify, opts) {
                 cfg: gateCfg,
             })
             if (!gated.admit) {
+                /** M5（默认关）：并发闸满 ⇒ "优先排队非拒绝"——taskAdmission 判得下方塞进会话队列时
+                 *  直接 queued；开关关/队列满构造失败 ⇒ queued=null，逐字走既有 4290 拒绝体 */
+                const queued = await queueOnCapacityGate(gated.decision, 'gate-local-full')
+                if (queued) return queued
                 const r = gated.response
                 Object.entries(r.headers || {}).forEach(([k, v]) => reply.header(k, v))
                 logger.warn(`并发闸拒绝: reason=${gated.decision.reason}, active=${gated.decision.active}, limit=${gated.decision.limit}, userCode=${request.userInfo.userCode}, conversationCode=${request.reqParams?.conversationCode}`)
@@ -325,12 +443,26 @@ export default async function (fastify, opts) {
                 })
                 if (!g.admit) {
                     releaseRun(messageCodeForGate)
+                    const queued = await queueOnCapacityGate(g.decision, 'gate-global-full')
+                    if (queued) return queued
                     const r = g.response
                     Object.entries(r.headers || {}).forEach(([k, v]) => reply.header(k, v))
                     logger.warn(`全局闸拒绝: reason=${g.decision.reason}, active=${g.decision.active}, limit=${g.decision.limit}, userCode=${request.userInfo.userCode}, conversationCode=${request.reqParams?.conversationCode}`)
                     return reply.code(r.httpStatus).send(r.body)
                 }
                 globalGate = {mod: G, store}
+            }
+        }
+
+        /**
+         * 成对归还（局部位 + 已占有的全局位）：finally 只兜住 SSE try 之后的路径，
+         * overlap 排队/拒绝这些提前 return 走不到它——M5 复查抓出的既有泄漏面（全局位开了同样漏）。
+         * 幂等由两侧各自兜底：releaseRun 删不存在键无副作用；releaseGlobal 尽力而为（死账线 maxRunAgeMs 回收）。
+         */
+        const releaseGateSlots = () => {
+            if (Number(gateCfg.limit) > 0) releaseRun(messageCodeForGate)
+            if (globalGate) {
+                globalGate.mod.releaseGlobal({store: globalGate.store, messageCode: messageCodeForGate, userCode: request.userInfo?.userCode, logger}).catch(() => {})
             }
         }
 
@@ -373,23 +505,13 @@ export default async function (fastify, opts) {
                  * 1. 入队用 `handleMode:'manual'`（`addAgentTask` 只在 queue 才投 Kafka）——consumer 无会话级串行，
                  *    投 queue 会在上一轮还活着时并发跑同一 conversationCode，正是 runOverlap 要防的竞态；
                  * 2. 执行体是 `turnRunner`（忠实重放用户轮）而非 `agentChat`（后者 memory:off，语义不符）；
-                 * 3. `addAgentTask`/`agentTaskDac` 走**动态 import**：本文件的原则是重模块（kafka/redlock）
-                 *    绝不进默认热路径（同 `globalRunGate`、`redisClient` 的处置），开关关时一行都不该加载。
-                 *    计数查询也只在"可能入队"的两种判定下才跑（普通消息 no-prev 不付这笔钱）。
+                 * 3. 重模块走**动态 import**、计数只在"可能入队"的判定下才跑（普通消息 no-prev 不付这笔钱）
+                 *    ——M5 后这些纪律住在顶部共享体 `enqueueSerializedTurn`/`readQueueDepth` 里，不在本块重复。
                  */
-                const qCfg = llm.config.limits?.conversationTaskQueue || {}
                 let queueDecision = null
-                let addAgentTask = null
-                let agentTaskDac = null
                 let queueCount = 0
                 if (qCfg.enabled === true && (!od.admit || od.reason === 'stale-open-run')) {
-                    ;({addAgentTask} = await import('../../../services/core/agentTask.js'))
-                    agentTaskDac = (await import('../../../daos/core/dac/agentTaskDac.js')).default
-                    try {
-                        queueCount = await agentTaskDac.getCount({
-                            complexFilter: {conversationCode: request.reqParams.conversationCode, agentRole: 'serialized-turn', handleStatus: 0},
-                        }) || 0
-                    } catch { /* 读不到排队数按 0，是否放行交给 maxQueue 判定 */ }
+                    queueCount = await readQueueDepth()
                     if (!od.admit) {
                         queueDecision = decideQueueOnOverlap({
                             enabled: true, overlapAdmit: false, overlapReason: od.reason, queueCount, maxQueue: qCfg.maxQueue,
@@ -403,69 +525,26 @@ export default async function (fastify, opts) {
                     }
                 }
                 if (queueDecision && queueDecision.decision === 'queue') {
-                    /**
-                     * §5-1 幂等：同一会话同一 messageCode（前端预生成码重发/网关重试同一请求体）只留一条等待行。
-                     * 快路径=入队前预查；**并发终裁=partial-unique 索引**（uniq_serializedTurn_messageCode），
-                     * 撞键回查胜者行 ⇒ 两次请求同一 rootCode。预查读失败不拦插入（"读不到"≠"不存在"）。
-                     */
-                    const idemFilter = buildIdemFilter({
-                        conversationCode: request.reqParams.conversationCode,
-                        agentRole: 'serialized-turn', keyField: 'messageCode', keyValue: messageCodeForGate,
+                    const sent = await enqueueSerializedTurn({
+                        queueDecision, queueCount,
+                        entryLabel: od.admit ? 'stale-open-run' : 'overlap-reject',
+                        contextNote: `上一轮=${od.prevMessageCode}, 已跑ms=${od.ageMs}`,
                     })
-                    try {
-                        const hit = pickIdempotentHit({
-                            rows: await agentTaskDac.getTop(5, idemFilter, {insertTime: 1}),
-                            keyField: 'messageCode', keyValue: messageCodeForGate,
-                        })
-                        if (hit) {
-                            logger.warn(`同会话追问重复入队(幂等回原 root): rootCode=${hit.agentCode}, conversationCode=${request.reqParams.conversationCode}`)
-                            // 位次如实=含命中行自身的排队数（queueCount 本就只数库里行，不+1——它不是新请求）
-                            return reply.code(200).send({success: true, code: 0, msg: '', data: {queued: true, idempotent: true, rootCode: hit.agentCode, queuePosition: Math.max(1, queueCount)}})
-                        }
-                    } catch { /* 预查失败照走插入，唯一索引兜底 */ }
-                    try {
-                        const turn = buildSerializedTurnTask({
-                            conversationCode: request.reqParams.conversationCode,
-                            messageCode: messageCodeForGate,
-                            query: request.reqParams.query,
-                            request: request.reqParams || {},
-                            options: request.reqParams.options,
-                            userInfo: request.userInfo,
-                            operator: {userCode: request.userInfo?.userCode, realName: request.userInfo?.realName},
-                            handler: 'turnRunner',
-                        })
-                        try {
-                            await addAgentTask(turn) // manual ⇒ 落库但不自动派发，等 pump 在会话空闲时忠实重放
-                        } catch (e) {
-                            if (!isDuplicateKeyError(e)) throw e
-                            const hit2 = pickIdempotentHit({
-                                rows: await agentTaskDac.getTop(5, idemFilter, {insertTime: 1}),
-                                keyField: 'messageCode', keyValue: messageCodeForGate,
-                            })
-                            if (!hit2) throw e // 报重复却回查无行：不装成功，落回拒绝给真话
-                            logger.warn(`同会话追问重复入队(竞态幂等回原 root): rootCode=${hit2.agentCode}, conversationCode=${request.reqParams.conversationCode}`)
-                            return reply.code(200).send({success: true, code: 0, msg: '', data: {queued: true, idempotent: true, rootCode: hit2.agentCode, queuePosition: Math.max(1, queueCount)}})
-                        }
-                        logger.warn(`同会话追问入队（排队非拒绝）: rootCode=${turn.agentCode}, 位次=${queueDecision.queuePosition}, `
-                            + `上一轮=${od.prevMessageCode}, 已跑ms=${od.ageMs}, 入口=${od.admit ? 'stale-open-run' : 'overlap-reject'}, userCode=${request.userInfo?.userCode}, conversationCode=${request.reqParams.conversationCode}`)
-                        /** 200 + success:true：这是"已受理并排队"，不是错误；前端据 `data.queued` 进排队态（呈现属 M1-c） */
-                        return reply.code(200).send({success: true, code: 0, msg: '', data: {queued: true, rootCode: turn.agentCode, queuePosition: queueDecision.queuePosition}})
-                    } catch (e) {
-                        /** 入队失败绝不谎称已排队：落回现网拒绝，用户至少拿到一句真话 */
-                        logger.error(`同会话追问入队失败，退回拒绝: conversationCode=${request.reqParams.conversationCode} ${String(e?.message || e).slice(0, 200)}`)
+                    if (sent) {
+                        // 本轮改为排队执行，占掉的位必须立刻归还（SSE 段的 finally 这路到不了）
+                        releaseGateSlots()
+                        return sent
                     }
                 } else if (queueDecision && queueDecision.reason === 'queue-full') {
                     /**
                      * 队列满：回 **4292 专用拒绝体**（`rejectQueueFull` 单源形态：200+success:false，
-                     * 非 2xx 各端读不到体）。active/limit 带上真实队列数与上限——前端要能说明
-                     * "排队已满（N/上限）"，这与 4291"上一条还在处理中"是两句不同的真话。
-                     * 造不出拒绝体（形状漂移⇒null）时落回 4291 体：宁可话不精确，不可无话。
+                     * 非 2xx 各端读不到体）。造不出拒绝体（形状漂移⇒null）时落回 4291 体：
+                     * 宁可话不精确，不可无话。
                      */
-                    logger.warn(`同会话排队已满，拒绝本轮: reason=${queueDecision.reason}, maxQueue=${qCfg.maxQueue}, 队列数=${queueCount}, conversationCode=${request.reqParams.conversationCode}`)
-                    const rq = rejectQueueFull({...queueDecision, active: queueCount, limit: qCfg.maxQueue})
-                    if (rq) {
-                        Object.entries(rq.headers || {}).forEach(([k, v]) => reply.header(k, v))
-                        return reply.code(rq.httpStatus).send(rq.body)
+                    const sent = rejectQueueFullReply({decisionish: queueDecision, queueCount, entryLabel: od.admit ? 'stale-open-run' : 'overlap-reject'})
+                    if (sent) {
+                        releaseGateSlots()
+                        return sent
                     }
                 }
                 if (!od.admit) {
@@ -474,6 +553,7 @@ export default async function (fastify, opts) {
                     logger.warn(`同会话重复拒绝: reason=${od.reason}, 上一轮=${od.prevMessageCode}, `
                         + `已跑ms=${od.ageMs}, userCode=${request.userInfo.userCode}, conversationCode=${request.reqParams.conversationCode}`)
                     /** 与并发闸同一套回法：200 + `success:false`，429 会让四端读不到这句话 */
+                    releaseGateSlots() // 拒绝出口同样在 SSE try 之前——不归还就永久漏一格（M5 复查抓出的既有 bug）
                     return reply.code(r.httpStatus).send(r.body)
                 }
                 if (runOverlap) {
