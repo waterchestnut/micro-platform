@@ -37,6 +37,7 @@ import {makeGateClassifyFn} from './session/gateClassifier.js'
 import {buildPlanTools, isPlanTool, planToolEnabled, executePlanTool} from './session/planTool.js'
 import {buildSaveArtifactTools, isSaveArtifactTool, saveArtifactToolEnabled, executeSaveArtifactTool} from './artifact/saveArtifactTool.js'
 import {buildReadArtifactTools, isReadArtifactTool, executeReadArtifactTool} from './artifact/readArtifactTool.js'
+import {buildReadAttachmentTools, isReadAttachmentTool, executeReadAttachmentTool} from './attachment/readAttachmentTool.js'
 import {withRecitation, planForPersistence, seedPlanFromPrior} from './session/planAssembly.js'
 import {decideCompletionSelfCheck, buildSelfCheckHint, interpretSelfCheckReply} from './session/planState.js'
 import {peekSharedSandboxId} from '../sandbox/runner.js'
@@ -582,6 +583,16 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     const askOn = askToolEnabled(askCfg) && !!options.answerRouter
     if (askOn) {
         allTools.push(...buildAskTools())
+    }
+    /**
+     * B-1（附件授权前门，默认关）：read_attachment 只随**任务上下文**注册——
+     * 普通轮没有授权面（root 快照不在那里），与其运行时拒话，不如不给模型这个选项。
+     * 关/无 taskContext ⇒ 这里一行都不做，工具清单与现网逐字一致。
+     */
+    const attachCfg = config.limits?.taskAttachment || {}
+    const attachOn = attachCfg.enabled === true && !!options.taskContext?.rootCode
+    if (attachOn) {
+        allTools.push(...buildReadAttachmentTools())
     }
     /**
      * 本轮计划：初值从上一轮档案 seed（跨轮 recitation），之后由 update_plan 整份替换。
@@ -1808,9 +1819,9 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                         gatePassedCalls = screened.passed
                         gateBlockedResults = screened.blocked
                     }
-                    /** 记忆、溢出取回、沙箱代码执行、计划更新、产物登记、人机提问都要单独分派：否则会被当成 MCP 工具丢给 mcpToolManager 而找不到实现 */
-                    const {memoryCalls, overflowCalls, codeCalls, planCalls, artifactCalls, askCalls, otherCalls} =
-                        classifyToolCalls(gatePassedCalls, {isMemoryTool, isOverflowTool, isCodeTool, isPlanTool, isArtifactTool: (n) => isSaveArtifactTool(n) || isReadArtifactTool(n), ...(askOn ? {isAskTool} : {})})
+                    /** 记忆、溢出取回、沙箱代码执行、计划更新、产物登记、人机提问、附件读回都要单独分派：否则会被当成 MCP 工具丢给 mcpToolManager 而找不到实现 */
+                    const {memoryCalls, overflowCalls, codeCalls, planCalls, artifactCalls, askCalls, attachmentCalls, otherCalls} =
+                        classifyToolCalls(gatePassedCalls, {isMemoryTool, isOverflowTool, isCodeTool, isPlanTool, isArtifactTool: (n) => isSaveArtifactTool(n) || isReadArtifactTool(n), ...(askOn ? {isAskTool} : {}), ...(attachOn ? {isAttachmentTool: isReadAttachmentTool} : {})})
                     const memoryToolContext = {
                         userCode: curUserInfo?.userCode, channel, workspaceId: memoryWorkspace,
                         conversationCode, messageCode,
@@ -1937,6 +1948,34 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                         }
                     }
 
+                    /**
+                     * B-1：read_attachment 执行段（懒 import 同 artifact 纪律——attachmentCalls 为空
+                     * 连 docApiExtract/agentTaskDac 都不加载）。root 快照经 getTop 现取：
+                     * 授权面=发起那一刻落在 root 行上的事实，child 循环每一跳都重新对表（重放/追活同样受表）。
+                     */
+                    let attachmentResults = []
+                    if (attachmentCalls.length) {
+                        const [{makeExtractDeps}, agentTaskDacMod] = await Promise.all([
+                            import('./attachment/docApiExtract.js'),
+                            import('../../daos/core/dac/agentTaskDac.js'),
+                        ])
+                        const agentTaskDac = agentTaskDacMod.default
+                        attachmentResults = await Promise.all(attachmentCalls.map(async (toolCall) => executeReadAttachmentTool({
+                            toolCall,
+                            taskContext: options.taskContext,
+                            limits: {maxChars: attachCfg.maxChars},
+                            deps: {
+                                getRootParams: async (rootCode) => {
+                                    const rows = await agentTaskDac.getTop(1, {complexFilter: {agentCode: rootCode}})
+                                    return rows?.[0]?.params || null
+                                },
+                                extractText: makeExtractDeps({
+                                    docApiConfig: config.docApiConfig || {},
+                                    userInfo: {userCode: curUserInfo?.userCode || '', realName: curUserInfo?.realName || ''},
+                                }),
+                            },
+                        })))
+                    }
                     // 执行工具调用（区分 MCP 工具和 Skill 工具）
                     let otherResults = []
                     if (otherCalls.length) {
@@ -1965,7 +2004,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                                 : await mcpToolManager.executeToolCalls(channel, otherCalls)
                         }
                     }
-                    const toolResults = [...gateBlockedResults, ...memoryResults, ...overflowResults, ...codeResults, ...planResults, ...artifactResults, ...askResults, ...otherResults]
+                    const toolResults = [...gateBlockedResults, ...memoryResults, ...overflowResults, ...codeResults, ...planResults, ...artifactResults, ...askResults, ...attachmentResults, ...otherResults]
 
                     /*工具结果只带 tool_call_id，前端无法据此显示调用了哪个工具，这里补上名称*/
                     const nameById = buildToolNameIndex(toolCalls)

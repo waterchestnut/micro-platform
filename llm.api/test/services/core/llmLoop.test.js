@@ -183,6 +183,18 @@ test('classifyToolCalls：ask_user 绝不漏进 otherCalls（注入 isAskTool �
     assert.equal(off.otherCalls.length, 1)
 })
 
+/** B-1 同款第四例：read_attachment 漏出取反串=附件读被丢进 MCP 通道，授权判定根本没有发生 */
+test('classifyToolCalls：read_attachment 绝不漏进 otherCalls（注入 isAttachmentTool 时）', () => {
+    const preds = {...PREDS, isAttachmentTool: (n) => n === 'read_attachment'}
+    const r = classifyToolCalls([{id: '1', function: {name: 'read_attachment'}}, {id: '2', function: {name: 'searxng_http/search'}}], preds)
+    assert.equal(r.attachmentCalls.length, 1)
+    assert.equal(r.otherCalls.length, 1, '别的工具照常走 MCP，attachment 不该连坐')
+    /** 关着（谓词不注入）逐字一致：attachmentCalls 空、read_attachment 落 other（注册面本来就没有它） */
+    const off = classifyToolCalls([{id: '1', function: {name: 'read_attachment'}}], PREDS)
+    assert.equal(off.attachmentCalls.length, 0)
+    assert.equal(off.otherCalls.length, 1)
+})
+
 test('classifyToolCalls：谓词缺失时全部落到 otherCalls，不抛错', () => {
     const r = classifyToolCalls([{id: '1', function: {name: 'whatever'}}], {})
     assert.equal(r.otherCalls.length, 1)

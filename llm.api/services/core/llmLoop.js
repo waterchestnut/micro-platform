@@ -638,7 +638,7 @@ export function exhaustedFallback({loopExit = 'break', answerContent = '', answe
  * @param {Function} [predicates.isAskTool] 人机提问工具判定（PR-E，挂起等非终态通道）
  * @returns {{memoryCalls: Object[], overflowCalls: Object[], codeCalls: Object[], planCalls: Object[], artifactCalls: Object[], askCalls: Object[], otherCalls: Object[]}}
  */
-export function classifyToolCalls(toolCalls = [], {isMemoryTool, isOverflowTool, isCodeTool, isPlanTool, isArtifactTool, isAskTool} = {}) {
+export function classifyToolCalls(toolCalls = [], {isMemoryTool, isOverflowTool, isCodeTool, isPlanTool, isArtifactTool, isAskTool, isAttachmentTool} = {}) {
     const isMem = typeof isMemoryTool === 'function' ? isMemoryTool : () => false
     const isOvf = typeof isOverflowTool === 'function' ? isOverflowTool : () => false
     const isCode = typeof isCodeTool === 'function' ? isCodeTool : () => false
@@ -648,6 +648,8 @@ export function classifyToolCalls(toolCalls = [], {isMemoryTool, isOverflowTool,
     const isArtifact = typeof isArtifactTool === 'function' ? isArtifactTool : () => false
     /** ask_user（PR-E）：同款兼容。它绝不能落进 otherCalls——MCP 通道里没有这个实现，漏接=模型提问石沉大海 */
     const isAsk = typeof isAskTool === 'function' ? isAskTool : () => false
+    /** read_attachment（B-1 附件前门）：同款兼容。落进 otherCalls 的后果与 ask_user 同型：MCP 找不到实现 */
+    const isAttach = typeof isAttachmentTool === 'function' ? isAttachmentTool : () => false
 
     const memoryCalls = toolCalls.filter(tc => isMem(tc.function?.name))
     const overflowCalls = toolCalls.filter(tc => isOvf(tc.function?.name))
@@ -655,10 +657,11 @@ export function classifyToolCalls(toolCalls = [], {isMemoryTool, isOverflowTool,
     const planCalls = toolCalls.filter(tc => isPlan(tc.function?.name))
     const artifactCalls = toolCalls.filter(tc => isArtifact(tc.function?.name))
     const askCalls = toolCalls.filter(tc => isAsk(tc.function?.name))
+    const attachmentCalls = toolCalls.filter(tc => isAttach(tc.function?.name))
     /** 其余走 MCP/Skill 通道；漏判会被整批丢给 mcpToolManager 而找不到实现，所以这里显式取反（plan/artifact 也必须进这串取反） */
     const otherCalls = toolCalls.filter(tc =>
-        !isMem(tc.function?.name) && !isOvf(tc.function?.name) && !isCode(tc.function?.name) && !isPlan(tc.function?.name) && !isArtifact(tc.function?.name) && !isAsk(tc.function?.name))
-    return {memoryCalls, overflowCalls, codeCalls, planCalls, artifactCalls, askCalls, otherCalls}
+        !isMem(tc.function?.name) && !isOvf(tc.function?.name) && !isCode(tc.function?.name) && !isPlan(tc.function?.name) && !isArtifact(tc.function?.name) && !isAsk(tc.function?.name) && !isAttach(tc.function?.name))
+    return {memoryCalls, overflowCalls, codeCalls, planCalls, artifactCalls, askCalls, attachmentCalls, otherCalls}
 }
 
 /**

@@ -47,6 +47,31 @@ class AgentChat extends BaseHandler {
             return { handleStatus: -1, handleRet: null, errorMsg: 'child query 为空', subsequentMode: '', subsequents: [] }
         }
 
+        /**
+         * B-1 附件清单注入（默认关）：root 行 params.attachments 的授权快照拼进 query——
+         * child 只有从这里才拿得到 fileCode 清单；调清单外的把手会被 decideAttachmentAccess 拒。
+         * 注入失败只 warn 并保持原 query（附件是加分面不是主流程，账读不动不该拦 child 干活；
+         * 模型没清单自然不调 read_attachment，与"前门没开"同形）。
+         */
+        const attachCfg = llm.config.limits?.taskAttachment || {}
+        let childQuery = query
+        if (attachCfg.enabled === true) {
+            try {
+                const agentTaskDac = (await import('../../../daos/core/dac/agentTaskDac.js')).default
+                const {snapshotAttachmentAccess, formatAttachmentsNote} = await import('../../core/session/taskAttachments.js')
+                const rootCodeForAttach = agentTaskInfo.parentCode || agentTaskInfo.agentCode
+                const rows = await agentTaskDac.getTop(1, {complexFilter: {agentCode: rootCodeForAttach}})
+                const snap = snapshotAttachmentAccess(rows?.[0]?.params?.attachments)
+                const note = formatAttachmentsNote(snap)
+                if (note) {
+                    childQuery = `${query}${note}`
+                    logger.info(`child 附件清单注入: rootCode=${rootCodeForAttach}, 条数=${snap.length}`)
+                }
+            } catch (e) {
+                logger.warn(`child 附件清单注入失败（保持原 query）: ${String(e?.message || e).slice(0, 160)}`)
+            }
+        }
+
         // child 身份：默认用本节点 agentCode 派生（幂等、可回读），上层可显式覆盖
         const childMessageCode = p.childMessageCode || agentTaskInfo.agentCode || tools.getUUID()
         const childConversationCode = p.childConversationCode || `agent:${agentTaskInfo.agentCode || childMessageCode}`
@@ -62,7 +87,7 @@ class AgentChat extends BaseHandler {
         let ret
         try {
             // child 不连用户 SSE：streamCallback 是有界 no-op（正文靠读回档案，不靠这里累积）
-            ret = await execChat(curUserInfo, query, childConversationCode, buildChildExecOptions({
+            ret = await execChat(curUserInfo, childQuery, childConversationCode, buildChildExecOptions({
                 messageCode: childMessageCode,
                 conversationCode: childConversationCode,
                 channel: p.channel,

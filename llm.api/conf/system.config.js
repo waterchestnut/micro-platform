@@ -393,6 +393,21 @@ export default {
             /** 快照钳制：重放要给模型的"最小事实"上限（超限带 truncated 标，不冒充全文） */
             snapshotMaxChars: parseInt(process.env['limits_skillWriteIdempotencySnapshotMaxChars'] || '8192'),
         },
+        /**
+         * 附件授权前门（B-1，设计 §3-待决:105，属主拍板②"附件 B"）。**默认关**：
+         * enabled 显式 `true` 才注册 `read_attachment`，且**只对带 taskContext 的 run 注册**
+         * （普通轮没有授权面——root 快照不在那里）。
+         *
+         * 链：taskMode 发起 ⇒ `root.params.attachments` 快照（buildRootTask 既有透传）⇒
+         * agentChat 把清单注入 child query ⇒ 模型按清单内 fileCode 调 read_attachment ⇒
+         * 判据拒清单外 ⇒ doc.api `/file/extract/text` 提取回正文。
+         * maxChars 是 llm 侧第二道钳（doc.api 自带 MAX_TEXT 是第一道）：一次附件读不许吃掉半窗。
+         * B-2 封的透传后门**保持关闭**——前门只走这条显式授权链。
+         */
+        taskAttachment: {
+            enabled: process.env['limits_taskAttachment'] === 'true',
+            maxChars: parseInt(process.env['limits_taskAttachmentMaxChars'] || '12000'),
+        },
         toolResultTokens: parseInt(process.env['limits_toolResultTokens'] || 1200),
         toolResultHeadChars: parseInt(process.env['limits_toolResultHeadChars'] || 900),
         toolResultTailChars: parseInt(process.env['limits_toolResultTailChars'] || 300),
