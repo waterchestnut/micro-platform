@@ -34,6 +34,8 @@ interface ConversationListProps {
 export type ConversationListAction = {
   modifyInitLabel: (conversationCode: string, label: string) => void;
   getConvByLabel: (label: string) => Conversation | undefined;
+  /** 刀 C 会话徽标：按 key 取当前标题（读不了 ⇒ 空串，状态条退显 code 前缀——不猜标题） */
+  getConvLabelByKey: (conversationCode: string) => string;
 }
 
 const useStyles = createStyles(({token, css}) => ({
@@ -91,6 +93,9 @@ const ConversationList: ForwardRefRenderFunction<ConversationListAction, Convers
     },
     getConvByLabel: (label: string) => {
       return conversations.find((i) => i.label === label)
+    },
+    getConvLabelByKey: (conversationCode: string) => {
+      return conversations.find((i) => i.key === conversationCode)?.label || ''
     },
   }))
 

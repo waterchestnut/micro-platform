@@ -13,6 +13,8 @@ import {
   Space,
   Upload,
   Modal,
+  Switch,
+  Tooltip,
 } from 'antd'
 import {createStyles} from 'antd-style'
 import {
@@ -54,6 +56,16 @@ import EmptyRoundNotice from '@/pages/Chat/components/EmptyRoundNotice'
 import {fromHistorySegments} from '@/chatProviders/segments'
 import {regenerateTarget, regenerateConfirmText, regenerateBlockedText} from '@/chatProviders/regenerate'
 import {structuredRejectText, LOADING_PLACEHOLDER_TEXT, dropLoadingPlaceholder} from '@/chatProviders/rejectText'
+import {readTaskFlowError, taskFlowNoteText, upsertPendingTask, removePendingTask, shouldDropPendingTask, pendingTreeTerminalFromView, type PendingTaskEntry} from '@/chatProviders/taskFlow';
+import {makeFetchWithTaskFlow} from '@/chatProviders/taskFlowFetch';
+import {projectMessageParts} from '@/chatProviders/messageParts';
+import {deriveRunStatus} from '@/chatProviders/runStatus';
+import MessageParts from '@/pages/Chat/components/MessageParts';
+import RunStatusBar from '@/pages/Chat/components/RunStatusBar';
+import ArtifactWorkspace from '@/pages/Chat/components/ArtifactWorkspace';
+import TaskCard from '@/pages/Chat/components/TaskCard';
+import {researchTaskDetail, researchTaskCancel, loadSynthesisBody} from '@/services/llm/agentTask';
+import {listConversationArtifacts, readArtifactPage} from '@/services/llm/artifact';
 import {makeToolResultLoader} from '@/services/llm/toolResultClient'
 import {formatUploadFile, getDocHttpUrl, isArray, uuidV4} from '@/utils/util'
 
@@ -107,6 +119,29 @@ const buildAuthHeaders = (): Record<string, string> => {
 }
 
 const providerCaches = new Map<string, CommonChatProvider>()
+
+/* ---------------- M8 排查刀：在途任务的续跟进账目（刷新不丢"停止/查看"入口） ----------------
+ * 键按会话存（会话切走再回来能恢复）。**清理只在事实发生点**：queued=本会话档案已出现同
+ * messageCode 行（排水兑现）；accepted=detail 到终局（卡片说完结局那一刻）。"读不到"不删——
+ * 观测失败不动账目。恢复只追加缺的跟进气泡（幂等，同 rootCode 在 messages 里已有就不再挂）。 */
+const pendingTasksKey = (conv: string) => `chatPendingTasks:${conv || ''}`
+function readPendingTasks(conv: string): PendingTaskEntry[] {
+  if (!conv) return []
+  try {
+    const raw = localStorage.getItem(pendingTasksKey(conv))
+    const list = raw ? JSON.parse(raw) : []
+    return Array.isArray(list) ? list.filter((e: any) => e && e.rootCode && (e.kind === 'accepted' || e.kind === 'queued') && e.note) : []
+  } catch {
+    return [] // localStorage 不可用=刷新后不自动跟进；卡片文案已如实，不当失败演
+  }
+}
+function writePendingTasks(conv: string, list: PendingTaskEntry[]) {
+  if (!conv) return
+  try {
+    if (list.length) localStorage.setItem(pendingTasksKey(conv), JSON.stringify(list))
+    else localStorage.removeItem(pendingTasksKey(conv))
+  } catch { /* 同上：存不进去不演成功 */ }
+}
 const providerFactory = (conversationKey: string) => {
   if (!providerCaches.get(conversationKey)) {
     providerCaches.set(
@@ -118,7 +153,9 @@ const providerFactory = (conversationKey: string) => {
           {
             manual: true,
             fetch: async (baseURL, options = {}) => {
-              return await fetch(baseURL, {
+              /** 刀五（M8 刀一）：受理信封分流包装——判到 taskAccepted/queued 抛可分叉信号，
+               *  SSE/拒绝体逐字节透传，现网路径不变（同母本）。 */
+              return await makeFetchWithTaskFlow()(baseURL, {
                 ...options,
                 headers: {
                   ...buildAuthHeaders(),
@@ -142,6 +179,19 @@ const Index: React.FC = () => {
   const [attachmentsOpen, setAttachmentsOpen] = useState(false)
   const [attachmentItems, setAttachmentItems] = useState<AttachmentItem[]>([])
   const [recording, setRecording] = useState(false)
+  /** M8 刀二：任务模式显式开关（属主拍板：不做每条消息自动判定；服务端未开编排时自然落回普通对话） */
+  const [taskMode, setTaskMode] = useState<boolean>(false)
+  /** 受理信封记账用：本轮预生成 messageCode（queued 兑现凭据=排水后档案同码行） */
+  const pendingSendCodeRef = useRef<string>('')
+  /** 闭包里的 activeConv 是旧值，等异步回调写账目时用户可能早已切走会话——跟母本同款 ref 镜像 */
+  const activeConvRef = useRef<string>(activeConv)
+  activeConvRef.current = activeConv
+  /** 刀 C：Run 状态条的忙碌计时锚 */
+  const [runBusySince, setRunBusySince] = useState<number | null>(null)
+  /** 刀 B 工作区唤起态 */
+  const [artifactWs, setArtifactWs] = useState<{open: boolean; focusCode: string | null}>({open: false, focusCode: null})
+  const openArtifactWorkspace = useCallback((code?: string | null) => setArtifactWs({open: true, focusCode: code || null}), [])
+  const [activeConvLabel, setActiveConvLabel] = useState('')
   const listRef = useRef<any>(null)
   const senderRef = useRef<GetRef<typeof Sender>>(null)
   const conversationListRef = createRef<ConversationListAction>()
@@ -259,6 +309,29 @@ const Index: React.FC = () => {
           streamState: 'aborted',
         } as CommonChatMessage
       }
+      /**
+       * M8 刀一（刀五移植）：编排受理信封（taskAccepted/queued）——这轮**被收下了**，
+       * 不是错误也不是断流。taskNote 走结论行通道（不塞 errorText）；
+       * 续跟进账目落 localStorage（排查刀 C：刷新后找回"查看/停止"入口）。
+       */
+      const taskSig = readTaskFlowError(error)
+      if (taskSig) {
+        const taskNote = taskFlowNoteText(taskSig.kind, taskSig.payload)
+        try {
+          const convNow = activeConvRef.current || ''
+          writePendingTasks(convNow, upsertPendingTask(readPendingTasks(convNow),
+            {kind: taskSig.kind, rootCode: taskSig.payload.rootCode, messageCode: pendingSendCodeRef.current || '', note: taskNote, startedAt: Date.now()}))
+        } catch { /* 记账失败不演成功也不拦气泡 */ }
+        return {
+          ...messageInfo.message,
+          role: 'ai',
+          content: dropLoadingPlaceholder(messageInfo.message?.content),
+          taskNote,
+          taskKind: taskSig.kind,
+          taskRootCode: taskSig.payload.rootCode,
+          streamState: 'done',
+        } as CommonChatMessage
+      }
       return {
         ...messageInfo.message,
         /**
@@ -287,11 +360,56 @@ const Index: React.FC = () => {
     },
   })
 
+  const messagesRef = useRef<MessageInfo<CommonChatMessage>[]>([])
+  messagesRef.current = messages
+
+  /**
+   * M8 排查刀 C（刀五移植）：进会话时恢复在途任务的跟进气泡（刷新不丢"查看进度/取消"入口）。
+   * 清理只在事实点：queued=档案已出现兑现行；accepted=detail 已到终局。
+   * detail 读不到 ⇒ 保留条目（观测失败不动账目）；恢复期间用户切走会话 ⇒ 丢弃这次追加。
+   */
+  const restorePending = useCallback(async (conv: string) => {
+    const list = readPendingTasks(conv)
+    if (!list.length) return
+    const archivedCodes = (messagesRef.current || [])
+      .filter((m: any) => m?.message?.role === 'ai')
+      .map((m: any) => m?.message?.messageCode || '')
+      .filter(Boolean)
+    const keep: PendingTaskEntry[] = []
+    for (const e of list) {
+      let treeTerminal = false
+      if (e.kind === 'accepted') {
+        try {
+          treeTerminal = pendingTreeTerminalFromView(await researchTaskDetail(e.rootCode))
+        } catch { treeTerminal = false }
+      }
+      if (shouldDropPendingTask(e, {archivedMessageCodes: archivedCodes, treeTerminal})) continue
+      keep.push(e)
+    }
+    writePendingTasks(conv, keep)
+    if (!keep.length || activeConvRef.current !== conv) return
+    setMessages((prev: MessageInfo<CommonChatMessage>[]) => {
+      const have = new Set(prev.map((p: any) => p?.message?.taskRootCode).filter(Boolean))
+      const adds = keep.filter((e) => !have.has(e.rootCode)).map((e) => ({
+        id: `pending-task-${e.rootCode}`,
+        message: {
+          role: 'ai', content: '', taskNote: e.note, taskKind: e.kind, taskRootCode: e.rootCode, streamState: 'done',
+        } as CommonChatMessage,
+        status: 'success' as const,
+      }))
+      return adds.length ? [...prev, ...adds] : prev
+    })
+  }, [setMessages])
+  useEffect(() => {
+    if (activeConv) void restorePending(activeConv)
+  }, [activeConv, restorePending])
+
   const doSend = useCallback(
     async (content: string, extra: {regeneratedFrom?: string; attachments?: any[]} = {}) => {
       if (!content.trim() && attachmentItems.length === 0) return
 
       let messageCode = uuidV4()
+      pendingSendCodeRef.current = messageCode // 受理信封记账用（queued 兑现凭据=排水后档案同码行）
       let inputs: any[] = []
       /**
        * P3：重跑必须绕开答案缓存并留下来源。缓存键是 (query, channel, model)，
@@ -321,6 +439,8 @@ const Index: React.FC = () => {
               : formatUploadFile(attachmentItems).filter((_) => _.status === 'done'),
             enableThinking: 0,
             ...(regenFrom ? {regeneratedFrom: regenFrom, cache: 0} : {}),
+            /** §5-1 幂等：每次点"发送"生成一个 taskCode 随请求体固定——双击/网络重发同体 ⇒ 服务端命中同一 rootCode */
+            ...(taskMode ? {taskMode: true, taskCode: `t-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`} : {}),
           },
         },
         {extraInfo: {}},
@@ -335,7 +455,7 @@ const Index: React.FC = () => {
         setAttachmentsOpen(false)
       }
     },
-    [attachmentItems, activeConv, conversationListRef],
+    [attachmentItems, activeConv, conversationListRef, taskMode],
   )
 
   /**
@@ -536,18 +656,7 @@ const Index: React.FC = () => {
 
   const contentRender: BubbleProps['contentRender'] = (content: any, info) => {
     if (typeof content === 'string') {
-      return (
-        <XMarkdown
-          content={content}
-          components={{
-            think: ThinkComponent,
-            code: CodeComponent,
-          }}
-          config={{extensions: Latex()}}
-          paragraphTag='div'
-          protectCustomTagNewlines
-        />
-      )
+      return mdText(content)
     } else if (isArray(content) && content.length) {
       return content.map((item: any, index: number) => {
         if (item.type === 'text') {
@@ -578,13 +687,54 @@ const Index: React.FC = () => {
     return ''
   }
 
+  /** 正文渲染单壳（气泡正文/TaskCard 综合正文/工作区预览共用一份 XMarkdown 配置，防两处漂移） */
+  const mdText = (t: string) => (
+    <XMarkdown
+      content={t}
+      components={{think: ThinkComponent, code: CodeComponent}}
+      config={{extensions: Latex()}}
+      paragraphTag="div"
+      protectCustomTagNewlines
+    />
+  )
+
+  /**
+   * 刀 C：Run 状态条判据——只折叠页面已有信号（isRequesting + 末条 AI 的 streamState/taskKind），
+   * 零新数据源；计时锚立在"转入忙碌"的翻转上。
+   */
+  const runStatus = useMemo(() => {
+    const lastAi = [...messages].reverse().find((m: any) => m?.message?.role === 'ai')?.message
+    return deriveRunStatus({requesting: isRequesting, lastAi})
+  }, [messages, isRequesting])
+  useEffect(() => {
+    setRunBusySince(runStatus.busy ? Date.now() : null)
+  }, [runStatus.busy])
+  useEffect(() => {
+    // 会话标题从列表组件读（读不到退 code 前缀——状态条不许猜标题）
+    setActiveConvLabel(conversationListRef?.current?.getConvLabelByKey?.(activeConv) || '')
+  }, [activeConv, messages.length])
+
   const memoRole: BubbleListProps['role'] = useMemo(
     () => ({
       ai: (data) => {
         let answerReasoning = data.extraInfo?.answerReasoning
         const streamState = data.extraInfo?.streamState
+        /**
+         * Agent UI 刀 A（刀五移植）：消息字段投影为结构化 parts（判据单源 messageParts，现算零存储）。
+         * partsActive 时——正文/计划/工具/来源/说明行由 parts 渲染承担，
+         * ProcessPanel 转 compact（来源不双显）、EmptyRoundNotice 静音文本行（归因判据不断供）、
+         * 错误红线与 TaskCard 首帧说明去重。
+         */
+        const parts = projectMessageParts((data.extraInfo || {}) as any)
+        const partsActive = parts.length > 0
         return {
           typing: true,
+          /**
+           * 现代化刀三：AI 回答走 flat（气泡形态是 messenger 遗产，调研共识平面全宽+弱背景）；
+           * 正文限 72ch 阅读线宽，长输出不铺满屏。
+           */
+          variant: 'borderless' as const,
+          styles: {content: {maxWidth: '72ch'}},
           header: (
             <Flex vertical gap={4}>
               {answerReasoning ? (
@@ -602,6 +752,8 @@ const Index: React.FC = () => {
                 sources={data.extraInfo?.sources}
                 fromCache={data.extraInfo?.fromCache}
                 segments={data.extraInfo?.segments}
+                streaming={streamState === 'streaming'}
+                compact={partsActive}
                 /**
                  * 取回全文的入口。这里闭包 messageCode 与鉴权头，面板因此既不需要知道 token
                  * 从哪来，也不会出现第二份取 token 的写法（`buildAuthHeaders` 全页只有一份）。
@@ -619,6 +771,25 @@ const Index: React.FC = () => {
                 }
               />
               {/*
+                M8 刀二（刀五移植）：扇出受理气泡挂 live 任务卡（轮询 detail/取消/综合正文替换）。
+                queued 不挂卡——排队的真结果会随排水落回**本会话**档案，刷新即见，卡片只会重复。
+              */}
+              {data.extraInfo?.taskKind === 'accepted' && data.extraInfo?.taskRootCode ? (
+                <TaskCard
+                  rootCode={data.extraInfo.taskRootCode}
+                  note={partsActive ? undefined : data.extraInfo?.taskNote}
+                  loadDetail={researchTaskDetail}
+                  cancelTask={researchTaskCancel}
+                  loadSynthesis={loadSynthesisBody}
+                  onSettled={(rc: string) => {
+                    // 终局=唯一清理凭据（卡片已把结局说出口，跟进账目可以销账）
+                    const convNow = activeConvRef.current || ''
+                    writePendingTasks(convNow, removePendingTask(readPendingTasks(convNow), rc))
+                  }}
+                  renderBody={mdText}
+                />
+              ) : null}
+              {/*
                 空正文的说明按实测分三类给（判据在 segments.ts，用例在 segments.test.ts）：
                 被服务重启打断 / 有过程可回放 / 首 token 前就取消。
                 原先这里对任何 abort 行都写"内容不完整"——对第 3 类是假的（它根本没产出过内容），
@@ -630,11 +801,16 @@ const Index: React.FC = () => {
                 error={data.extraInfo?.errorText}
                 process={data.extraInfo?.process}
                 streamState={streamState}
+                resumeNote={data.extraInfo?.resumeNote}
+                taskNote={data.extraInfo?.taskNote}
+                suppressNotes={partsActive}
               />
-              {streamState === 'error' ? <Typography.Text type='danger'>{data.extraInfo?.errorText || '请求失败，请稍后再试'}</Typography.Text> : null}
+              {streamState === 'error' && !partsActive ? <Typography.Text type='danger'>{data.extraInfo?.errorText || '请求失败，请稍后再试'}</Typography.Text> : null}
             </Flex>
           ),
-          contentRender,
+          contentRender: partsActive
+            ? () => <MessageParts parts={parts} renderText={mdText} onOpenArtifact={openArtifactWorkspace}/>
+            : contentRender,
           loadingRender: () => (
             <Space>
               <Spin size='small'/>
@@ -720,6 +896,13 @@ const Index: React.FC = () => {
         />
 
         <div className={styles.main}>
+          <RunStatusBar
+            status={runStatus}
+            busySince={runBusySince}
+            conversationLabel={activeConvLabel}
+            conversationCode={activeConv}
+            onStop={runStatus.canStop ? () => { isRequesting && abort() } : undefined}
+          />
           <div className={styles.messageList}>
             <Bubble.List
               ref={listRef}
@@ -742,12 +925,20 @@ const Index: React.FC = () => {
               placeholder='请输入您的问题...'
               header={senderHeader}
               prefix={
-                <Badge dot={attachmentItems.length > 0 && !attachmentsOpen}>
-                  <Button
-                    onClick={() => setAttachmentsOpen(!attachmentsOpen)}
-                    icon={<LinkOutlined/>}
-                  />
-                </Badge>
+                <Space size={8}>
+                  <Badge dot={attachmentItems.length > 0 && !attachmentsOpen}>
+                    <Button
+                      onClick={() => setAttachmentsOpen(!attachmentsOpen)}
+                      icon={<LinkOutlined/>}
+                    />
+                  </Badge>
+                  <Tooltip title="任务模式：把问题拆解为子任务并行执行、后台完成（需服务端开启编排；未开启时自动按普通对话）">
+                    <Space size={4}>
+                      <Switch size="small" checked={taskMode} onChange={setTaskMode}/>
+                      <span style={{fontSize: 12, color: '#888'}}>任务</span>
+                    </Space>
+                  </Tooltip>
+                </Space>
               }
               allowSpeech={
                 speechSupported && !speechNetworkError
@@ -825,6 +1016,16 @@ const Index: React.FC = () => {
           </div>
         </div>
       </Flex>
+      {/* 刀 B 工作区（刀五移植）：入口=消息内产物卡"打开"（带定位）；Drawer 内自拉会话清单 */}
+      <ArtifactWorkspace
+        open={artifactWs.open}
+        focusCode={artifactWs.focusCode}
+        conversationCode={activeConv}
+        onClose={() => setArtifactWs({open: false, focusCode: null})}
+        renderText={mdText}
+        loadList={listConversationArtifacts}
+        loadPage={readArtifactPage}
+      />
     </XProvider>
   )
 }
