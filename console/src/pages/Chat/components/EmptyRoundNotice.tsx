@@ -4,7 +4,7 @@
  * 组件测试一跑就红。它对构建没有副作用。
  */
 import React from 'react';
-import { Typography } from 'antd';
+import { Button, Typography } from 'antd';
 import { deriveEmptyRoundNotice, type ChatSegment } from '@/chatProviders/segments';
 
 const { Text } = Typography;
@@ -23,6 +23,21 @@ export type EmptyRoundNoticeProps = {
    * 混进去会把 `abandoned:` 这类前缀判断污染成永远不成立。
    */
   resumeNote?: string;
+  /**
+   * M8 刀一：编排受理（taskAccepted/queued）的结论行。与 resumeNote 分开的理由同"不塞 errorText"：
+   * 两个通道各自表达一种事实（续接的处置 / 后台受理的处置），合并会让"为什么空"的判据互相污染。
+   */
+  taskNote?: string;
+  /**
+   * Parts 投影激活时置真（刀 A 去重）：resumeNote/taskNote 文本行已由消息块渲染，
+   * 这里不再重复出声——但**空正文归因判据照旧收到这些字段**（derive 的输入不许断供）。
+   */
+  suppressNotes?: boolean;
+  /**
+   * PR-G 批二a：ongoing 行的"续接"入口。**由调用方把可用性关在这里**
+   * （无游标不传——服务端对缺游标是 400），组件不自判，才可能给出按钮。
+   */
+  onResume?: () => void;
 };
 
 /**
@@ -41,8 +56,20 @@ const EmptyRoundNotice = ({
   process,
   streamState,
   resumeNote,
+  taskNote,
+  suppressNotes,
+  onResume,
 }: EmptyRoundNoticeProps) => {
-  const notice = deriveEmptyRoundNotice({ content, segments, error, process, streamState });
+  /** 可用性=按钮在不在，与判据文案同源：调用方没给 onResume（无游标/无 runner）就不许承诺"可续接" */
+  const notice = deriveEmptyRoundNotice({
+    content,
+    segments,
+    error,
+    process,
+    streamState,
+    resumeAvailable: !!onResume,
+    taskNote,
+  });
   /**
    * 空正文说明与续接结论可能同时成立，也可能只有一个成立，所以两者都要独立判断：
    * 早返回会让"有正文但续接失败了"这一种情况一句话都不说——那恰好是用户最需要知道
@@ -55,6 +82,14 @@ const EmptyRoundNotice = ({
         {notice.text}
       </Text>,
     );
+    /** PR-G 批二a：ongoing 行的续接入口（run 还在服务端活着，游标由调用方核验过才传进来） */
+    if (notice.reason === 'ongoing' && onResume) {
+      body.push(
+        <Button key="ongoing-resume" type="link" size="small" style={{padding: 0}} onClick={onResume}>
+          续接
+        </Button>,
+      );
+    }
   } else if (streamState === 'aborted') {
     body.push(
       <Text key="aborted" type="warning">
@@ -62,10 +97,17 @@ const EmptyRoundNotice = ({
       </Text>,
     );
   }
-  if (resumeNote) {
+  if (resumeNote && !suppressNotes) {
     body.push(
       <Text key="resume" type="secondary">
         {resumeNote}
+      </Text>,
+    );
+  }
+  if (taskNote && !suppressNotes) {
+    body.push(
+      <Text key="task" type="secondary">
+        {taskNote}
       </Text>,
     );
   }

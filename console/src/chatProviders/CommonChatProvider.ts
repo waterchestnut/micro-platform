@@ -149,6 +149,16 @@ export type CommonChatMessage = {
   streamState?: ChatStreamState;
   errorText?: string;
   fromCache?: boolean;
+  /**
+   * 刀五移植（类型面自母本对齐）：M8 编排受理结论行与树坐标——taskNote 不进 errorText
+   * （"被后台收下"不是错误）；taskKind/taskRootCode 供 TaskCard（轮询/取消/综合替换）。
+   * 运行时值由页面 onError 分流写入（taskFlow/taskFlowFetch），provider 本身不判。
+   */
+  taskNote?: string;
+  taskKind?: 'accepted' | 'queued';
+  taskRootCode?: string;
+  /** 断线续接的结论行（resumeOutcomeNote 生成；底座 resume 线未拍板，字段先行免得 as any） */
+  resumeNote?: string;
 };
 
 const MAX_REASONING_HINT = 4000;

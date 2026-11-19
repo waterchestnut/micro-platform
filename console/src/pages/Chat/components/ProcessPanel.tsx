@@ -1,7 +1,7 @@
 import {Button, Collapse, Flex, Space, Spin, Tag, Typography} from 'antd';
 import {Sources, ThoughtChain} from '@ant-design/x';
 import type {ThoughtChainItemType} from '@ant-design/x';
-import {useState} from 'react';
+import {useState, useEffect, useRef} from 'react';
 import type {ReactNode} from 'react';
 import type {ToolResultPage, ToolResultRun} from '@/chatProviders/toolResult';
 import {runToolResultFetch, toolResultIntent, toolResultNextAction, toolResultRunNote, toolResultDisplay, toolResultsDefaultOpen, shouldAutoExpandAfterFetch, PREVIEW_CHARS} from '@/chatProviders/toolResult';
@@ -14,6 +14,7 @@ import {
 } from '@ant-design/icons';
 import type {ChatProcessInfo, ChatSource, ChatToolCall} from '@/chatProviders/CommonChatProvider';
 import type {ChatSegment} from '@/chatProviders/segments';
+import {processSummaryLine, processCollapsedByDefault, processGroupOf, PROCESS_GROUP_META, type ProcessGroup} from '@/chatProviders/processSummary';
 import {
   resolveToolCalls,
   toolResultScopeNote,
@@ -54,6 +55,16 @@ export type ProcessPanelProps = {
    * **不给函数就不渲染按钮**：界面不承诺还没有的动作。
    */
   toolResultLoader?: (call: ChatToolCall) => ((body: {ref: string; offset: number; limit: number}) => Promise<ToolResultPage>) | undefined;
+  /**
+   * 本轮是否仍在流式（现代化刀二）：流式中过程展开跟随，完成瞬间自动收起——
+   * 判据在 processSummary，组件只执行；历史回放传 falsy（默认收起）。
+   */
+  streaming?: boolean;
+  /**
+   * Parts 投影激活时置真（刀 A 去重闸）：工具/来源已升格为消息内结构化块，
+   * 面板不再重复出这两组（同一数据不在两处显示）；段时间线/用量/技能/丢弃声明照旧。
+   */
+  compact?: boolean;
 };
 
 /** 段的渲染大类 → 图标。类别由服务端给（`category`），前端不反推 */
@@ -169,7 +180,7 @@ const ToolCallResult = ({call, process, load}: {
   );
 };
 
-const ProcessPanel = ({process, toolCalls, sources, fromCache, segments, toolResultLoader}: ProcessPanelProps) => {
+const ProcessPanel = ({process, toolCalls, sources, fromCache, segments, toolResultLoader, streaming, compact}: ProcessPanelProps) => {
   const calls: ChatToolCall[] = resolveToolCalls(toolCalls, process);
   const finalSources = sources?.length ? sources : (process?.sources || []);
   const usage = process?.contextUsage;
@@ -177,6 +188,15 @@ const ProcessPanel = ({process, toolCalls, sources, fromCache, segments, toolRes
   const candidates = skills?.candidates || [];
   /** 段：流式累积优先（它是本轮实时状态），否则用库里回放的权威副本 */
   const segs: ChatSegment[] = segments?.length ? segments : (process?.segments || []);
+
+  /** 摘要行与展开态（判据单源 processSummary）：摘要为空 ⇒ 不套折叠壳（没话说就不摆可点的壳） */
+  const summary = processSummaryLine({segments: segs, toolCalls: calls, sources: finalSources, usage, fromCache, streaming});
+  const userTouchedRef = useRef(false);
+  const [open, setOpen] = useState<boolean>(!processCollapsedByDefault(streaming));
+  useEffect(() => {
+    // 完成瞬间自动收起（结果才是主角）；用户手动展开过就不再强制（他的选择优先于规则）
+    if (!streaming && !userTouchedRef.current) setOpen(false);
+  }, [streaming]);
 
   if (!calls.length && !finalSources.length && !candidates.length && !usage && !fromCache && !segs.length) {
     return null;
@@ -319,9 +339,11 @@ const ProcessPanel = ({process, toolCalls, sources, fromCache, segments, toolRes
     });
   }
 
-  if (finalSources.length) {
+  if (finalSources.length && !compact) {
     items.push({
       key: 'sources',
+      // compact 时来源已由 parts chips 呈现（同一数据不在两处显示）；工具组**不**去重——
+      // parts 是业务语义摘要行，这里的详情（入参/结果预览/取回全文入口）是深一层内容，不是重复
       title: `引用来源 ${finalSources.length} 条`,
       icon: <LinkOutlined/>,
       status: 'success',
@@ -380,12 +402,46 @@ const ProcessPanel = ({process, toolCalls, sources, fromCache, segments, toolRes
     });
   }
 
-  return (
-    <Flex vertical gap={4}>
+  /**
+   * 分组渲染（现代化刀二）：执行过程/工具与模型/来源与用量三组，顺序稳定；
+   * 只有一组时不出组标题（噪音），未知 key 已被判据保守归入 flow（不失踪）。
+   */
+  const groups: Record<ProcessGroup, typeof items> = {flow: [], tools: [], refs: []}
+  for (const it of items) groups[processGroupOf(String(it.key))].push(it)
+  const groupOrder = (Object.keys(PROCESS_GROUP_META) as ProcessGroup[]).sort((a, b) => PROCESS_GROUP_META[a].order - PROCESS_GROUP_META[b].order)
+  const shownGroups = groupOrder.filter((g) => groups[g].length > 0)
+  const body = (
+    <Flex vertical gap={6}>
       {fromCache && <Tag color="gold">来自缓存</Tag>}
-      <ThoughtChain items={items} line="dashed"/>
+      {shownGroups.map((g) => (
+        <div key={g}>
+          {shownGroups.length > 1 ? (
+            <Text type="secondary" style={{fontSize: 12, letterSpacing: 0.5}}>{PROCESS_GROUP_META[g].title}</Text>
+          ) : null}
+          <ThoughtChain items={groups[g]} line="dashed"/>
+        </div>
+      ))}
     </Flex>
-  );
+  )
+
+  // 摘要为空（只有缓存标/极薄轮次）⇒ 不摆可点的壳；有摘要 ⇒ progressive disclosure 一行收起
+  if (!summary) return body
+  return (
+    <Collapse
+      ghost
+      size="small"
+      activeKey={open ? ['p'] : []}
+      onChange={(k) => {
+        userTouchedRef.current = true
+        setOpen((Array.isArray(k) ? k : [k]).includes('p'))
+      }}
+      items={[{
+        key: 'p',
+        label: <Text type="secondary" style={{fontSize: 12}}>⚡ {summary}</Text>,
+        children: body,
+      }]}
+    />
+  )
 };
 
 export default ProcessPanel;
