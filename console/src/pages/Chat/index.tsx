@@ -730,11 +730,11 @@ const Index: React.FC = () => {
         return {
           typing: true,
           /**
-           * 现代化刀三：AI 回答走 flat（气泡形态是 messenger 遗产，调研共识平面全宽+弱背景）；
-           * 正文限 72ch 阅读线宽，长输出不铺满屏。
+           * 现代化刀三→属主复调（2026-11-19，与母本 console 同步）：AI 回答平面保留，
+           * 72ch 宽屏实测"又窄又空"且只约束正文不约束过程区——整列收 min(920px,100%)。
            */
           variant: 'borderless' as const,
-          styles: {content: {maxWidth: '72ch'}},
+          styles: {root: {maxWidth: 'min(920px, 100%)'}},
           header: (
             <Flex vertical gap={4}>
               {answerReasoning ? (
@@ -824,7 +824,7 @@ const Index: React.FC = () => {
       },
       user: (data) => ({
         typing: false,
-        header: `User-${data.key}`,
+        header: '对方',
         contentRender,
         avatar: () => (
           <Avatar icon={<UserOutlined/>} style={{backgroundColor: token.colorSuccess}}/>
@@ -833,11 +833,9 @@ const Index: React.FC = () => {
       my: (data) => ({
         placement: 'end',
         typing: false,
-        header: `我自己`,
+        variant: 'filled' as const,
+        styles: {content: {maxWidth: 'min(640px, 100%)', borderRadius: 14}},
         contentRender,
-        avatar: () => (
-          <Avatar icon={<UserOutlined/>} style={{backgroundColor: token.colorSuccess}}/>
-        ),
       }),
       notice: {
         variant: 'filled',
