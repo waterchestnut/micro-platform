@@ -95,6 +95,24 @@ const useStyles = createStyles(({token, css}) => ({
     }
 
     /**
+     * 深度美化二轮（属主 2026-11-19，与母本同步）：AI 回答与页面同底色、模块化分层不明显
+     * ——回答体=白卡（底/描边/软阴影/14 圆角）从灰底浮起；过程区 header 带=更轻的雾面块，
+     * 回答与过程两级层次。
+     */
+    .ant-bubble-start .ant-bubble-content {
+      background: ${token.colorBgContainer};
+      border: 1px solid ${token.colorBorderSecondary};
+      border-radius: 14px;
+      padding: 14px 18px;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
+    }
+    .ant-bubble-start .ant-bubble-header {
+      background: ${token.colorFillQuaternary};
+      border-radius: 12px;
+      padding: 6px 12px;
+    }
+
+    /**
      * 深度美化（属主 2026-11-19，与母本同步）：会话区正文排版层——XMarkdown 输出的
      * 标题/列表/表格/引用/代码此前吃默认值，长答案观感松散。只在气泡内容作用域内收紧。
      */
@@ -822,11 +840,10 @@ const Index: React.FC = () => {
         return {
           typing: true,
           /**
-           * 现代化刀三→属主复调（2026-11-19，与母本 console 同步）：AI 回答平面保留，
-           * 72ch 宽屏实测"又窄又空"且只约束正文不约束过程区——整列收 min(920px,100%)。
+           * 现代化刀三→属主三轮复调（2026-11-19，与母本同步）：列宽上限全部撤除（利用率优先，
+           * 行宽收放交给 1200px 外层容器）；flat 不再裸底——回答体在 CSS 层升格白卡分层。
            */
           variant: 'borderless' as const,
-          styles: {root: {maxWidth: 'min(920px, 100%)'}},
           header: (
             <Flex vertical gap={4}>
               {answerReasoning ? (
@@ -932,7 +949,6 @@ const Index: React.FC = () => {
         variant: 'filled' as const,
         styles: {
           content: {
-            maxWidth: 'min(640px, 100%)',
             borderRadius: '14px 14px 4px 14px',
             background: token.colorPrimaryBg,
             color: token.colorText,
@@ -946,7 +962,23 @@ const Index: React.FC = () => {
         variant: 'filled',
         styles: {
           root: {padding: 0},
-          content: {display: 'flex', justifyContent: 'center', alignItems: 'center'},
+          content: {
+            display: 'flex', justifyContent: 'center', alignItems: 'center',
+            /** 白卡样式（.ant-bubble-start .ant-bubble-content）会波及系统行/分隔行——这里归零 */
+            background: 'transparent', border: 'none', boxShadow: 'none', padding: 0,
+          },
+        },
+      },
+      system: {
+        styles: {
+          root: {padding: 0},
+          content: {display: 'flex', justifyContent: 'center', background: 'transparent', border: 'none', boxShadow: 'none', padding: 0},
+        },
+      },
+      divider: {
+        styles: {
+          root: {padding: 0},
+          content: {background: 'transparent', border: 'none', boxShadow: 'none', padding: 0},
         },
       },
     }),
