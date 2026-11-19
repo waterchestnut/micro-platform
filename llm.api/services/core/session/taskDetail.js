@@ -26,6 +26,8 @@ export function taskPhase(root) {
     const orch = root?.handleRet?.orchestration || {}
     if (orch.cancelled === true) return 'cancelled'
     if (root?.handleStatus === 0) return 'queued'
+    // §7-1 澄清挂起：finalize 截胡把 action 写成 await-input——"在等人"不是"在跑"，必须抢在 running 前
+    if (orch.action === 'await-input') return 'awaiting_input'
     const kids = (root?.subAgents || [])
     const anyOpen = kids.some((s) => s.handleStatus === 0 || s.handleStatus === 1)
     if (root?.handleStatus === 1 || anyOpen) return 'running'
@@ -86,6 +88,10 @@ export function buildTaskDetailView({ root, rows = [] } = {}) {
             dispatch: orch.dispatch || null, follow: orch.follow || null,
         } : null,
         synthesis: root.handleRet?.synthesis || null,
+        // §7-1：澄清挂起清单透传（hold 是 finalize 写的原样；无挂起=null，不造空数组冒充"已答完"）
+        clarify: root.params?.clarifyHold?.requests?.length || root.params?.clarifyHold?.capped?.length
+            ? {requests: root.params.clarifyHold.requests || [], capped: root.params.clarifyHold.capped || [], sealedAt: root.params.clarifyHold.sealedAt || null}
+            : null,
     }
 }
 

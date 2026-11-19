@@ -38,6 +38,7 @@ import {buildPlanTools, isPlanTool, planToolEnabled, executePlanTool} from './se
 import {buildSaveArtifactTools, isSaveArtifactTool, saveArtifactToolEnabled, executeSaveArtifactTool} from './artifact/saveArtifactTool.js'
 import {buildReadArtifactTools, isReadArtifactTool, executeReadArtifactTool} from './artifact/readArtifactTool.js'
 import {buildReadAttachmentTools, isReadAttachmentTool, executeReadAttachmentTool} from './attachment/readAttachmentTool.js'
+import {buildClarifyRequestTools, isClarifyRequestTool, parseClarifyRequest, CLARIFY_TOOL_NAME} from '../agent/clarifyBubble.js'
 import {withRecitation, planForPersistence, seedPlanFromPrior} from './session/planAssembly.js'
 import {decideCompletionSelfCheck, buildSelfCheckHint, interpretSelfCheckReply} from './session/planState.js'
 import {peekSharedSandboxId} from '../sandbox/runner.js'
@@ -593,6 +594,17 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     const attachOn = attachCfg.enabled === true && !!options.taskContext?.rootCode
     if (attachOn) {
         allTools.push(...buildReadAttachmentTools())
+    }
+    /**
+     * §7-1 澄清冒泡（默认关）：request_clarification 只给**编排 child**——注册三闸：
+     * flag 开、taskContext.agentRole==='child'、sink 由 handler 给（agentChat 在场）。
+     * 普通轮/追问轮/综合轮都不给：它们的"问用户"有正当通道（直接回正文问），不需要冒泡。
+     * 它与 ask_user 是两件事：ask_user 挂起等答复（child 禁挂），本工具恒立即 ack（申报不等待）。
+     */
+    const clarifyCfg = config.agentTask?.clarifyBubble || {}
+    const clarifyOn = clarifyCfg.enabled === true && options.taskContext?.agentRole === 'child' && typeof options.clarifySink === 'function'
+    if (clarifyOn) {
+        allTools.push(...buildClarifyRequestTools())
     }
     /**
      * 本轮计划：初值从上一轮档案 seed（跨轮 recitation），之后由 update_plan 整份替换。
@@ -1820,8 +1832,9 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                         gateBlockedResults = screened.blocked
                     }
                     /** 记忆、溢出取回、沙箱代码执行、计划更新、产物登记、人机提问、附件读回都要单独分派：否则会被当成 MCP 工具丢给 mcpToolManager 而找不到实现 */
-                    const {memoryCalls, overflowCalls, codeCalls, planCalls, artifactCalls, askCalls, attachmentCalls, otherCalls} =
-                        classifyToolCalls(gatePassedCalls, {isMemoryTool, isOverflowTool, isCodeTool, isPlanTool, isArtifactTool: (n) => isSaveArtifactTool(n) || isReadArtifactTool(n), ...(askOn ? {isAskTool} : {}), ...(attachOn ? {isAttachmentTool: isReadAttachmentTool} : {})})
+                    /** 记忆、溢出取回、沙箱代码执行、计划更新、产物登记、人机提问、附件读回、澄清申报都要单独分派：否则会被当成 MCP 工具丢给 mcpToolManager 而找不到实现 */
+                    const {memoryCalls, overflowCalls, codeCalls, planCalls, artifactCalls, askCalls, attachmentCalls, clarifyCalls, otherCalls} =
+                        classifyToolCalls(gatePassedCalls, {isMemoryTool, isOverflowTool, isCodeTool, isPlanTool, isArtifactTool: (n) => isSaveArtifactTool(n) || isReadArtifactTool(n), ...(askOn ? {isAskTool} : {}), ...(attachOn ? {isAttachmentTool: isReadAttachmentTool} : {}), ...(clarifyOn ? {isClarifyTool: isClarifyRequestTool} : {})})
                     const memoryToolContext = {
                         userCode: curUserInfo?.userCode, channel, workspaceId: memoryWorkspace,
                         conversationCode, messageCode,
@@ -1976,6 +1989,30 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                             },
                         })))
                     }
+                    /**
+                     * §7-1：澄清申报执行段。**恒不挂起**——受理进 sink（进程内，agentChat 收）
+                     * 并立刻 ack"请收尾"。sink 抛错如实回（申报没进去却说已转交=第二本假账）。
+                     */
+                    let clarifyResults = []
+                    if (clarifyCalls.length) {
+                        clarifyResults = clarifyCalls.map((toolCall) => {
+                            const parsed = parseClarifyRequest(toolCall?.function?.arguments)
+                            if (!parsed.ok) {
+                                return {tool_call_id: toolCall?.id || '', role: 'tool', content: JSON.stringify({success: false, error: `澄清申报未受理：${parsed.reason}`, tool: CLARIFY_TOOL_NAME})}
+                            }
+                            try {
+                                options.clarifySink(parsed)
+                            } catch (e) {
+                                return {tool_call_id: toolCall?.id || '', role: 'tool', content: JSON.stringify({success: false, error: `澄清申报登记失败：${String(e?.message || e).slice(0, 160)}`, tool: CLARIFY_TOOL_NAME})}
+                            }
+                            return {tool_call_id: toolCall?.id || '', role: 'tool', content: JSON.stringify({
+                                success: true,
+                                data: {recorded: true},
+                                hint: '申报已转交主任务统一出题；本轮请基于已知信息完成并在正文标注假设，用户答复会随下一轮交回。',
+                                tool: CLARIFY_TOOL_NAME,
+                            })}
+                        })
+                    }
                     // 执行工具调用（区分 MCP 工具和 Skill 工具）
                     let otherResults = []
                     if (otherCalls.length) {
@@ -2004,7 +2041,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                                 : await mcpToolManager.executeToolCalls(channel, otherCalls)
                         }
                     }
-                    const toolResults = [...gateBlockedResults, ...memoryResults, ...overflowResults, ...codeResults, ...planResults, ...artifactResults, ...askResults, ...attachmentResults, ...otherResults]
+                    const toolResults = [...gateBlockedResults, ...memoryResults, ...overflowResults, ...codeResults, ...planResults, ...artifactResults, ...askResults, ...attachmentResults, ...clarifyResults, ...otherResults]
 
                     /*工具结果只带 tool_call_id，前端无法据此显示调用了哪个工具，这里补上名称*/
                     const nameById = buildToolNameIndex(toolCalls)

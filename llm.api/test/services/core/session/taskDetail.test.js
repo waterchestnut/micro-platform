@@ -17,6 +17,13 @@ describe('taskPhase 映射表', () => {
         assert.equal(taskPhase({handleStatus: 1, subAgents: [kid('a', 1)]}), 'running')
         assert.equal(taskPhase({handleStatus: -1, subAgents: [kid('a', 2), kid('b', 1)]}), 'running', '有在途 child 就是 running，即使 root 行被谁写过')
     })
+    test('§7-1 action=await-input ⇒ awaiting_input，抢在 running 前（在等人不是没在跑就是跑完了）', () => {
+        // handleStatus=1 若无 await 标会落 running（:31 条件）——await 检查必须在那之前
+        assert.equal(taskPhase({handleStatus: 1, subAgents: [kid('a', 2)], handleRet: {orchestration: {action: 'await-input'}}}), 'awaiting_input')
+        assert.equal(taskPhase({handleStatus: 1, subAgents: [kid('a', 1)], handleRet: {orchestration: {action: 'await-input'}}}), 'awaiting_input')
+        // cancelled 仍然压过 await（用户意志第一优先级不动摇）
+        assert.equal(taskPhase({handleStatus: 1, handleRet: {orchestration: {cancelled: true, action: 'await-input'}}}), 'cancelled')
+    })
     test('children 全终、finalize 未落 ⇒ synthesizing（收尾中，不混 running 不装 synthesized）', () => {
         assert.equal(taskPhase({handleStatus: 2, subAgents: [kid('a', 2)]}), 'synthesizing')
         assert.equal(taskPhase({handleStatus: 3, subAgents: [kid('a', 2), kid('b', -1)]}), 'synthesizing')
@@ -69,6 +76,16 @@ describe('buildTaskDetailView 装配', () => {
         assert.equal(b.preview, null)
         assert.equal(b.phase, 'failed')
         assert.equal(b.credits, null, '缺就 null，不补 0')
+    })
+
+    test('§7-1 clarify 视图透传：hold 有内容才给对象；无挂起=null（不造空数组冒充"已答完"）', () => {
+        const v0 = buildTaskDetailView({root, rows})
+        assert.equal(v0.clarify, null)
+        const heldRoot = {...root, params: {clarifyHold: {requests: [{agentCode: 'a', question: '选哪个？', options: ['A', 'B']}], capped: [], sealedAt: 't'}}}
+        const v = buildTaskDetailView({root: heldRoot, rows})
+        assert.deepEqual(v.clarify, {requests: [{agentCode: 'a', question: '选哪个？', options: ['A', 'B']}], capped: [], sealedAt: 't'})
+        const cappedOnly = {...root, params: {clarifyHold: {requests: [], capped: [{agentCode: 'a', question: 'q'}], sealedAt: 't'}}}
+        assert.equal(buildTaskDetailView({root: cappedOnly, rows}).clarify.capped.length, 1, 'cap 用尽的如实可见')
     })
 
     test('槽位口径与 fanOutFollow 同源：retry 后旧尝试 active:false 但仍陈列（历史可见）', () => {

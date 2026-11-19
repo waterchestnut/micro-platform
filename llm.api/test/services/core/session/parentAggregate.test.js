@@ -140,6 +140,13 @@ describe('shouldTriggerFinalize：B1 新闸的每侧条件（防循环三态 + �
     })
     test('幂等：handleRet.orchestration 已存在 ⇒ 绝不二次触发（finalize 写回 root 再进汇聚不循环）', () => {
         assert.equal(shouldTriggerFinalize({ ...OK, alreadyFinalized: true }), false)
+        assert.equal(shouldTriggerFinalize({ ...OK, alreadyFinalized: true, orchestrationAction: 'synthesize' }), false)
+    })
+    test('§7-1 await-input 不算已定稿：澄清答复重跑到终态必须再触发 finalize（防循环仍由 TERMINAL_NEW 兜）', () => {
+        assert.equal(shouldTriggerFinalize({ ...OK, alreadyFinalized: true, orchestrationAction: 'await-input' }), true)
+        // 但 root 已在终态的递归边角（父刚写完自己）仍不触发——重触发没有绕过这两道
+        assert.equal(shouldTriggerFinalize({ ...OK, alreadyFinalized: true, orchestrationAction: 'await-input', prevStatus: 2 }), false)
+        assert.equal(shouldTriggerFinalize({ ...OK, alreadyFinalized: true, orchestrationAction: 'await-input', newStatus: 1 }), false)
     })
     test('自递归识别：上报给父自己 ⇒ false（防 root 给自己触发 finalize）', () => {
         assert.equal(shouldTriggerFinalize({ ...OK, isSelfRecursion: true }), false)

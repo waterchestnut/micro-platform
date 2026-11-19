@@ -128,6 +128,45 @@ class FanOutFinalizeTask extends BaseHandler {
         const freshRoot = await agentTaskDac.getByCode(rootCode)
         const finFinal = mergeCancelAware(fin, freshRoot?.handleRet?.orchestration)
 
+        /**
+         * §7-1 澄清冒泡截胡（默认关⇒passthrough 逐字现网）：判出 synthesize 不等于"可以综合"——
+         * 有 child 申报了还没答的澄清，就把 root 挂在 await-input（handleStatus 回 1，非终态），
+         * 问题清单进 root.params.clarifyHold（持久，detail 可见）。**不综合、不花钱、不悬内存 promise**。
+         * 答复面（/clarifyAnswer）收齐后重派 child、再派 finalize 重算，回到这里时 answeredCodes
+         * 已含答复过的 child ⇒ 不再为它挂起。cap 用尽 ⇒ 不挂（synthesize-degraded），note 如实。
+         */
+        const clarifyCfgF = llm.config.agentTask?.clarifyBubble || {}
+        if (clarifyCfgF.enabled === true && finFinal.dispatch?.needSynthesis === true && finFinal.cancelled !== true) {
+            const {extractClarifyRequests, decideFinalizeWithClarify} = await import('../clarifyBubble.js')
+            const {activeAttempts: activeOf} = await import('../fanOutFollow.js')
+            const answeredCodes = (freshRoot?.params?.clarifyAnswered || []).map((c) => String(c || '')).filter(Boolean)
+            const clarifyCounts = {}
+            for (const r of all) { if (r?.agentCode) clarifyCounts[r.agentCode] = Number(r.params?.clarifyRound) || 0 }
+            const decided = decideFinalizeWithClarify({
+                fin: finFinal,
+                requests: extractClarifyRequests(activeOf(all)),
+                answeredCodes, clarifyCounts,
+                cap: Number(clarifyCfgF.cap) || 2,
+            })
+            if (decided.mode === 'await') {
+                await agentTaskDac.update({
+                    handleStatus: 1, // 等待答复不是终态——detail 相位靠 action 区分"在跑"与"在等人"
+                    'handleRet.orchestration.action': 'await-input',
+                    'handleRet.orchestration.reason': 'clarify-bubble',
+                    'handleRet.orchestration.counts': finFinal.counts,
+                    'handleRet.orchestration.credits': rollupAllAttemptCredits(all),
+                    'handleRet.orchestration.follow': follow,
+                    'params.clarifyHold': decided.hold,
+                }, {agentCode: rootCode})
+                logger.info(`fan-out 澄清挂起: root=${rootCode}, 待答=${decided.hold.requests.length}, 超限=${(decided.hold.capped || []).length}`)
+                return {handleStatus: 2, handleRet: {awaited: true, requests: decided.hold.requests.length, capped: (decided.hold.capped || []).length}, errorMsg: '', subsequentMode: '', subsequents: []}
+            }
+            if (decided.mode === 'synthesize-degraded') {
+                finFinal.clarifyNote = decided.note // 写回带 note：cap 用尽不是"没问题"，是"不再等"
+                logger.warn(`fan-out 澄清超限仍收尾: root=${rootCode}, note=${decided.note}`)
+            }
+        }
+
         let synthesis = null
         if (finFinal.dispatch.needSynthesis && finFinal.synthesisInput && finFinal.cancelled !== true) {
             const conv = `root:${rootCode}`                        // 落 root 隔离会话，不回填用户聊天线（属主拍板）
@@ -147,7 +186,7 @@ class FanOutFinalizeTask extends BaseHandler {
                     conversationCode: conv,
                     // §5-4 账本关联：综合行挂在 root 树下（role=synthesis），对账"这棵树花了多少"不再靠 conv 前缀反解
                     taskContext: {rootCode, agentCode: rootCode, agentRole: 'synthesis'},
-                    channel: p.channel || root.params?.channel || 'xxzx_common',
+                    channel: p.channel || root.params?.channel || 'micro_common',
                     protocol: p.protocol || 2,
                     memory: { enabled: false },
                     ...(p.execOptionsExtra || {}),
@@ -185,6 +224,7 @@ class FanOutFinalizeTask extends BaseHandler {
                 dispatch: finFinal.dispatch,
                 sections: finFinal.synthesisInput?.sections || [],
                 ...(finFinal.cancelled === true ? {cancelled: true} : {}), // 用户意志随写回保留，不被旧裁决覆盖
+                ...(finFinal.clarifyNote ? {clarifyNote: finFinal.clarifyNote} : {}), // §7-1：cap 用尽的如实标注（不是"没问题"）
                 follow,
             },
             synthesis,

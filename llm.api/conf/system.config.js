@@ -230,6 +230,23 @@ export default {
             followSpawnCap: Number(process.env['agentTask_fanOutOrchestrationFollowSpawnCap']) || 8,
         },
         /**
+         * 子任务澄清冒泡（§7-1，设计 :113/:142，属主拍板③）。**默认关**。
+         * 形状（"children 不得各自 await_input 挂起；root 统一出题"的兑现）：
+         * - child 侧不是 ask_user（那会挂死树）而是**申报**：`request_clarification` 工具收下问题、
+         *   立刻 ack"已转交主任务，请收尾"——child 照常终局（handleStatus=2 附 handleRet.clarify）；
+         * - root 侧在 finalize 判出 synthesize 时截胡：有未答复的申报 ⇒ 不综合、不终态，
+         *   `orchestration.action='await-input'` + root.params.clarifyHold 挂起等人（持久态，
+         *   detail 相位 awaiting_input——这不是 MRTR 的进程内挂起，root 没有活 run 可挂）；
+         * - `/core/agentTask/clarifyAnswer` 收答复：把答复拼进 child query 重派发（新一轮带补充，
+         *   不是断点续跑——澄清本来就不是"恢复现场"而是"追加输入"），child 到终后聚合钩子
+         *   （await-input 不算已定稿的例外）再触发 finalize 重算。
+         * cap：同一 child 的澄清重跑次数上限（防"每轮都问"的无限循环烧钱——设计 :112 同纪律）。
+         */
+        clarifyBubble: {
+            enabled: process.env['agentTask_clarifyBubble'] === 'true',
+            cap: Number(process.env['agentTask_clarifyCap']) || 2,
+        },
+        /**
          * 生成式 planner（M4b）：一次**裸通道、非流式、低档**的 LLM 调用做"要不要扇出 + 怎么拆"，
          * 输出经 `fanOutIntake`（语义严判）与 `fanOutPlanner`（预算裁剪）双闸后成为编排 root。
          * 默认关；关时连模型都不碰。

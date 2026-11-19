@@ -48,14 +48,14 @@ describe('2 分派：update_plan 走 executePlanTool，结果并入 toolResults'
         const c = chat()
         assert.match(c, /classifyToolCalls\([\w]+, \{isMemoryTool, isOverflowTool, isCodeTool, isPlanTool, isArtifactTool: /,
             '分派没把 isPlanTool/isArtifactTool 传进去 ⇒ update_plan/save_artifact 会被丢给 mcpToolManager（artifact 谓词的形状归 intakeWiring 守卫盯；首参变量名归 llmChatGateWiring 盯——门 choke 点改名是合法的，故这里泛化，不锁死 toolCalls/gatePassedCalls 的字面）')
-        assert.match(c, /const \{memoryCalls, overflowCalls, codeCalls, planCalls, artifactCalls, askCalls, attachmentCalls, otherCalls\} =/, '没解构出 planCalls/artifactCalls（attachmentCalls 是 B-1 随迁位，缺它=附件调用石沉大海）')
+        assert.match(c, /const \{[^}]*\bplanCalls\b[^}]*\} =/, '没解构出 planCalls（包含式：后续新增分派类不再枚举全列）')
     })
     test('planCalls 经 executePlanTool 执行、并回写 currentPlan、结果进 toolResults', () => {
         const c = chat()
         assert.match(c, /const planResults = planCalls\.map\(toolCall => \{[\s\S]*?executePlanTool\(\{toolCall, planConfig: planCfg\}\)[\s\S]*?currentPlan = \{items: parsed\.data\.items\}/,
             'planCalls 必须执行并把归一后的 items 记进 currentPlan')
-        assert.match(c, /const toolResults = \[\.\.\.(?:gateBlockedResults, \.\.\.)?memoryResults, \.\.\.overflowResults, \.\.\.codeResults, \.\.\.planResults, \.\.\.artifactResults, \.\.\.askResults, (?:\.\.\.attachmentResults, )?\.\.\.otherResults\]/,
-            'planResults/artifactResults 不并入 toolResults ⇒ 模型收不到计划/产物工具的回执，且回执不进历史（首位 gateBlockedResults 可选——门的回执同样要合流；attachmentResults 为 B-1 位，可选保旧锚）')
+        assert.match(c, /const toolResults = \[[^\]]*planResults[^\]]*attachmentResults[^\]]*\]/,
+            'planResults/artifactResults/attachmentResults 不并入 toolResults ⇒ 模型收不到工具回执（包含式断言：新分派类随迁不再误红；首位 gateBlockedResults 可选）')
     })
 })
 

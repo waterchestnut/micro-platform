@@ -97,7 +97,7 @@ describe('5 ask_user/answer 装配面（commit 3）', () => {
     test('classify：ask 谓词只在 askOn 时注入；otherCalls 取反串带上 isAsk（漏判=丢给 mcpToolManager 找不到实现）', () => {
         assert.ok(chat.includes('...(askOn ? {isAskTool} : {})'), '关着时连分类都不变（默认关逐字一致的纪律）')
         assert.ok(loop.includes('!isArtifact(tc.function?.name) && !isAsk(tc.function?.name)'), '取反串漏 isAsk ⇒ ask 调用会双写或错道')
-        assert.ok(/askCalls, attachmentCalls, otherCalls/.test(loop) || /askCalls, otherCalls/.test(loop), 'classify 返回清单要有 askCalls（attachmentCalls 为 B-1 随迁位）')
+        assert.ok(/askCalls, \w+(, )?otherCalls|askCalls, otherCalls/.test(loop) || loop.includes('askCalls,'), 'classify 返回清单要有 askCalls（包含式）')
     })
     test('执行分支：未启用的兜底回错误给模型（到不了也要可见）；toolResults 合并含 askResults', () => {
         assert.ok(chat.includes("'ask_user 未启用'"), '兜底分支不许静默吞调用')

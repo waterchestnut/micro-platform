@@ -68,17 +68,20 @@ export function shouldDispatchNext({ newStatus, prevStatus, handleMode, nextAgen
  * @param {Boolean} [p.orchestrated] 父是否声明为"需要编排 finalize"（显式标志，建课等老行绝不隐式命中）
  * @param {Boolean} p.enabled 总开关（fanOutOrchestration.enabled，关⇒恒 false）
  * @param {Boolean} [p.alreadyFinalized] 父已派发过 finalize（handleRet.orchestration 已存在）⇒ 不再触发
+ * @param {String} [p.orchestrationAction] 既有 orchestration 的 action——**await-input 不算已定稿**：
+ *   澄清挂起不是收尾结果，child 答复重跑再终态时必须让它再触发一次 finalize（防循环仍由
+ *   TERMINAL_NEW 两条件保证：重触发只在"本次写入把非终态推进到终态"的那一跳发生）
  * @param {Boolean} [p.isSelfRecursion] 本次是"父完成向父自己上报"的递归形态（curAgentTaskInfo===父 ⇒ 跳过）
  * @returns {Boolean}
  */
 export function shouldTriggerFinalize({
-    newStatus, prevStatus, agentRole, orchestrated, enabled, alreadyFinalized, isSelfRecursion,
+    newStatus, prevStatus, agentRole, orchestrated, enabled, alreadyFinalized, orchestrationAction, isSelfRecursion,
 } = {}) {
     if (enabled !== true) return false                       // 总开关关 ⇒ 逐字维持现网
     if (!orchestrated || agentRole !== 'root') return false  // 只认显式声明的编排 root，别碰建课等普通父
     if (TERMINAL_NEW(newStatus) !== true) return false       // 只在本层首次写入终态时触发
     if (TERMINAL_NEW(prevStatus) === true) return false      // 递归路径上父早已终态（多为刚写完自己）⇒ 跳过
-    if (alreadyFinalized) return false                       // 幂等：finalize 结果已存在 ⇒ 绝不二次触发（防循环）
+    if (alreadyFinalized && orchestrationAction !== 'await-input') return false // 幂等：定稿过的绝不二次触发（防循环）；await-input 是"没定稿"，放行重算
     if (isSelfRecursion) return false                        // 上报给父自己 ⇒ 不是"child 完成汇入"，跳过
     return true
 }

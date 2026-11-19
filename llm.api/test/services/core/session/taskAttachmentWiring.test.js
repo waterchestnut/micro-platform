@@ -22,7 +22,7 @@ describe('llmChat：read_attachment 的注册/分派/执行三点位', () => {
     test('分类谓词条件注入（关着=与现网逐字一致）；attachmentCalls 有解构位', () => {
         assert.match(code, /\.\.\.\(attachOn \? \{isAttachmentTool: isReadAttachmentTool\} : \{\}\)/,
             'isAttachmentTool 不是条件 spread 或没有映射到实指（e2e 曾抓到裸 shorthand=未定义标识符当场 ReferenceError）')
-        assert.match(code, /const \{memoryCalls,[\s\S]{0,80}attachmentCalls, otherCalls\} =/, 'attachmentCalls 没有从 classify 解构出来')
+        assert.match(code, /const \{[^}]*\battachmentCalls\b[^}]*\} =/, 'attachmentCalls 没有从 classify 解构出来（包含式：clarify 等新增分派类随迁不误红）')
     })
     test('执行段懒 import：attachmentCalls 为空连 docApiExtract/agentTaskDac 都不加载', () => {
         assert.match(code, /if \(attachmentCalls\.length\) \{[\s\S]{0,400}import\('\.\/attachment\/docApiExtract\.js'\)/)
@@ -35,7 +35,7 @@ describe('llmChat：read_attachment 的注册/分派/执行三点位', () => {
         assert.ok(!/=== *'f/.test(seg) && !/includes\('f/.test(seg), '执行段手写了 fileCode 比较=第二套真相')
     })
     test('toolResults 拼接串里有 attachmentResults（漏了=结果石沉大海）', () => {
-        assert.match(code, /\.\.\.askResults, \.\.\.attachmentResults, \.\.\.otherResults/)
+        assert.match(code, /const toolResults = \[[^\]]*attachmentResults[^\]]*\]/)
     })
 })
 

@@ -99,6 +99,8 @@ export async function updateParentAgentTaskWithLock(parentCode, curAgentTaskInfo
             orchestrated: parentAgentTask.orchestrated === true,
             enabled: fanOutCfg.enabled === true,
             alreadyFinalized: !!(parentAgentTask.handleRet && parentAgentTask.handleRet.orchestration),
+            // §7-1：await-input 是挂起不是定稿——答复后 child 重跑到终态要允许再触发 finalize 重算
+            orchestrationAction: parentAgentTask.handleRet?.orchestration?.action,
             isSelfRecursion: curAgentTaskInfo?.agentCode === parentCode,
         })) {
             finalizeRoot = parentAgentTask

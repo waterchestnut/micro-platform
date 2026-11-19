@@ -137,7 +137,7 @@ describe('4 llmChat/llmLoop 接线守卫（源码级，开时被走到）', () =
         const c = chat()
         assert.match(c, /isArtifactTool: \(n\) => isSaveArtifactTool\(n\) \|\| isReadArtifactTool\(n\)/,
             '通道谓词漏半边 ⇒ 另一半被丢给 mcpToolManager')
-        assert.match(c, /const \{memoryCalls, overflowCalls, codeCalls, planCalls, artifactCalls, askCalls, attachmentCalls, otherCalls\} =/, '解构清单缺 attachmentCalls（B-1 随迁）')
+        assert.match(c, /const \{[^}]*\battachmentCalls\b[^}]*\} =/, '解构清单缺 attachmentCalls（包含式断言，新谓词随迁不再误红）')
         const l = loop()
         assert.match(l, /!isPlan\(tc\.function\?\.name\) && !isArtifact\(tc\.function\?\.name\)/, 'otherCalls 取反串漏了 artifact ⇒ 会被丢给 mcpToolManager')
     })

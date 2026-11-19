@@ -195,6 +195,17 @@ test('classifyToolCalls：read_attachment 绝不漏进 otherCalls（注入 isAtt
     assert.equal(off.otherCalls.length, 1)
 })
 
+/** §7-1 同款第五例：request_clarification 漏出取反串=申报石沉大海，child 以为问题已递上去 */
+test('classifyToolCalls：request_clarification 绝不漏进 otherCalls（注入 isClarifyTool 时）', () => {
+    const preds = {...PREDS, isClarifyTool: (n) => n === 'request_clarification'}
+    const r = classifyToolCalls([{id: '1', function: {name: 'request_clarification'}}, {id: '2', function: {name: 'searxng_http/search'}}], preds)
+    assert.equal(r.clarifyCalls.length, 1)
+    assert.equal(r.otherCalls.length, 1)
+    const off = classifyToolCalls([{id: '1', function: {name: 'request_clarification'}}], PREDS)
+    assert.equal(off.clarifyCalls.length, 0)
+    assert.equal(off.otherCalls.length, 1, '关着逐字一致：注册面本来没有这个工具')
+})
+
 test('classifyToolCalls：谓词缺失时全部落到 otherCalls，不抛错', () => {
     const r = classifyToolCalls([{id: '1', function: {name: 'whatever'}}], {})
     assert.equal(r.otherCalls.length, 1)

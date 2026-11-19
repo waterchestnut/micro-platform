@@ -85,6 +85,108 @@ export default async function (fastify, opts) {
     })
 
     /**
+     * §7-1 澄清答复（用户面写口）：回答 await-input 挂在 root 上的澄清问题。
+     * 面/归属逐字照 /cancel——orchestrated root only、非发起人 403、fail-closed。
+     * 判据全在纯件 clarifyBubble（对表/注入段替换/cap）；这里只做 IO：
+     * 答复过的 child 行重置回 waiting（query 带【澄清补充】段）⇒ fire-and-forget 重派发
+     * （execAgentTask 直接，finalize 的 spawnRetry 同先例——端点不等 child 跑完，
+     * 进度面走 /detail 轮询）。child 到终后由聚合钩子再触发 finalize（await-input 不算定稿）。
+     * 允许部分答复：答一个重派一个，其余继续挂（hold 如实收缩）。
+     */
+    fastify.post('/clarifyAnswer', {
+        schema: {
+            description: '回答编排任务的澄清申报（仅发起人本人）：child 将带答复重跑，全部到终后统一综合',
+            summary: 'agentTask 澄清答复',
+            body: {
+                type: 'object',
+                required: ['agentCode', 'answers'],
+                properties: {
+                    agentCode: {type: 'string', minLength: 1, maxLength: 128, description: '编排 root 的 task 标识'},
+                    answers: {
+                        type: 'array', description: '答复列表（允许部分答复）',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                agentCode: {type: 'string', description: '被答复的子任务标识（来自 detail.clarify.requests）'},
+                                response: {type: 'string', description: '用户的答复文本'},
+                            },
+                            required: ['agentCode', 'response'],
+                        },
+                    },
+                },
+            },
+            tags: ['agent'],
+            response: {default: {}},
+        },
+    }, async function (request, reply) {
+        const userCode = request.userInfo?.userCode
+        if (!userCode) {
+            const err = new Error('缺少有效的用户身份（user-info）')
+            err.statusCode = 401
+            throw err
+        }
+        const {matchClarifyAnswers, buildClarifyRequeueParams} = await import('../../../services/agent/clarifyBubble.js')
+        const agentTaskDac = (await import('../../../daos/core/dac/agentTaskDac.js')).default
+        const code = String(request.body?.agentCode || '')
+        const root = await agentTaskDac.getByCode(code)
+        if (!root) return {statusCode: 200, code: -1, msg: '任务不存在', data: {reason: 'not-found'}}
+        if (root.operator?.userCode !== userCode) {
+            const err = new Error('无权答复该任务')
+            err.statusCode = 403
+            throw err
+        }
+        if (!(root.agentRole === 'root' && root.orchestrated === true)) {
+            return {statusCode: 200, code: -1, msg: '仅编排任务树有澄清面', data: {reason: 'scope-reject'}}
+        }
+        const hold = root.params?.clarifyHold
+        if (!hold?.requests?.length) {
+            return {statusCode: 200, code: -1, msg: '该任务当前没有待答的澄清', data: {reason: 'no-hold'}}
+        }
+        const m = matchClarifyAnswers({hold, answers: request.body?.answers || []})
+        if (m.empty) {
+            return {statusCode: 200, code: -1, msg: '没有有效答复（agentCode 不在待答清单或答复为空）', data: {reason: 'no-valid-answer', unknown: m.unknown}}
+        }
+        let requeued = []
+        let missing = []
+        for (const a of m.matched) {
+            const child = await agentTaskDac.getByCode(a.agentCode)
+            if (!child || child.handleStatus !== 2) { missing.push(a.agentCode); continue } // 行不在/非终局成功：不重派（hold 里留着也没用，如实报）
+            const round = (Number(child.params?.clarifyRound) || 0) + 1
+            const patched = buildClarifyRequeueParams({query: child.params?.query || '', response: a.response, round})
+            await agentTaskDac.update(
+                {handleStatus: 0, 'params.query': patched.query, 'params.clarifyRound': round, updateTime: new Date()},
+                {agentCode: a.agentCode, handleStatus: 2}, // CAS：并发双答复只有一次改得动（重复重派=双跑副作用）
+            )
+            const fresh = await agentTaskDac.getByCode(a.agentCode)
+            if (fresh?.handleStatus === 0) {
+                requeued.push(a.agentCode)
+                const {execAgentTask} = await import('../../../services/agent/index.js')
+                execAgentTask(fresh).catch((e) => request.log.error(`clarify 重派发失败 ${a.agentCode}: ${String(e?.message || e).slice(0, 200)}`))
+            } else {
+                missing.push(a.agentCode)
+            }
+        }
+        if (!requeued.length) {
+            return {statusCode: 200, code: -1, msg: '答复未能转成任何重派（子任务行状态已变化）', data: {reason: 'requeue-failed', missing}}
+        }
+        // 账更新在派发确认之后：answered 只记真重派成功的（失败的不烧 cap、不摘 hold——宁可重复问）
+        const answeredSet = new Set([...(root.params?.clarifyAnswered || []), ...requeued])
+        const nextRequests = (hold.requests || []).filter((r) => !answeredSet.has(r.agentCode))
+        await agentTaskDac.update({
+            'params.clarifyAnswered': [...answeredSet],
+            'params.clarifyHold': {...hold, requests: nextRequests},
+        }, {agentCode: code})
+        // 收尾重算**不在这里抢跑**：child 重跑到终态时聚合钩子会为 await-input 再触发 finalize
+        // （parentAggregate.shouldTriggerFinalize 的 await-input 例外）。端点若此刻直派 finalize，
+        // 会在 child 还在跑时算出 pending 污染 orchestration——e2e 实测就是这个形状。
+        request.log.info(`agentTask 澄清答复: root=${code} requeued=${requeued.length} missing=${missing.length} stillWaiting=${nextRequests.length} user=${userCode}`)
+        return {statusCode: 200, code: 0, msg: '', data: {
+            requeued, missing, stillWaiting: nextRequests.map((r) => r.agentCode), unknown: m.unknown,
+            note: '子任务将带补充答复重跑；到齐后统一综合，进度请轮询 /detail',
+        }}
+    })
+
+    /**
      * §5-3 任务详情（用户面，只读）：编排 root 的进度/子任务态/裁决透传。
      * 面收窄同 /cancel——只受理 orchestrated root（建课等业务自有读取面，不在此开口子）；
      * 归属 fail-closed：非发起人 403。视图装配全在纯件 taskDetail（透传不重算，摘要如实 truncated）。

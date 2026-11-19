@@ -78,6 +78,17 @@ class AgentChat extends BaseHandler {
 
         // 有界超时：child 不该无限占着 run 名额（预算/并行度是全局约束）
         const timeoutMs = Number(p.childTimeoutMs) > 0 ? Number(p.childTimeoutMs) : DEFAULT_CHILD_TIMEOUT_MS
+        /**
+         * §7-1 澄清申报收集器（默认关⇒不注入⇒llmChat 连工具都不注册，三闸同 askOn 形）。
+         * 申报只活在本进程本栈（execChat 与 handler 同一次调用），终局时并进 handleRet.clarify
+         * 落库——**不落库的申报不存在**：进程死了申报跟着 run 消失，恢复重跑会重新申报，
+         * 不造"账上有问、现场已丢"的第二本账。
+         */
+        const clarifyCfg = llm.config.agentTask?.clarifyBubble || {}
+        const clarifyRecords = []
+        const clarifySink = clarifyCfg.enabled === true
+            ? (req) => { clarifyRecords.push(req) }
+            : undefined
         const controller = new AbortController()
         const timer = setTimeout(() => {
             try { controller.abort(new Error('child-timeout')) } catch { /* 已 abort */ }
@@ -103,7 +114,7 @@ class AgentChat extends BaseHandler {
                 reqId: p.reqId,
                 parentTraceId: p.parentTraceId,
                 // §5-4 账本关联：child 行挂到所属树（rootCode=parentCode，树顶层 child 的父即 root）
-                extra: {...(p.execOptionsExtra || {}), taskContext: {rootCode: agentTaskInfo.parentCode || agentTaskInfo.agentCode, agentCode: agentTaskInfo.agentCode, agentRole: 'child'}},
+                extra: {...(p.execOptionsExtra || {}), taskContext: {rootCode: agentTaskInfo.parentCode || agentTaskInfo.agentCode, agentCode: agentTaskInfo.agentCode, agentRole: 'child'}, ...(clarifySink ? {clarifySink} : {})},
             }))
         } finally {
             clearTimeout(timer)
@@ -137,9 +148,13 @@ class AgentChat extends BaseHandler {
 
         // execChat 说 done、但档案读回空/缺 ⇒ 不算可用成果（usable:false 随 handleRet 带给 fan-in 裁决），
         // 不据此把 handleStatus 改判——改判属仲裁职责，本层只如实交事实。
+        // §7-1：澄清申报并进 handleRet.clarify（首问为主、条数如实）——finalize 的冒泡判据读的就是它。
+        const clarifyRet = clarifyRecords.length
+            ? {clarify: {question: String(clarifyRecords[0].question || ''), options: clarifyRecords[0].options || [], count: clarifyRecords.length}}
+            : {}
         return {
             handleStatus: outcome.handleStatus,
-            handleRet: {...result, ...creditsFields, retryable: outcome.retryable, reason: outcome.reason},
+            handleRet: {...result, ...creditsFields, ...clarifyRet, retryable: outcome.retryable, reason: outcome.reason},
             errorMsg: outcome.handleStatus === -1 ? (result.note || outcome.reason) : '',
             subsequentMode: '',
             subsequents: [],
