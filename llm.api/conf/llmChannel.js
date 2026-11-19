@@ -123,6 +123,34 @@ const llmChannelDataSet = {
             enableSkillExecution: false,
         },
     },
+    /**
+     * 文献订阅服务频道（母本 R8 同步，2026-11-19）：业务后端定时任务经 /core/chat/completion
+     * 非交互调用的专属频道——生成检索关键词/筛选推荐理由/论文导读，纯 prompt 任务。
+     * 全关减变量（cw2pc_design 同法）：无 MCP（不许长出 web 搜索）、无 skills、记忆关
+     * （调用侧 options 亦 off，双保险）；sysPrompt 最小中性，业务角色与格式 prompt 由调用方
+     * 随 query 携带（模板住业务方）。频道隔离使档案/用量按频道归因可账。
+     */
+    callin_subscription: {
+        /** 文本档：非交互纯 prompt 任务，指令遵循与格式稳定性优先（cw2pc_design 同族理由） */
+        model: 'relay_qwen_pro',
+        /** 视觉档：订阅任务不带图，声明为满足底座"每频道显式声明"治理规则 */
+        visionModel: 'relay_qwen_vl_pro',
+        /** 系统提示词（最小中性：只做输出纪律，不带任务语义） */
+        sysPrompt: `你是文本处理引擎，严格按用户消息中的任务说明与输出格式要求直接输出结果，不输出解释、前言或多余内容。`,
+        enableMcp: false,
+        skills: {
+            enabled: false,
+            skillNames: [],
+            maxSkills: 0,
+            threshold: 0.3,
+            enableSkillExecution: false,
+        },
+        memory: {
+            enabled: false,
+            capture: false,
+            recall: false,
+        },
+    },
 }
 
 export default llmChannelDataSet
