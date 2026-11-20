@@ -8,6 +8,7 @@ import {SettingDrawer} from '@ant-design/pro-components'
 import type {RunTimeLayoutConfig} from '@umijs/max'
 import {history, Link} from '@umijs/max'
 import defaultSettings from '../config/defaultSettings'
+import {menuLocalePatch} from '@/utils/menuLocalePatch';
 import {themeLayoutSettings} from '@/utils/runtimeTheme'
 import {errorConfig} from './requestErrorConfig'
 import {queryCurrentUser} from '@/services/ucenter/user'
@@ -82,6 +83,8 @@ export const layout: RunTimeLayoutConfig = ({initialState, setInitialState}) => 
     },
     contentStyle: {minHeight: 'calc(100vh - 180px)'},
     menuFooterRender: () => <Footer/>,
+  /* 菜单语言兜底（pro3 起菜单不再走 umi plugin-locale 桥；见 utils/menuLocalePatch 注释） */
+  menuDataRender: (menuData: any[]) => menuLocalePatch(menuData as any[]),
     onPageChange: () => {
     },
     menu: {
