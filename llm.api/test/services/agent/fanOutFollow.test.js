@@ -10,7 +10,7 @@ import {
  * 会派活的分支只能读文本"验证"＝没验证）。钉四件事：
  * ① 计数看 active / 花钱看 all 的两口径；② 重试是**新行**（终态行不改历史）；
  * ③ 预算/保险帽到点必停且降级如实 report，绝不把 root 悬在"等一个不会来的 replan"；
- * ④ autoFollow 关 ⇒ 循环零动作（dispatch 原样如实回传）。
+ * ④ autoFollow 关 ⇒ 循环零动作；retry/replan 裁决降级 report(3) 不悬空（§7-4），dispatch 原样留审计。
  */
 const kid = (agentCode, handleStatus, over = {}) => ({
     agentCode, title: agentCode, handleStatus,
@@ -81,9 +81,14 @@ describe('规格构造', () => {
 })
 
 describe('planFollowStep：预算与降级', () => {
-    test('autoFollow 关 ⇒ 一切 stop（dispatch 保持如实回传，行为同 A/B1 落地版）', () => {
+    test('autoFollow 关 ⇒ 一切 stop；**retry/replan 标 degrade=auto-follow-off（§7-4 不许悬空），终态动作不标**', () => {
         const s = planFollowStep({ action: 'retry', autoFollow: false })
-        assert.deepEqual({ act: s.act, reason: s.reason, degrade: s.degrade }, { act: 'stop', reason: 'auto-follow-off', degrade: null })
+        assert.deepEqual({ act: s.act, reason: s.reason, degrade: s.degrade }, { act: 'stop', reason: 'auto-follow-off', degrade: 'auto-follow-off' })
+        assert.equal(planFollowStep({ action: 'replan', autoFollow: false }).degrade, 'auto-follow-off')
+        // synthesize/report 本就终局、无"等待者"问题；pending 是"未终局不收尾"另一条纪律（§7-4 不碰）
+        assert.equal(planFollowStep({ action: 'synthesize', autoFollow: false }).degrade, null)
+        assert.equal(planFollowStep({ action: 'report', autoFollow: false }).degrade, null)
+        assert.equal(planFollowStep({ action: 'pending', autoFollow: false }).degrade, null)
     })
     test('用户已取消 ⇒ stop+degrade=cancelled-by-user，**优先级在 autoFollow 之前**（预算再够也不许追）', () => {
         const s = planFollowStep({action: 'retry', autoFollow: true, cancelled: true})
@@ -140,7 +145,7 @@ describe('runFollowLoop：四条路径真跑（假 deps）', () => {
         action: counts.action, reason: 'fake', handleStatus: 2, settled: true,
         counts: {}, credits: {}, dispatch: { retryAgents: ['b'] },
     })
-    function harness({ all, action, cfg = {}, replanPlan }) {
+    function harness({ all, action, cfg = {}, replanPlan, budgetGate }) {
         let state = all.slice()
         const spawned = []
         return {
@@ -153,6 +158,7 @@ describe('runFollowLoop：四条路径真跑（假 deps）', () => {
                     specs.forEach((s, i) => state.push({ ...kid(s.title + '-' + i, 2), params: s.params }))
                 },
                 replanSubtasks: async () => replanPlan || { needFanOut: false, subtasks: [], reason: 'no-fanout' },
+                budgetGate, // §7-3：不传=闸放行（与 finalize 注入缺省同形）
                 spawnReplanSpecs: async (specs) => {
                     spawned.push(...specs.map((s) => ({ kind: 'replan', title: s.title })))
                     specs.forEach((s, i) => state.push({ ...kid('rp' + i, 2), params: s.params }))
@@ -163,12 +169,34 @@ describe('runFollowLoop：四条路径真跑（假 deps）', () => {
         }
     }
 
-    test('autoFollow 关 ⇒ 零 spawn，fin 原样（现网默认形态）', async () => {
+    test('autoFollow 关 + retry 裁决 ⇒ 零 spawn 且**降级 report(3) 不悬 1（§7-4）**；dispatch 原样留审计', async () => {
         const h = harness({ all: [kid('a', 2), boom('b')], action: ['retry'], cfg: { autoFollow: false } })
         const r = await runFollowLoop(h.deps)
         assert.equal(r.follow.spawned, 0)
         assert.deepEqual(h.spawned, [])
-        assert.equal(r.fin.action, 'retry', 'dispatch 如实保留，让观测方知道"该追但没追"')
+        assert.equal(r.fin.action, 'report', '没有承接方的裁决不许把树挂起：降级 report')
+        assert.equal(r.fin.handleStatus, 3, '完成含错(3)，不是悬 1')
+        assert.match(r.fin.reason, /原裁决:retry/, '降级不吞原裁决事实：reason 带审计原文')
+        assert.deepEqual(r.fin.dispatch, { retryAgents: ['b'] }, '"该追未追"仍在——dispatch 原样保留给观测/对账')
+        assert.equal(r.follow.degrade, 'auto-follow-off')
+        assert.equal(r.follow.stopReason, 'auto-follow-off')
+    })
+
+    test('autoFollow 关 + replan 裁决 ⇒ 同样降级 report(3)；synthesize/report/pending 原样不碰', async () => {
+        const h1 = harness({ all: [boom('a')], action: ['replan'], cfg: { autoFollow: false } })
+        const r1 = await runFollowLoop(h1.deps)
+        assert.equal(r1.fin.action, 'report')
+        assert.equal(r1.fin.handleStatus, 3)
+        assert.equal(r1.follow.degrade, 'auto-follow-off')
+        // 终局动作与未终局 pending：OFF 路径逐字原样（pending 的"不收尾"是另一条纪律，无实测不加刀）
+        const h2 = harness({ all: [kid('a', 2)], action: ['synthesize'], cfg: { autoFollow: false } })
+        assert.equal((await runFollowLoop(h2.deps)).fin.action, 'synthesize')
+        const h3 = harness({ all: [kid('a', 2), boom('b')], action: ['report'], cfg: { autoFollow: false } })
+        assert.equal((await runFollowLoop(h3.deps)).fin.action, 'report')
+        const h4 = harness({ all: [kid('a', 2)], action: ['pending'], cfg: { autoFollow: false } })
+        const r4 = await runFollowLoop(h4.deps)
+        assert.equal(r4.fin.action, 'pending')
+        assert.equal(r4.follow.degrade, null, 'pending 不许被 §7-4 顺手改判——未终局不收尾')
     })
 
     test('retry 一轮后全成 ⇒ synthesize 收尾；superseded 记账；计数持久', async () => {
@@ -234,6 +262,29 @@ describe('runFollowLoop：四条路径真跑（假 deps）', () => {
         assert.equal(r.fin.handleStatus, 3)
         assert.equal(r.follow.degrade, 'spawnRetry-spawn-failed')
         assert.match(r.follow.error, /mongo down/)
+    })
+
+    // §7-3 预算降级事件源：循环只**留话**不发事件（发射资格与执行归接线位）
+    test('replan 被预算闸拒（budget:* 话）⇒ budgetNote 留痕原话，specs 空降级 report 不空转', async () => {
+        const h = harness({
+            all: [boom('a')], action: ['replan', 'report'],
+            cfg: { autoFollow: true, plannerEnabled: true },
+            replanPlan: { ok: true, needFanOut: false, subtasks: [], reason: 'budget:no-headroom' },
+        })
+        const r = await runFollowLoop(h.deps)
+        assert.deepEqual(r.follow.budgetNote, { degrade: 'single-agent', reason: 'budget:no-headroom', allowedSubtasks: 0 })
+        assert.equal(r.fin.action, 'report', 'replan 空转不了：budgetNote 不改变降级 report 的既定形态')
+    })
+
+    test('budgetGate 拒本轮 spawn ⇒ budgetStop 记 planned/degrade/reason 原话并停追', async () => {
+        const h = harness({ all: [kid('a', 2), boom('b')], action: ['retry'], cfg: { autoFollow: true } })
+        h.deps.budgetGate = async () => ({ allow: false, degrade: 'single-agent', reason: 'over-ceiling', allowedSubtasks: 0 })
+        const r = await runFollowLoop(h.deps)
+        assert.equal(r.follow.budgetStop.reason, 'over-ceiling')
+        assert.equal(r.follow.budgetStop.degrade, 'single-agent')
+        assert.equal(r.follow.degrade, 'budget-exhausted')
+        assert.equal(r.fin.action, 'report')
+        assert.deepEqual(h.spawned, [], '闸停在一轮 spawn 之前——预算裸奔式重试被掐死')
     })
 })
 

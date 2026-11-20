@@ -13,8 +13,10 @@
  * - **replan 整体换代**（`planRound+1` 的新槽位集）：replan 的前提是"全失败"，旧代没有保留价值，
  *   active 只看最新一代；旧代进花钱账。
  * - 预算**不在这重造**：retryCount/replanCount 是喂给 `arbitrate` 的入参，上限语义在它（2/1）；
- *   这里只加**执行侧保险**（总 spawn 帽 + "replan 无 planner 可问 ⇒ 降级 report"），
- *   保险不许吞掉 arbitrate 的裁决——`degrade` 只发生在"裁决要 replan 但环境给不出计划"一种情况。
+ *   这里只加**执行侧保险**（总 spawn 帽 + 环境给不出动作时的降级），
+ *   保险不许吞掉 arbitrate 的裁决——`degrade` 只发生在"裁决要的动作**没有承接方**"：
+ *   replan 无 planner / spawn 帽触顶 / 预算闸停 / 规格空转 / **§7-4：autoFollow 关时的 retry/replan**
+ *   （finalize 只派发一次，悬 1=永久死悬，dev 实测 5 棵——降级 report 带原裁决审计）。
  */
 
 const num = (v) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : 0 }
@@ -113,7 +115,12 @@ export function planFollowStep({
     const counts = { retryCount: num(retryCount), replanCount: num(replanCount) }
     // 用户取消优先于一切追活意图：人已喊停，预算再充裕也不许再 spawn
     if (cancelled === true) return { act: 'stop', reason: 'cancelled-by-user', counts, degrade: 'cancelled-by-user' }
-    if (autoFollow !== true) return { act: 'stop', reason: 'auto-follow-off', counts, degrade: null }
+    // §7-4 无承接方的裁决不许悬空：OFF 形态下 retry/replan 同样降级（终局收口），
+    // synthesize/report 本就是终态动作、无"等待者"问题，degrade 保持 null。
+    if (autoFollow !== true) {
+        const willDangle = action === 'retry' || action === 'replan'
+        return { act: 'stop', reason: 'auto-follow-off', counts, degrade: willDangle ? 'auto-follow-off' : null }
+    }
     if (action === 'synthesize' || action === 'report') return { act: 'stop', reason: `terminal:${action}`, counts, degrade: null }
     if (action === 'pending') {
         // 现场还有未终局的子行。finalize 只在 root 首次到终态时派发，正常走不到这；走到说明有外部
@@ -204,7 +211,17 @@ export async function runFollowLoop(p = {}) {
     let all = await readAllChildren()
     let fin = computeFin(activeAttempts(all), counts)
     if (cfg.autoFollow !== true) {
-        return { fin, all, follow: { ...follow, superseded: markSuperseded(all) } }
+        // §7-4 仲裁升级（dev 实测 5 棵 retry 树永悬 st=1 定案）：finalize 只派发一次（B1 闸），
+        // OFF 形态下 retry/replan 裁决**没有任何承接方**——后开 autoFollow 也不会重跑，悬=死。
+        // 与 replan-no-planner/not-settled 同一原则降级 report(3)：终局如实收口，
+        // 原裁决留在 reason("原裁决:retry/…")与 dispatch.needRetry——观测方看得见"该追但没追"。
+        // pending 不在此列："未终局不收尾"是另一条纪律，且 dev 实测 0 命中——没账不造刀。
+        let degrade = null
+        if (fin.action === 'retry' || fin.action === 'replan') {
+            fin = degradeFollowToReport(fin, 'auto-follow-off')
+            degrade = 'auto-follow-off'
+        }
+        return { fin, all, follow: { ...follow, degrade, stopReason: degrade ? 'auto-follow-off' : follow.stopReason, superseded: markSuperseded(all) } }
     }
 
     // 循环上界由 planFollowStep 的 spawnCap 保证（裁决预算 2+1 本身有界，cap 是保险不是主闸）；

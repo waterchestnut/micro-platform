@@ -97,7 +97,7 @@ try {
         agentCode: `fin-${rootCode}`, agentType: 'local', handler: 'fanOutFinalizeTask',
         handleMode: 'manual', handleStatus: 0, agentRole: 'finalize', conversationCode: conv,
         operator: {userCode: 'menglb'},
-        params: {rootCode, originalQuery: '8+5 等于几', channel: 'micro_common', protocol: 2,
+        params: {rootCode, originalQuery: '8+5 等于几', channel: 'xxzx_common', protocol: 2,
             execOptionsExtra: {cache: false, llmParams: {maxTokens: 48}}},
     }
     await execAgentTask(finTask)
@@ -106,10 +106,12 @@ try {
     const bad3 = (t3.data?.subtasks || []).find((s) => s.phase === 'failed')
     const freshRoot = await dac.getByCode(rootCode)
     out.T3 = {phase: t3.data?.phase, action: t3.data?.orchestration?.action, counts: t3.data?.orchestration?.counts, hasPreview: !!ok3?.preview, badCredits: bad3?.credits, needRetry: t3.data?.orchestration?.dispatch?.needRetry}
-    // turnRunner 失败行 handleRet:null ⇒ 默认 retryable；autoFollow 关 ⇒ finalize 悬置 retry：
-    // 详情面此时说 running（"该追而未追"的如实态），不装 partial/synthesized——相位表的边角诚实性就在这。
-    V['T3 finalize(autoFollow 关)⇒悬置 retry：phase running 不装完成，orchestration 透传=库内原值，摘要/缺席如实'] =
-        t3.data?.phase === 'running' && t3.data?.orchestration?.action === 'retry'
+    // turnRunner 失败行 handleRet:null ⇒ 默认 retryable；autoFollow 关 ⇒ §7-4 降级 report(3)——
+    // 详情面说 partial（"该追未追、带可用产出如实收口"），不再 running 装"进行中"；
+    // 原裁决留 dispatch.needRetry+follow.degrade 审计。
+    V['T3 finalize(autoFollow 关)⇒§7-4 降级收口：phase partial 不装完成也不悬 running，orchestration 透传=库内原值，摘要/缺席如实'] =
+        t3.data?.phase === 'partial' && t3.data?.orchestration?.action === 'report'
+        && t3.data?.orchestration?.follow?.degrade === 'auto-follow-off'
         && t3.data?.orchestration?.dispatch?.needRetry === true && !!ok3 && ok3.preview.length > 0
         && !!bad3 && bad3.credits === null
         && JSON.stringify(t3.data?.orchestration?.counts) === JSON.stringify(freshRoot.handleRet?.orchestration?.counts)

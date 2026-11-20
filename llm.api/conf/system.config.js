@@ -236,9 +236,11 @@ export default {
             dispatch: process.env['agentTask_fanOutOrchestrationDispatch'] || 'kafka',
             /**
              * 追活（f）：finalize 判出 retry/replan 时**由 finalize 自己追加执行轮**（新行新槽标 retryOf/followRound，
-             * 绝不把 -1 终态行改回 0）。默认关：关时 orchestration.dispatch 原样如实回传、不派任何活——
-             * "裁决说要 retry"与"环境真去 retry"是两件事，分开可回退。replan 额外要求 fanOutPlanner 开着，
-             * 拿不到新计划时如实降级 report（绝不把 root 悬在 1"等一个不会来的 replan"）。
+             * 绝不把 -1 终态行改回 0）。默认关。**§7-4 升级（2026-11-20，dev 实测 5 棵 retry 树永悬定案）**：
+             * 关时 retry/replan 裁决**降级 report(3) 如实收口**（finalize 只派发一次，悬 1=永久死悬——
+             * "裁决说要 retry"与"环境真去 retry"是两件事，没有承接方的裁决不许把树挂起）；
+             * orchestration.dispatch.needRetry/retryAgents 与 reason 的"原裁决:…"保留审计，观测面仍可见"该追未追"。
+             * replan 额外要求 fanOutPlanner 开着，拿不到新计划时同样如实降级 report。
              */
             autoFollow: process.env['agentTask_fanOutOrchestrationAutoFollow'] === 'true',
             /** 保险帽：单次 finalize 内追活 spawn 的总行数上限（裁决预算 2+1 本身有界，这帽防循环 bug） */

@@ -55,7 +55,7 @@ async function dispatchFinalize(rootCode, conversationCode) {
     const finTask = {
         agentCode: `fin-${rootCode}`, agentType: 'local', handler: 'fanOutFinalizeTask',
         handleMode: 'manual', handleStatus: 0, agentRole: 'finalize', conversationCode, operator: { userCode },
-        params: { rootCode, originalQuery: '6+7 等于几（一成一败试验树）', channel: 'micro_common', protocol: 2, execOptionsExtra: CHILD_EXTRA },
+        params: { rootCode, originalQuery: '6+7 等于几（一成一败试验树）', channel: 'xxzx_common', protocol: 2, execOptionsExtra: CHILD_EXTRA },
     }
     const finRet = await execAgentTask(finTask)
     const root = await agentTaskDac.getByCode(rootCode)
@@ -82,15 +82,19 @@ try {
      * autoFollow 与 enabled 各管各的（前者管 finalize 内追不追活，后者管 B1 触发），这里只动后者。
      */
     orch.enabled = false
-    // ================= 阶段 OFF：现网形态逐字不变 =================
+    // ================= 阶段 OFF：§7-4 升级后形态——不派活、但裁决终局收口（不悬 1） =================
     orch.autoFollow = false
     const tOff = await buildAndRunTree('off')
     const rOff = await dispatchFinalize(tOff.rootCode, tOff.conversationCode)
     const cOff = await readChildren(rOff)
-    out.phases.OFF = { subs: rOff.subAgents.length, status: rOff.handleStatus, action: rOff.handleRet?.orchestration?.action, spawned: rOff.handleRet?.orchestration?.follow?.spawned }
+    out.phases.OFF = { subs: rOff.subAgents.length, status: rOff.handleStatus, action: rOff.handleRet?.orchestration?.action, spawned: rOff.handleRet?.orchestration?.follow?.spawned, degrade: rOff.handleRet?.orchestration?.follow?.degrade }
     V['OFF1 不派活:subAgents 仍 2、follow.spawned=0'] = rOff.subAgents.length === 2 && rOff.handleRet?.orchestration?.follow?.spawned === 0
-    V['OFF2 裁决与现网一致:retry 悬而未追(1)+dispatch 如实回传'] = rOff.handleStatus === 1
-        && rOff.handleRet?.orchestration?.action === 'retry' && rOff.handleRet?.orchestration?.dispatch?.needRetry === true
+    // §7-4：finalize 只派发一次，OFF 的 retry 裁决若悬 1 = 永久死悬（dev 实测 5 棵）——降级 report(3)，
+    // 原裁决留 dispatch.needRetry/reason 审计（"该追未追"看得见，但树不再装"进行中"）。
+    V['OFF2 无承接方降级:report(3)+degrade 留痕+dispatch 如实回传'] = rOff.handleStatus === 3
+        && rOff.handleRet?.orchestration?.action === 'report' && /原裁决:retry/.test(String(rOff.handleRet?.orchestration?.reason || ''))
+        && rOff.handleRet?.orchestration?.follow?.degrade === 'auto-follow-off'
+        && rOff.handleRet?.orchestration?.dispatch?.needRetry === true
     V['OFF3 失败行没被追活动过(-1 原样)'] = cOff.filter((c) => c.handleStatus === -1).length === 1
 
     // ================= 阶段 ON：真追活 =================
