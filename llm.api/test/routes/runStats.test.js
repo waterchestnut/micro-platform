@@ -86,3 +86,22 @@ test('/runStats taskEvents 面：enabled/keyPrefix/maxEvents/ttlSec/eventDb/钳�
         assert.equal(typeof te.emit[k], 'number', `emit.${k} 必须是数（分诊靠它）`)
     }
 })
+
+test('/runStats orchestration 面：编排七开关齐报且类型严（批⑧观测——env 没铺到 vs 铺了没流量，一眼分诊）', async (t) => {
+    const app = await build(t)
+    const res = await app.inject({
+        method: 'POST', url: '/core/chat/runStats',
+        headers: {'user-info': ui}, payload: {},
+    })
+    const d = JSON.parse(res.payload).data
+    const oa = d.orchestration
+    assert.ok(oa && typeof oa === 'object', `orchestration 面缺席：${JSON.stringify(d).slice(0, 200)}`)
+    for (const k of ['enabled', 'autoFollow', 'layered', 'plannerEnabled']) {
+        assert.equal(typeof oa[k], 'boolean', `orchestration.${k} 必须是布尔`)
+    }
+    assert.ok(['kafka', 'direct'].includes(oa.dispatch), 'dispatch 只许 kafka|direct 二值')
+    assert.equal(typeof oa.synthGraceMs, 'number')
+    assert.ok(oa.followSpawnCap > 0, '保险帽必须为正数（缺省 8）')
+    // 测试环境无 env ⇒ 全默认关（开闸批的"关=现网"零漂移读数的面证明）
+    assert.equal(oa.enabled, false); assert.equal(oa.layered, false); assert.equal(oa.autoFollow, false)
+})

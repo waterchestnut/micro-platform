@@ -1383,6 +1383,25 @@ export default async function (fastify, opts) {
                  */
                 emit: taskEventEmitStats(),
             },
+            /**
+             * 编排开关面（批⑧配套，源仓 e16b396 同刀）。"看不见就等于没有"家族：开闸批的
+             * flag 此前只能靠行为侧读数反推（follow.stopReason），值班分不清"env 没铺到
+             * 本容器"和"铺了没流量"。新面七键严类型。**诚实边界**：本进程 env 真相；
+             * 其它容器面看各自行为读（follow 账），同配家规下不一致即漏铺信号。
+             */
+            orchestration: (() => {
+                const oa = llm.config.agentTask?.fanOutOrchestration || {}
+                const pl = llm.config.agentTask?.fanOutPlanner || {}
+                return {
+                    enabled: oa.enabled === true,
+                    dispatch: oa.dispatch || 'kafka',
+                    autoFollow: oa.autoFollow === true,
+                    layered: oa.layered === true,
+                    plannerEnabled: pl.enabled === true,
+                    synthGraceMs: Number(oa.synthGraceMs) || 0,
+                    followSpawnCap: Number(oa.followSpawnCap) || 8,
+                }
+            })(),
         }
     })
 }
