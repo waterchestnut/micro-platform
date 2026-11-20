@@ -30,6 +30,22 @@ const out = { phases: {} }
 const orch = llm.config.agentTask.fanOutOrchestration
 orch.enabled = false // 手动派 finalize（防 B1 自动派发竞态——已知探针坑）
 orch.layered = true
+// E 段前置：root 事件账镜像开（发射位判据不变；测试环境默认关，这里开给直播面断言）
+llm.config.agentTask.taskEvents = llm.config.agentTask.taskEvents || {}
+llm.config.agentTask.taskEvents.enabled = true
+const Redis = (await import('ioredis')).default
+const { taskEventKey } = await import('../../services/core/session/taskEventLog.js')
+const rcEv = llm.config.redisConfig
+const ecEv = llm.config.redisEventConfig || {}
+const evClient = new Redis({ host: rcEv.host, port: rcEv.port, username: rcEv.username, password: rcEv.password, db: Number.isFinite(ecEv.db) ? ecEv.db : 12 })
+const readEvLedger = async (rootCode) => {
+    const raw = await evClient.xrange(taskEventKey(rootCode), '-', '+')
+    return raw.map(([id, flat]) => {
+        const o = {}
+        for (let i = 0; i < flat.length; i += 2) o[flat[i]] = flat[i + 1]
+        return { id, type: o.type, data: o.data || '' }
+    })
+}
 
 async function buildLayerTree(suffix, autoFollow) {
     orch.autoFollow = autoFollow
@@ -86,8 +102,8 @@ async function sweep(rootCode, conversationCode) {
     return await AgentTask.collection.countDocuments({ $or: [{ agentCode: rootCode }, { parentCode: rootCode }] })
 }
 
-let tOn = null, tOff = null, tR = null
-const EXPECTED = 10
+let tOn = null, tOff = null, tR = null, tRpl = null
+const EXPECTED = 14
 try {
     // ===== ON：真追活 + 真层推进 =====
     tOn = await buildLayerTree('on', true)
@@ -110,6 +126,25 @@ try {
         && rOn.handleRet?.orchestration?.action === 'synthesize' && (rOn.handleRet?.orchestration?.counts?.total || 0) === 3
     V['N5 综合真落 root（回执 usable+messageCode 建档，正文在 root 会话档案）'] = rOn.handleRet?.synthesis?.usable === true && !!rOn.handleRet?.synthesis?.messageCode
 
+    // ===== E：直播面×§8（交叉批）——层推进必须有 spawned 批次事件，段序在终局裁决前 =====
+    // 探针建树走 buildRootTask 手工路（不经 planFanOutFromRequest）⇒ 没有"受理批"spawned，
+    // 恰使"层推进批"事件成为唯一 spawned——出现即补账生效的证据形状。
+    const evOn = await readEvLedger(tOn.rootCode)
+    const evSpawnedLayer = evOn.filter((e) => e.type === 'subtask_spawned' && /"kind":"layer"/.test(e.data))
+    const evArb = evOn.filter((e) => e.type === 'arbitration')
+    out.phases.EVENTS = {
+        total: evOn.length,
+        types: [...new Set(evOn.map((e) => e.type))].join(','),
+        layerSpawned: evSpawnedLayer.length,
+        arbAction: evArb.length ? (JSON.parse(evArb[evArb.length - 1].data || '{}').action || '?') : '-',
+    }
+    V['E1 层推进补批事件在账:kind=layer 的 spawned 恰一批且含层行 agentCode'] =
+        evSpawnedLayer.length === 1 && (!l1.length || evSpawnedLayer[0].data.includes(l1[0].agentCode))
+    V['E2 段序与结局:arbitration 终局事件在 spawned(layer) 之后且 action=synthesize'] =
+        evArb.length >= 1 && evSpawnedLayer.length === 1
+        && String(evArb[evArb.length - 1].id) > String(evSpawnedLayer[0].id)
+        && JSON.parse(evArb[evArb.length - 1].data || '{}').action === 'synthesize'
+
     // ===== OFF：半树不装完成 =====
     tOff = await buildLayerTree('off', false)
     const rOff = await dispatchFinalize(tOff.rootCode, tOff.conversationCode)
@@ -119,6 +154,44 @@ try {
         && rOff.handleRet?.orchestration?.follow?.degrade === 'layered-not-advanced'
         && rOff.handleRet?.orchestration?.follow?.skippedLayers === 1
         && kOff.filter((c) => c.params?.layerIndex).length === 0
+
+    // ===== RPL：replan × layered（换代即清——旧残层依赖全败上游，任何终态下都不得存活） =====
+    // 树形：layer0 两个必败槽（turnRunner 缺身份 ⇒ -1 零 relay）+ 旧代残层带唯一标记题面。
+    // planner 真跑（low 档 1 次 relay）：产不产新方案都合法——判据钉"存活行里永无标记"。
+    llm.config.agentTask.fanOutPlanner.enabled = true
+    orch.autoFollow = true // OFF 段留下的 false 会截胡 replan 路径（§7-4 降级先于追活——上一轮读数实锤）
+    const conversationCodeR = `lyrprobe-rpl-${Date.now()}`
+    const rPlan = normalizeFanOutPlan({
+        subtasks: [
+            { id: 'x', title: '必败槽1', handler: 'turnRunner', query: '这句话永远不会被执行', params: { query: '这句话永远不会被执行' } },
+            { id: 'y', title: '必败槽2', handler: 'turnRunner', query: '这句话永远不会被执行', params: { query: '这句话永远不会被执行' } },
+        ],
+        subtaskCeiling: 4,
+    })
+    const rRoot = buildRootTask({
+        conversationCode: conversationCodeR, agentType: 'parallel', handler: 'parallelDispatch',
+        subtasks: rPlan.subtasks, operator: { userCode }, extra: { handleMode: 'manual', orchestrated: true },
+    })
+    rRoot.params.orchPlan = [[{ id: 'z', title: 'RPL-不该存活', query: '这句话永远不该被执行', deps: ['x', 'y'], handler: 'agentChat' }]]
+    await addAgentTask(rRoot)
+    await execAgentTask(await agentTaskDac.getByCode(rRoot.agentCode))
+    tRpl = await dispatchFinalize(rRoot.agentCode, conversationCodeR)
+    const rRplRoot = await agentTaskDac.getByCode(rRoot.agentCode)
+    const rRplKids = await kidsOf(rRplRoot)
+    out.phases.RPL = {
+        st: rRplRoot.handleStatus, action: rRplRoot.handleRet?.orchestration?.action,
+        follow: rRplRoot.handleRet?.orchestration?.follow && {
+            replanCount: rRplRoot.handleRet.orchestration.follow.replanCount,
+            layerPlanReset: rRplRoot.handleRet.orchestration.follow.layerPlanReset,
+            degrade: rRplRoot.handleRet.orchestration.follow.degrade,
+        },
+        markerRows: rRplKids.filter((c) => String(c.title || '').includes('RPL-不该存活')).length,
+    }
+    V['RPL1 换代即清:标记残层零存活（planner 产不产新方案都不得复活旧代）'] =
+        rRplKids.filter((c) => String(c.title || '').includes('RPL-不该存活')).length === 0
+    V['RPL2 终局有账:orchestration 落且 replan 路径被真走过（换代 spawn 或空手降级都是实走痕迹）'] =
+        !!rRplRoot.handleRet?.orchestration && ((rRplRoot.handleRet?.orchestration?.follow?.replanCount || 0) >= 1
+            || /^(replan|spawnReplan)-/.test(String(rRplRoot.handleRet?.orchestration?.follow?.degrade || '')))
 
     // ===== R：§8/B1 恢复补派——"层间死"病形（层0 终局、finalize 从没跑、orchPlan 剩一层） =====
     // 建树期间 enabled=false（防 B1 自动派发与手工/补派竞态——已知双 finalize OOM 坑）；
@@ -162,8 +235,14 @@ try {
 const resOn = await sweep(tOn ? tOn.rootCode : '', tOn && tOn.conversationCode)
 const resOff = tOff ? await sweep(tOff.rootCode, tOff.conversationCode) : -1
 const resR = tR ? await sweep(tR.rootCode, tR.conversationCode) : -1
-V['N7 自造行清尽（三树血统 residual=0）'] = resOn === 0 && resOff === 0 && resR === 0
-out.residual = { on: resOn, off: resOff, rescue: resR }
+const resRpl = tRpl ? await sweep(tRpl.agentCode, tRpl.conversationCode) : -1
+// redis 事件账键清场（四树 root 码）
+for (const code of [tOn, tOff, tR].map((t) => t && t.rootCode).concat(tRpl ? [tRpl.agentCode] : [])) {
+    try { await evClient.del(taskEventKey(code)) } catch { /* 键清失败不掩读数 */ }
+}
+try { evClient.disconnect() } catch { /* 断连失败无害 */ }
+V['N7 自造行清尽（四树血统 residual=0）'] = resOn === 0 && resOff === 0 && resR === 0 && resRpl === 0
+out.residual = { on: resOn, off: resOff, rescue: resR, rpl: resRpl }
 out.verdict = V
 const pass = Object.values(V).filter(Boolean).length
 out.结论 = pass === EXPECTED ? `分层扇出 e2e 通过(${EXPECTED}/${EXPECTED}：层推进/时序/产出注入/全层收口/OFF 不装完成/恢复补派+帽/零残留)` : `未全真 ${pass}/${EXPECTED}——读数见上`

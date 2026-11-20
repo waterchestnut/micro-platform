@@ -24,10 +24,12 @@ export const taskQueued = ({ rootCode, queuePosition = null }) =>
 export const taskStarted = ({ rootCode, subtaskCount = 0 }) =>
     ev('task_started', { rootCode, subtaskCount })
 
-/** planner 拆出的子任务清单（里程碑，不逐帧回灌 child 细流） */
-export const subtasksSpawned = ({ rootCode, subtasks = [] }) =>
+/** planner 拆出的子任务清单（里程碑，不逐帧回灌 child 细流）；
+ *  kind=§8 交叉批补账：追活/层推进的补批标 retry|replan|layer（缺席=受理批原形逐字不变） */
+export const subtasksSpawned = ({ rootCode, subtasks = [], kind = null }) =>
     ev('subtask_spawned', {
         rootCode,
+        ...(kind ? { kind } : {}),
         subtasks: subtasks.map((s) => ({ agentCode: s.agentCode, title: s.title || '' })),
     })
 
@@ -46,7 +48,12 @@ export const synthesizing = ({ rootCode }) => ev('synthesizing', { rootCode })
 export const synthesized = ({ rootCode, successCount = 0, usableCount = 0, failedCount = 0 }) =>
     ev('synthesized', { rootCode, successCount, usableCount, failedCount })
 
-/** 预算/并行度降级——必须说降到哪档，不能静默 */
+/**
+ * 预算/并行度降级——必须说降到哪档，不能静默。
+ * ⚠️ degrade/reason **复用 taskBudget.checkBudget 的原话值**（'none'|'cap-subtasks'|'single-agent'
+ * 与 over-ceiling/no-headroom/near-ceiling/budget-headroom/预算包装前缀话）——事件语义与
+ * 判定单源同一套词，不发第三套包装话；发射资格由 budgetDegradedWorthy 白名单闸。
+ */
 export const budgetDegraded = ({ rootCode, degrade = 'none', reason = '', allowedSubtasks = 0 }) =>
     ev('budget_degraded', { rootCode, degrade, reason, allowedSubtasks })
 

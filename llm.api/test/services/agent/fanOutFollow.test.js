@@ -323,6 +323,17 @@ describe('runFollowLoop：四条路径真跑（假 deps）', () => {
         const ly = h.spawned.filter((s) => s.kind === 'layer')
         assert.equal(ly.length, 1); assert.equal(ly[0].title, '新层', '接的是新代计划，旧残层作废')
     })
+    test('§8 交叉批：replan 新代**不带**分层计划 ⇒ 旧残层同样废弃（换代即清——全败的上游不配被继承）', async () => {
+        const h = harness({
+            all: [boom('a')], action: ['replan', 'synthesize'],
+            cfg: { autoFollow: true, plannerEnabled: true, orchPlan: [[{ title: '旧残层', query: 'old' }]] },
+            replanPlan: { needFanOut: true, subtasks: [{ title: 'N', query: 'n1' }] },
+        })
+        const r = await runFollowLoop(h.deps)
+        assert.equal(r.follow.layerPlanReset, 1, '废弃计数在账')
+        assert.deepEqual(h.spawned.filter((s) => s.kind === 'layer'), [], '旧残层绝不被 spawn——依赖的是这一代已全败的产出')
+        assert.equal(r.fin.action, 'synthesize', '新代单层正常收口')
+    })
 
     test('retry 一轮后全成 ⇒ synthesize 收尾；superseded 记账；计数持久', async () => {
         const h = harness({ all: [kid('a', 2), boom('b')], action: ['retry', 'synthesize'], cfg: { autoFollow: true } })

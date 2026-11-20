@@ -87,6 +87,29 @@ class FanOutFinalizeTask extends BaseHandler {
         const { runFollowLoop, rollupAllAttemptCredits, mergeCancelAware } = await import('../fanOutFollow.js')
         const { budgetAllowsFollow } = await import('../../core/session/taskAccounting.js')
         const { execAgentTask } = await import('../index.js') // 动态：handler←index 静态互引会成环
+        /**
+         * M1-c 补账（§8 交叉批）：追活/层推进/换代 spawn 的新行此前**无 subtask_spawned 事件**——
+         * 直播面只见到陌生 slot 的 done 空降（分层树第二批最明显）。接线位补发（循环体零事件
+         * import 家规不破）；事件面关= emitTaskEvents 内部 no-op，现网零影响。
+         * tag 进 payload.kind 供消费端分诊（retry/replan/layer——同 slot 出现新尝试是设计语义，
+         * 不瞒报"哪来的新行"）。
+         */
+        const emitSpawned = async (inserted, kind) => {
+            try {
+                await emitTaskEvents({
+                    rootCode,
+                    events: [{
+                        type: 'subtask_spawned',
+                        payload: {
+                            rootCode, kind,
+                            subtasks: (inserted || []).map((t) => ({ agentCode: t.agentCode, title: t.title || '' })),
+                        },
+                    }],
+                })
+            } catch (e) {
+                logger.warn(`追活 spawned 事件发射失败(直播面缺批，detail 面不受累): ${String(e?.message || e).slice(0, 200)}`)
+            }
+        }
         /** 追活循环：autoFollow 关（默认）⇒ 循环立即 stop，行为与步骤 A/B1 落库时逐字一致 */
         const { fin, all, follow } = await runFollowLoop({
             readAllChildren,
@@ -109,6 +132,7 @@ class FanOutFinalizeTask extends BaseHandler {
             }),
             spawnRetrySpecs: async (specs) => {
                 const inserted = await insertSubAgentTask(rootCode, specs)
+                await emitSpawned(inserted, 'retry')
                 await Promise.allSettled(inserted.map((t) => execAgentTask(t)))
             },
             replanSubtasks: async ({ query }) => {
@@ -127,12 +151,14 @@ class FanOutFinalizeTask extends BaseHandler {
             },
             spawnReplanSpecs: async (specs) => {
                 const inserted = await insertSubAgentTask(rootCode, specs)
+                await emitSpawned(inserted, 'replan')
                 await Promise.allSettled(inserted.map((t) => execAgentTask(t)))
             },
             // §8 层推进 spawn：与 retry/replan 同通道（insertSubAgentTask+本进程并行执行），
             // 层行的 planRound/layerIndex 由 buildLayerSpecs 盖好——没有新调度器。
             spawnLayerSpecs: async (specs) => {
                 const inserted = await insertSubAgentTask(rootCode, specs)
+                await emitSpawned(inserted, 'layer')
                 await Promise.allSettled(inserted.map((t) => execAgentTask(t)))
             },
             // §8/B1 恢复判据的写侧：每层消费即把"剩余层"写回 root.params.orchPlan——

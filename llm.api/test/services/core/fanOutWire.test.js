@@ -186,3 +186,19 @@ describe('§8/B1 恢复接线（收尾丢失补派）：判据单源 + 写侧清
         assert.match(fin, /'params\.orchPlan': \[\]/, '终局没清账——"非空=没写完"的扫描前提不成立')
     })
 })
+
+describe('§8 交叉批：追活直播补批（spawned 事件三处齐发，循环体零事件 import 家规不破）', () => {
+    test('finalizeTask 的 retry/replan/layer 三个 spawn 通道成功后都补发 subtask_spawned', () => {
+        const fin = linesOf('services/agent/handler/fanOutFinalizeTask.js').join('\n')
+        assert.match(fin, /const emitSpawned = async/, '补发件不在位')
+        const spawns = ['spawnRetrySpecs', 'spawnReplanSpecs', 'spawnLayerSpecs']
+        for (const fn of spawns) {
+            const i = fin.indexOf(fn + ': async')
+            assert.ok(i >= 0, fn + ' 缺席')
+            const body = fin.slice(i, i + 500)
+            assert.match(body, /await emitSpawned\(inserted, '(retry|replan|layer)'\)/, fn + ' 没补发 spawned——直播面第二批行空降 done')
+        }
+        const loop = linesOf('services/agent/fanOutFollow.js').join('\n')
+        assert.ok(!/taskEvent|emitTaskEvents/.test(loop), 'follow 循环体绝不能 import 事件件（判发在接线位的家规）')
+    })
+})

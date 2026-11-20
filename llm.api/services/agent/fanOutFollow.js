@@ -341,8 +341,14 @@ export async function runFollowLoop(p = {}) {
                 const planned = await replanSubtasks({ query: buildReplanQuery(cfg.originalQuery, fin) })
                 if (planned && planned.needFanOut) {
                     specs = buildReplanSpecs({ subtasks: planned.subtasks, planRound: nextPlanRound(all) })
-                    // §8 replan 换代：新一代若带分层计划，旧代残层作废、由新代 orchPlan 接管
-                    if (Array.isArray(planned.orchPlan)) { layersQ.length = 0; layersQ.push(...planned.orchPlan.filter((L) => Array.isArray(L) && L.length)); follow.layerPlanReset = (follow.layerPlanReset || 0) + 1 }
+                    // §8 换代即废弃（推理自查出的判据错，replan 前提=全败）：旧计划的残层
+                    // 依赖的是**这一代已全败的上游**——新代没给承接计划时旧层更无权存活，
+                    // 否则换代后突然冒出基于败局产出的层=错形执行。新代带 layers 则接管。
+                    if (layersQ.length) follow.layerPlanReset = (follow.layerPlanReset || 0) + layersQ.length
+                    layersQ.length = 0
+                    if (Array.isArray(planned.orchPlan)) {
+                        layersQ.push(...planned.orchPlan.filter((L) => Array.isArray(L) && L.length))
+                    }
                 } else if (planned && String(planned.reason || '').startsWith('budget:')) {
                     // §7-3：replan 被预算闸拒（budget:* 话术）⇒ 留痕给接线方发降级事件。
                     // 循环不发事件也不 import 事件件——**判"要不要发"在 taskBudget 白名单，
