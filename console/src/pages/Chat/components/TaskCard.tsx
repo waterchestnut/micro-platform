@@ -25,6 +25,7 @@ import {
   pickClarify,
   type TaskDetailLite,
 } from '@/chatProviders/taskFlow';
+import {createTaskEventWatcher, type TaskEventsResp} from '@/chatProviders/taskEventFlow';
 
 const {Text} = Typography;
 
@@ -41,12 +42,24 @@ export type TaskCardProps = {
   loadDetail: (rootCode: string) => Promise<TaskDetailLite | null>;
   cancelTask: (rootCode: string) => Promise<{ok: boolean; msg: string}>;
   /**
+   * M1-c 刀 2：事件订阅一轮（/core/agentTask/eventsSubscribe 的 IO 面，形态见 taskEventFlow）。
+   * **事件只是提醒，detail 仍是状态唯一源**——命中里程碑就立刻补一拍 tick，把 4s 轮询
+   * 的观测延迟压到亚秒；不给此 prop ⇒ 纯轮询，行为与刀 2 之前逐字节相同（默认关接线纪律）。
+   * 降级由状态机自治：服务端事件面没开 ⇒ 一轮即停，不空转。
+   */
+  subscribeEvents?: (rootCode: string, lastId: string) => Promise<TaskEventsResp | null>;
+  /**
    * §7-1 澄清答复（动作面注入，同 cancel 纪律）。不给 ⇒ 只出题不答（降级面：
    * 文案照样如实"该入口暂不支持答复"，不许演一个按不动的按钮）。
    */
   answerClarify?: (rootCode: string, answers: Array<{agentCode: string; response: string}>) => Promise<{ok: boolean; msg: string; data?: any}>;
   loadSynthesis: (rootCode: string) => Promise<string | null>;
   renderBody?: (text: string) => React.ReactNode;
+  /**
+   * M1-c 刀 2：事件订阅一轮的 IO 面（形态与降级纪律见 chatProviders/taskEventFlow）。
+   * 事件=提醒，detail=状态——命中里程碑立刻补一拍 tick，把观测延迟从 4s 压到亚秒；
+   * 不给此 prop ⇒ watcher 不存在，行为与刀 2 之前逐字节相同。
+   */
   /**
    * M8 排查刀：观测墙——超过 wallMs 还没见到终局就**停表**（默认 30 分钟）。
    * 这是观测者的声明不是任务的判决：root 停在机械终态、recover 救不到内存对象是已登记的窗
@@ -64,6 +77,7 @@ const TaskCard: React.FC<TaskCardProps> = ({
   wallMs = 30 * 60 * 1000,
   loadDetail,
   cancelTask,
+  subscribeEvents,
   answerClarify,
   loadSynthesis,
   renderBody,
@@ -120,7 +134,19 @@ const TaskCard: React.FC<TaskCardProps> = ({
     const timer = setInterval(() => {
       if (!stoppedRef.current) void tick();
     }, intervalMs);
-    return () => { dead = true; clearInterval(timer); };
+    // 刀 2：订阅提醒（不注入 subscribeEvents ⇒ 整个 watcher 不存在，原形逐字节）
+    let watcher: ReturnType<typeof createTaskEventWatcher> | null = null;
+    if (subscribeEvents) {
+      watcher = createTaskEventWatcher({
+        fetchEvents: (rc, lastId) => subscribeEvents(rc, lastId),
+        // 提醒只敲门不装状态：tick 自带防重（停表后不再拉），真状态永远来自 detail
+        onHint: () => { if (!dead && !stoppedRef.current) void tick(); },
+        sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+        stopped: () => dead || stoppedRef.current,
+      });
+      watcher.start(rootCode);
+    }
+    return () => { dead = true; clearInterval(timer); watcher?.stop(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rootCode]);
 

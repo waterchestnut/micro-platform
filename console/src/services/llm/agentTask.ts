@@ -11,6 +11,7 @@
 import {llmRequest} from '@/services/request';
 import {getMessageList} from './message';
 import {pickLatestAnswer, type TaskDetailLite} from '@/chatProviders/taskFlow';
+import {type TaskEventsResp} from '@/chatProviders/taskEventFlow';
 
 /** 任务详情（相位/子任务/树账）。读面不依赖编排 flag——dev 现在即可用（llm.api §5-3 事实）。 */
 export async function researchTaskDetail(rootCode: string): Promise<TaskDetailLite | null> {
@@ -48,6 +49,23 @@ export async function researchTaskClarifyAnswer(
     return {ok: ret?.code === 0, msg: String(ret?.msg || (ret?.code === 0 ? '' : '答复未生效')), data: ret?.data};
   } catch (e: any) {
     return {ok: false, msg: String(e?.message || '网络异常，答复未送达')};
+  }
+}
+
+/**
+ * 任务事件订阅一轮（M1-c 刀 2）：/eventsSubscribe 的 IO 兜底——非 0 信封/网络失败 ⇒ null
+ * （形态由 taskEventFlow 状态机裁决：确定性 no-client 与网络 null 是两句话，这里不混）。
+ * waitMs 不传（服务端默认 5000 钳位）——挂起节奏归服务端，前端不教后端做事。
+ */
+export async function researchTaskEventsSubscribe(
+  rootCode: string, lastId: string,
+): Promise<TaskEventsResp | null> {
+  if (!rootCode) return null;
+  try {
+    const ret: any = await llmRequest('/core/agentTask/eventsSubscribe', {method: 'POST', data: {agentCode: rootCode, lastId}});
+    return ret?.code === 0 && ret.data ? (ret.data as TaskEventsResp) : null;
+  } catch {
+    return null;
   }
 }
 
