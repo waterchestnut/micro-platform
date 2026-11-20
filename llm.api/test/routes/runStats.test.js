@@ -64,3 +64,20 @@ test('/runStats credits 计价面：configured/pricedActive/effective/issues 四
     assert.equal(cw.configured, false)
     assert.equal(cw.pricedActive, false)
 })
+
+test('/runStats taskEvents 面：enabled/keyPrefix/maxEvents/ttlSec/eventDb/钳位在账（批⑤观测——flag 状态一眼确认，分不清"没开"和"没流量"的时代结束）', async (t) => {
+    const app = await build(t)
+    const res = await app.inject({
+        method: 'POST', url: '/core/chat/runStats',
+        headers: {'user-info': ui}, payload: {},
+    })
+    const d = JSON.parse(res.payload).data
+    const te = d.taskEvents
+    assert.ok(te && typeof te === 'object', `taskEvents 面缺席：${JSON.stringify(d).slice(0, 200)}`)
+    assert.equal(typeof te.enabled, 'boolean', '开没开必须是布尔')
+    assert.equal(te.keyPrefix, 'llmtask:events', '键前缀缺省必须与服务端镜像件一致（双源会分叉）')
+    assert.equal(te.subscribeWaitMaxMs, 5000, '钳位声明与 TASK_EVENT_WAIT_MAX_MS 同源')
+    // 测试环境未配 env ⇒ enabled=false、eventDb 走缺省 12（三库分立的默认读数）
+    assert.equal(te.enabled, false)
+    assert.equal(te.eventDb, 12)
+})

@@ -1364,6 +1364,19 @@ export default async function (fastify, opts) {
                     issues: n.issues,
                 }
             })(),
+            /**
+             * 事件直播面（批⑤配套，母本 4f11727 移植）。flag 状态此前无处可查：发射
+             * fail-open 静默、读面空窗 available=false，值班分不清"没开闸"和"开了没流量"
+             * （看不见就等于没有家族，creditsWeights 面同族）。clients/keys 不在此面。
+             */
+            taskEvents: {
+                enabled: llm.config.agentTask?.taskEvents?.enabled === true,
+                keyPrefix: llm.config.agentTask?.taskEvents?.keyPrefix || 'llmtask:events',
+                maxEvents: llm.config.agentTask?.taskEvents?.maxEvents,
+                ttlSec: llm.config.agentTask?.taskEvents?.ttlSec,
+                eventDb: Number.isFinite(llm.config.redisEventConfig?.db) ? llm.config.redisEventConfig.db : 12,
+                subscribeWaitMaxMs: 5000,
+            },
         }
     })
 }
