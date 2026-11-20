@@ -36,6 +36,21 @@ export default {
     },
     /** 分布式锁的Redis配置 */
     redlockRedis: process.env['REDLOCK_URI'],
+    /**
+     * 任务事件日志的 Redis 承载（M1-c/D38，PR-E0.5 的隔离决定）。
+     * 形状=**连接参数继承 redisConfig，只有 db 独立**（env `redisEventConfig_db` 默认 12）：
+     * 单实例多库时 cache/lock/事件 三库分立——D38 的账是"事件写与锁续期不能互相挤兑"，
+     * 逻辑库分立先保证键空间与容量核算可分账；独立实例仍是运维可选项（配 host 即可）。
+     * ⚠️ 前提如实：maxmemory-policy 的 CONFIG GET 读数待运维确认——allkeys-lru 会截半
+     * 直播流，gap 检测会如实报但没人愿意看半段直播。
+     */
+    redisEventConfig: {
+        host: process.env['redisEventConfig_host'] || undefined,
+        port: process.env['redisEventConfig_port'] ? parseInt(process.env['redisEventConfig_port']) : undefined,
+        username: process.env['redisEventConfig_username'] || undefined,
+        password: process.env['redisEventConfig_password'] || undefined,
+        db: parseInt(process.env['redisEventConfig_db'] || '12'),
+    },
     /** 加密cookie的秘钥 */
     cookieSecret: process.env['COOKIE_SECRET'],
     /** 默认缓存数据过期时间，单位：分钟 */
@@ -254,6 +269,19 @@ export default {
         clarifyBubble: {
             enabled: process.env['agentTask_clarifyBubble'] === 'true',
             cap: Number(process.env['agentTask_clarifyCap']) || 2,
+        },
+        /**
+         * 任务事件直播镜像（M1-c 刀 1，D38/PR-E0.5 的落地件）。**默认关**：
+         * 关 ⇒ 所有发射点 emitTaskEvents 直接 no-op（连 taskEventLog/redisEventClient
+         * 都不 import——懒加载家规）。开 ⇒ 里程碑事件写 root 键的 redis Stream
+         * （专用客户端、专用逻辑库 db12）。游标=Stream 原生 id（跨进程写者无需协调）。
+         * 事件是加法：写失败只计数，detail 面永远是兜底（fail-open 继承 runEventLogStore）。
+         */
+        taskEvents: {
+            enabled: process.env['agentTask_taskEvents'] === 'true',
+            maxEvents: Number(process.env['agentTask_taskEventsMaxEvents']) || 500,
+            ttlSec: Number(process.env['agentTask_taskEventsTtlSec']) || 3600,
+            keyPrefix: process.env['agentTask_taskEventsKeyPrefix'] || 'llmtask:events',
         },
         /**
          * 生成式 planner（M4b）：一次**裸通道、非流式、低档**的 LLM 调用做"要不要扇出 + 怎么拆"，

@@ -51,6 +51,21 @@ http.createServer((req, res) => {
         let parsed = null
         try { parsed = JSON.parse(body) } catch { /* 兜底走文本判 */ }
         const toolMsgs = parsed ? (parsed.messages || []).filter((m) => m.role === 'tool') : []
+        // planner 非流式分支（M1-c 探针走真受理链）：stream:false ⇒ 交 JSON 契约
+        if (body.includes('"stream":false')) {
+            obs.paths && obs.paths.push('planner')
+            res.writeHead(200, {'Content-Type': 'application/json'})
+            res.end(JSON.stringify({
+                id: 'fake', object: 'chat.completion', created: 1, model: 'fake',
+                choices: [{index: 0, message: {role: 'assistant', content: JSON.stringify({
+                    needFanOut: true, reason: '两件事可并行',
+                    subtasks: [{title: '甲', query: 'TEV-A 例行工作'}, {title: '乙', query: 'TEV-B 例行工作'}],
+                })}, finish_reason: 'stop'}],
+                usage: {prompt_tokens: 5, completion_tokens: 5, total_tokens: 10},
+            }))
+            console.log('路径=planner 非流式 交扇出 JSON')
+            return
+        }
         if (body.includes('CLARIFY-TREE-CHATA')) {
             // 三分支：首跑开局（无历史无补充）发申报；首跑 ack 轮（有工具结果无补充）交收尾正文；
             // 重跑开局（query 带【澄清补充】，memory off 靠不了历史——标记就是轮次本身）交 R2 正文

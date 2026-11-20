@@ -28,6 +28,7 @@ import messageDac from '../../../daos/core/dac/messageDac.js'
 import {getTreeUsage} from '../../core/usageStats.js'
 import { updateAgentTaskWithLock, insertSubAgentTask, addAgentTask } from '../../core/agentTask.js'
 import { finalizeFanOutRoot, buildSynthesisQuery } from '../fanOutFinalize.js'
+import { emitTaskEvents } from '../taskEventEmit.js'
 
 const tools = llm.tools
 const logger = llm.logger
@@ -159,6 +160,13 @@ class FanOutFinalizeTask extends BaseHandler {
                     'params.clarifyHold': decided.hold,
                 }, {agentCode: rootCode})
                 logger.info(`fan-out 澄清挂起: root=${rootCode}, 待答=${decided.hold.requests.length}, 超限=${(decided.hold.capped || []).length}`)
+                // M1-c：await 也是直播事件——发完"在等人"里程碑就收段
+                // （段界 __end__=await-input：订阅者据此停 poll，答复后新段由端点开）
+                await emitTaskEvents({
+                    rootCode,
+                    events: [{type: 'arbitration', payload: {rootCode, action: 'await-input', retryAgents: [], reason: 'clarify-bubble'}}],
+                    end: 'await-input',
+                })
                 return {handleStatus: 2, handleRet: {awaited: true, requests: decided.hold.requests.length, capped: (decided.hold.capped || []).length}, errorMsg: '', subsequentMode: '', subsequents: []}
             }
             if (decided.mode === 'synthesize-degraded') {
@@ -196,6 +204,8 @@ class FanOutFinalizeTask extends BaseHandler {
                 maxPostpone: Number(orchCfg.synthMaxPostpone) || 3,
             })
             if (timing.act === 'schedule') {
+                // M1-c：窗未满是**段内等待**（下一段还会重算本段），只发 synthesizing 里程碑、不收段
+                await emitTaskEvents({rootCode, events: [{type: 'synthesizing', payload: {rootCode}}]})
                 /**
                  * 本次 finalize 跑在 timer 行上（pump 派发）⇒ **同一条就地重挂**：dueAt/round 刷新、
                  * 行返回 handleStatus 0——execAgentTask 的收尾写回就是"这条闹钟还活着"的账。
@@ -303,6 +313,21 @@ class FanOutFinalizeTask extends BaseHandler {
             handleStatus: finFinal.handleStatus, handleRet,
             retryCount: follow.retryCount, replanCount: follow.replanCount,
             budgetUsedTokens: handleRet.orchestration.budgetTokensUsed, // 列已声明；对账=与 orchestration.budgetTokensUsed 同值同源
+        })
+
+        /**
+         * M1-c 直播段尾：裁决事实进 root 事件账后**收段**（__end__=本段 finalize 的终局）。
+         * 计数逐字取自账本（counts 是 reduceFanIn 的单源读数），不在这重算；
+         * report/failed 段也发——直播的"结局"必须与 detail 面同一句话，只是晚一帧。
+         * 段界之后若再有 finalize（clarifyAnswer 重派/grace 泵），那是下一段的新账。
+         */
+        await emitTaskEvents({
+            rootCode,
+            events: [{
+                type: 'arbitration',
+                payload: {rootCode, action: finFinal.action, retryAgents: finFinal.dispatch?.retryAgents || [], reason: finFinal.reason},
+            }],
+            end: finFinal.action,
         })
 
         return { handleStatus: finFinal.handleStatus, handleRet, errorMsg: '', subsequentMode: '', subsequents: [] }

@@ -22,6 +22,7 @@ import { execChat } from '../../core/llmChat.js'
 import messageDac from '../../../daos/core/dac/messageDac.js'
 import llmUsageDac from '../../../daos/core/dac/llmUsageDac.js'
 import { buildChildExecOptions, mapChildOutcome, reduceChildResult } from '../childTurn.js'
+import { emitTaskEvents } from '../taskEventEmit.js'
 
 const tools = llm.tools
 const logger = llm.logger
@@ -152,6 +153,32 @@ class AgentChat extends BaseHandler {
         const clarifyRet = clarifyRecords.length
             ? {clarify: {question: String(clarifyRecords[0].question || ''), options: clarifyRecords[0].options || [], count: clarifyRecords.length}}
             : {}
+        /**
+         * M1-c 直播：child 终局里程碑进 root 事件账（fire-and-forget——事件旁路不许拖慢 child，
+         * 镜像失败只少一帧直播，detail 面的行事实永远是兜底）。summary 取正文前 200 字——
+         * **摘要是摘要不是正文**，全文走 /core/message/list（与 detail.preview 同一口径）。
+         * rootCode 取 parentCode||taskContext.rootCode（母本探针实锤：manual 链的 subsequents
+         * 简形不带 parentCode，taskContext 是账本关联的单源，回退位必须同源）。
+         */
+        const rootCodeForEvents = agentTaskInfo.parentCode || p.taskContext?.rootCode || ''
+        if (rootCodeForEvents) {
+            let childTitle = ''
+            try {
+                const selfRow = await (await import('../../../daos/core/dac/agentTaskDac.js')).default.getByCode(agentTaskInfo.agentCode)
+                childTitle = String(selfRow?.title || agentTaskInfo.title || '')
+            } catch { /* 标题缺席不拦里程碑——事件说得出"谁完了"比"叫什么名字"要紧 */ }
+            const summary = String(result?.content || '').slice(0, 200)
+            emitTaskEvents({
+                rootCode: rootCodeForEvents,
+                events: [outcome.handleStatus === 2
+                    ? {type: 'subtask_done', payload: {rootCode: rootCodeForEvents, agentCode: agentTaskInfo.agentCode,
+                        usable: result?.usable !== false && String(result?.content || '').trim().length > 0,
+                        summary, credits: creditsFields.credits ?? null}}
+                    : {type: 'subtask_failed', payload: {rootCode: rootCodeForEvents, agentCode: agentTaskInfo.agentCode,
+                        reason: String(outcome.reason || result?.note || '').slice(0, 200), retryable: outcome.retryable === true}},
+                ],
+            }).catch(() => {})
+        }
         return {
             handleStatus: outcome.handleStatus,
             handleRet: {...result, ...creditsFields, ...clarifyRet, retryable: outcome.retryable, reason: outcome.reason},

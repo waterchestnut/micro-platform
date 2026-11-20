@@ -176,6 +176,16 @@ export default async function (fastify, opts) {
             'params.clarifyAnswered': [...answeredSet],
             'params.clarifyHold': {...hold, requests: nextRequests},
         }, {agentCode: code})
+        // M1-c：答复开新段（上一段 finalize 已以 __end__=await-input 收口）——
+        // task_started + 被重派 child 的 subtask_spawned，游标账自然衔接下一段
+        const {emitTaskEvents} = await import('../../../services/agent/taskEventEmit.js')
+        await emitTaskEvents({
+            rootCode: code,
+            events: [
+                {type: 'task_started', payload: {rootCode: code, subtaskCount: requeued.length}},
+                {type: 'subtask_spawned', payload: {rootCode: code, subtasks: requeued.map((c) => ({agentCode: c, title: ''}))}},
+            ],
+        })
         // 收尾重算**不在这里抢跑**：child 重跑到终态时聚合钩子会为 await-input 再触发 finalize
         // （parentAggregate.shouldTriggerFinalize 的 await-input 例外）。端点若此刻直派 finalize，
         // 会在 child 还在跑时算出 pending 污染 orchestration——e2e 实测就是这个形状。
@@ -233,6 +243,65 @@ export default async function (fastify, opts) {
         const {getTreeUsage} = await import('../../../services/core/usageStats.js')
         view.usage = await getTreeUsage(code).catch((e) => ({error: String(e?.message || e).slice(0, 160)}))
         return {statusCode: 200, code: 0, data: view}
+    })
+
+    /**
+     * M1-c 刀 1：任务事件直播的读面（回放式增量，非 XREAD BLOCK 长挂——
+     * 每请求一次 XRANGE，连接不悬着，D38 的连接数账不随订阅者涨；节奏交前端）。
+     * 顺序纪律：**先查 root 定归属、后读事件账**——归属不过关连账都不该碰（fail-closed）；
+     * 镜像不可用/空窗 ⇒ events:[] 如实，detail 面（账本事实）永远是兜底，两面合起来才叫直播。
+     */
+    fastify.post('/events', {
+        schema: {
+            description: '取编排 root 的任务事件（游标增量；仅发起人本人）。events 为词表里程碑，end 为段界',
+            summary: 'agentTask 事件直播读面',
+            body: {
+                type: 'object',
+                required: ['agentCode'],
+                properties: {
+                    agentCode: {type: 'string', minLength: 1, maxLength: 128, description: '编排 root 的 task 标识'},
+                    lastId: {type: 'string', maxLength: 64, description: '游标（上次响应的 lastId/末条 id；空=从头）'},
+                    count: {type: 'number', description: '单次上限，默认 100'},
+                },
+            },
+            tags: ['agent'],
+            response: {default: {}},
+        },
+    }, async function (request, reply) {
+        const userCode = request.userInfo?.userCode
+        if (!userCode) {
+            const err = new Error('缺少有效的用户身份（user-info）')
+            err.statusCode = 401
+            throw err
+        }
+        const agentTaskDac = (await import('../../../daos/core/dac/agentTaskDac.js')).default
+        const code = String(request.body?.agentCode || '')
+        const root = await agentTaskDac.getByCode(code)
+        if (!root) return {statusCode: 200, code: -1, msg: '任务不存在', data: {reason: 'not-found'}}
+        if (root.operator?.userCode !== userCode) {
+            const err = new Error('无权查看该任务事件')
+            err.statusCode = 403
+            throw err
+        }
+        if (!(root.agentRole === 'root' && root.orchestrated === true)) {
+            return {statusCode: 200, code: -1, msg: '仅编排任务树有事件面', data: {reason: 'scope-reject'}}
+        }
+        const {readTaskEventLog} = await import('../../../services/core/session/taskEventLog.js')
+        const {getEventClient} = await import('../../../daos/cache/redisEventClient.js')
+        const cfgE = llm.config.agentTask?.taskEvents || {}
+        const r = await readTaskEventLog({
+            getClient: getEventClient, rootCode: code,
+            afterId: String(request.body?.lastId || ''),
+            count: Number(request.body?.count) || 100,
+            cfg: {keyPrefix: cfgE.keyPrefix},
+        })
+        const events = r.events || []
+        return {statusCode: 200, code: 0, msg: '', data: {
+            rootCode: code, events,
+            lastId: events.length ? events[events.length - 1].id : (r.end?.id || String(request.body?.lastId || '')),
+            end: r.end || null,
+            available: r.reason === 'ok', reason: r.reason,
+        }}
     })
 
     // 手动触发一轮中断任务恢复（与 cron 同一实现；运维排障/验证用）

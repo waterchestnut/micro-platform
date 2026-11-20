@@ -22,6 +22,7 @@ import { normalizeFanOutPlan } from './fanOutPlanner.js'
 import { buildRootTask } from '../core/session/taskQueueComposer.js'
 import { addAgentTask } from '../core/agentTask.js'
 import { buildIdemFilter, pickIdempotentHit, isDuplicateKeyError } from '../core/session/taskIdempotency.js'
+import { emitTaskEvents } from './taskEventEmit.js'
 import agentTaskDac from '../../daos/core/dac/agentTaskDac.js'
 
 const logger = llm.logger
@@ -160,6 +161,17 @@ export async function planFanOutFromRequest({ query, conversationCode, operator,
         }
         throw e
     }
+    // M1-c 刀1：受理即开段——task_queued + subtask_spawned 两个里程碑进 root 事件账
+    // （flag 关/redis 不可用 ⇒ emitTaskEvents 内部静默 no-op，主流程零变化）。
+    // agentCode 在 addAgentTask 的 format 里生成、title 在 plan.subtasks 里——按序 zip
+    // （format 就地改写把 root.subAgents 换成 simpleSubs，title 不在行数据里——母本 e2e 实锤）。
+    await emitTaskEvents({
+        rootCode: root.agentCode,
+        events: [
+            { type: 'task_queued', payload: { rootCode: root.agentCode, queuePosition: 1 } },
+            { type: 'subtask_spawned', payload: { rootCode: root.agentCode, subtasks: (root.subAgents || []).map((s, i) => ({ agentCode: s.agentCode, title: plan.subtasks?.[i]?.title || '' })) } },
+        ],
+    })
     return { fanOut: true, reason: plan.reason, rootCode: root.agentCode, subtasks: plan.subtasks }
 }
 
