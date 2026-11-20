@@ -114,6 +114,30 @@ ol {
   }
 }
 
+/* pro3: 顶部横排 overflow(…) 弹层经 portal 挂 body，逃逸 .app-menu——按顶栏深绿配色补齐
+   （:has 限定顶部弹层，不影响侧栏折叠弹层的上方规则） */
+.ant-menu-submenu-popup:has(.ant-pro-base-menu-horizontal-menu-item) {
+  .ant-menu,
+  .ant-menu-sub {
+    background: #1f4d39;
+  }
+
+  .ant-pro-base-menu-horizontal-menu-item,
+  .ant-pro-base-menu-horizontal-menu-item .ant-pro-base-menu-horizontal-item-title,
+  .ant-pro-base-menu-horizontal-menu-item .ant-pro-base-menu-horizontal-item-icon,
+  .ant-pro-base-menu-horizontal-menu-item .ant-pro-base-menu-horizontal-item-text {
+    color: #fff !important;
+  }
+
+  .ant-menu-item:hover {
+    background-color: var(--brand-accent, #3a7e62);
+  }
+
+  .ant-menu-item-selected {
+    background-color: var(--brand-accent-dark, #2e6b50);
+  }
+}
+
 .ant-pro-layout .ant-pro-sider.ant-pro-sider-fixed {
   inset-block-start: 64px;
   height: calc(100vh - 64px)
