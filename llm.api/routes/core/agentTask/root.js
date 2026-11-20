@@ -304,6 +304,72 @@ export default async function (fastify, opts) {
         }}
     })
 
+    /**
+     * M1-c 刀 2（服务端半区）：任务事件的**订阅端点**——XREAD BLOCK 长轮询，有事件立刻回、
+     * 空窗挂满 ≤5s 回空窗，客户端带 lastId 再来一轮。与 /events 的分工：回放面管首屏和
+     * 兜底，订阅面管里程碑到达的**延迟**（前端节奏从"轮询间隔"变成"服务端推送时机"）。
+     * 三条纪律：
+     * 1. 响应形与 /events **同契约**（events/lastId/end/available/reason）——前端消费器
+     *    一个形状两个面通用，两处各定形必分叉；
+     * 2. 先查 root 定归属、后碰事件账（fail-closed 顺序，刀 1 同规）；
+     * 3. 阻塞读只跑 redisEventClient 专用连接（挂共享连接会陪葬 redlock），单次 ≤5s 的
+     *    上限把 Traefik idleTimeout 与"订阅者数=连接数"两头都挡死（D38 连接数账）。
+     */
+    fastify.post('/eventsSubscribe', {
+        schema: {
+            description: '订阅编排 root 任务事件（XREAD BLOCK 长轮询；仅发起人本人）。空窗≤5s 回，客户端带 lastId 续轮',
+            summary: 'agentTask 事件订阅面',
+            body: {
+                type: 'object',
+                required: ['agentCode'],
+                properties: {
+                    agentCode: {type: 'string', minLength: 1, maxLength: 128, description: '编排 root 的 task 标识'},
+                    lastId: {type: 'string', maxLength: 64, pattern: '^(|0|\\d+-\\d+)$', description: '游标（上次末条 id；空/0=从头）'},
+                    waitMs: {type: 'number', description: '单次挂起上限，钳到 [0,5000]，默认 5000'},
+                    count: {type: 'number', description: '单次上限，默认 50'},
+                },
+            },
+            tags: ['agent'],
+            response: {default: {}},
+        },
+    }, async function (request, reply) {
+        const userCode = request.userInfo?.userCode
+        if (!userCode) {
+            const err = new Error('缺少有效的用户身份（user-info）')
+            err.statusCode = 401
+            throw err
+        }
+        const agentTaskDac = (await import('../../../daos/core/dac/agentTaskDac.js')).default
+        const code = String(request.body?.agentCode || '')
+        const root = await agentTaskDac.getByCode(code)
+        if (!root) return {statusCode: 200, code: -1, msg: '任务不存在', data: {reason: 'not-found'}}
+        if (root.operator?.userCode !== userCode) {
+            const err = new Error('无权订阅该任务事件')
+            err.statusCode = 403
+            throw err
+        }
+        if (!(root.agentRole === 'root' && root.orchestrated === true)) {
+            return {statusCode: 200, code: -1, msg: '仅编排任务树有事件面', data: {reason: 'scope-reject'}}
+        }
+        const {waitTaskEventLog} = await import('../../../services/core/session/taskEventLog.js')
+        const {getEventClient} = await import('../../../daos/cache/redisEventClient.js')
+        const cfgE = llm.config.agentTask?.taskEvents || {}
+        const r = await waitTaskEventLog({
+            getClient: getEventClient, rootCode: code,
+            afterId: String(request.body?.lastId || ''),
+            waitMs: Number(request.body?.waitMs) || cfgE.subscribeWaitMs || 5000,
+            count: Number(request.body?.count) || 50,
+            cfg: {keyPrefix: cfgE.keyPrefix},
+        })
+        const events = r.events || []
+        return {statusCode: 200, code: 0, msg: '', data: {
+            rootCode: code, events,
+            lastId: events.length ? events[events.length - 1].id : String(request.body?.lastId || ''),
+            end: r.end || null,
+            available: r.reason === 'ok', reason: r.reason,
+        }}
+    })
+
     // 手动触发一轮中断任务恢复（与 cron 同一实现；运维排障/验证用）
     fastify.post('/recover', {
         schema: {

@@ -19,6 +19,7 @@
  * 2. 段界 `__end__`：root 会被 clarifyAnswer/grace 泵**多次 finalize**，每段以 __end__ 收口；
  *    回放读到段界即停（订阅者据此知道"这一段直播到头了"）；
  * 3. 专用客户端（redisEventClient，D38 隔离 db12）：绝不与 redlock/共享 cache 连接挤兑。
+ *    刀 2 加了阻塞读（waitTaskEventLog）之后这条更硬：**XREAD BLOCK 只许跑在专用连接上**。
  */
 
 export const TASK_EVENT_KEY_PREFIX = 'llmtask:events'
@@ -96,6 +97,29 @@ export function createTaskEventMirror({getClient, rootCode, cfg = {}} = {}) {
 }
 
 /**
+ * 事件帧解析（回放与阻塞读的**同一口径**）：flat 字段对 → {id,type,payload}；
+ * 遇 `__end__` 收段——段界后的条目属下一段，本轮不带。两处各写一遍必分叉（D66 同族）。
+ * @param {Array} raw XRANGE/XREAD 的条目数组
+ * @returns {{events: Array, end: Object|null}}
+ */
+function parseEventRows(raw) {
+    const events = []
+    let end = null
+    for (const [id, flat] of raw || []) {
+        const o = {}
+        for (let i = 0; i < (flat || []).length; i += 2) o[flat[i]] = flat[i + 1]
+        if (o.type === '__end__') {
+            end = {id, outcome: o.data || ''}
+            break // 段界即终点：__end__ 之后的条目属于下一段，本响应不带
+        }
+        let payload = null
+        try { payload = JSON.parse(o.data || '{}') } catch { payload = {raw: o.data} }
+        events.push({id, type: o.type, payload})
+    }
+    return {events, end}
+}
+
+/**
  * @description 回放/增量读：取 afterId 之后的事件（XRANGE (id + COUNT n）
  * @param {Object} p
  * @param {Function} p.getClient 专用客户端
@@ -124,20 +148,63 @@ export async function readTaskEventLog({getClient, rootCode, afterId = '', count
         // 订阅端拿到 empty+lastId 原样回传即可，语义一致
         return {found: false, reason: 'empty', events: [], end: null}
     }
-    const events = []
-    let end = null
-    for (const [id, flat] of raw) {
-        const o = {}
-        for (let i = 0; i < (flat || []).length; i += 2) o[flat[i]] = flat[i + 1]
-        if (o.type === '__end__') {
-            end = {id, outcome: o.data || ''}
-            break // 段界即终点：__end__ 之后的条目属于下一段，本响应不带
-        }
-        let payload = null
-        try { payload = JSON.parse(o.data || '{}') } catch { payload = {raw: o.data} }
-        events.push({id, type: o.type, payload})
-    }
+    const {events, end} = parseEventRows(raw)
     return {found: true, reason: 'ok', events, end}
 }
 
-export default {TASK_EVENT_KEY_PREFIX, taskEventKey, createTaskEventMirror, readTaskEventLog}
+/** Stream id 的合法形（ms-n 两段十进制，n>=0）；'0'/'0-0' 等价"从头"。
+ *  挡在门口再进 XREAD：坏游标打到 redis 只会得到协议错误，在门口点名便宜得多。 */
+const STREAM_ID_RE = /^\d+-\d+$/
+
+/** 阻塞读的单次挂起上限（ms）：Traefik idleTimeout 180s 不可调，但更硬的线是
+ *  "订阅者数不得变成连接占用"（D38 的连接数账）——挂满 5s 必被代理掐且毫无必要，
+ *  5s 内没事件就回空窗让客户端带游标再来一轮（长轮询纪律，响应形与 /events 同契约）。 */
+export const TASK_EVENT_WAIT_MAX_MS = 5000
+
+/**
+ * @description 阻塞式增量读（M1-c 刀 2 订阅端点的地基）：XREAD BLOCK——有事件立刻回，
+ *  没有就挂到 waitMs 回空窗。⚠️ **只许跑在 redisEventClient 专用连接上**：阻塞读挂住
+ *  共享连接会陪葬 redlock（redisEventClient 注释第 2 条的同一条病）。
+ * @param {Object} p
+ * @param {Function} p.getClient 专用客户端（null ⇒ no-client 降级，不抛）
+ * @param {String} p.rootCode root
+ * @param {String} [p.afterId] 游标（Stream id；'0'/空=从头）
+ * @param {Number} [p.waitMs] 挂起上限（钳到 [0, TASK_EVENT_WAIT_MAX_MS]）
+ * @param {Number} [p.count] 单次上限
+ * @param {Object} [p.cfg] {keyPrefix}
+ * @returns {Promise<Object>} {found, events, end, reason}——reason ∈ ok / timeout（空窗，
+ *   客户端原游标重试）/ bad-cursor（防御位）/ no-client / unreadable；与 readTaskEventLog
+ *   同形，订阅者拿到的帧契约与回放面完全一致
+ */
+export async function waitTaskEventLog({getClient, rootCode, afterId = '', waitMs = 5000, count = 50, cfg = {}} = {}) {
+    if (afterId && afterId !== '0' && !STREAM_ID_RE.test(afterId)) {
+        return {found: false, reason: 'bad-cursor', events: [], end: null}
+    }
+    const key = taskEventKey(rootCode, cfg.keyPrefix)
+    const cursor = afterId && afterId !== '0' ? afterId : '0-0'
+    const block = Math.max(0, Math.min(Number(waitMs) || 0, TASK_EVENT_WAIT_MAX_MS))
+    const n = Math.max(1, Number(count) || 50)
+    let client
+    try {
+        client = await getClient()
+        if (!client) return {found: false, reason: 'no-client', events: [], end: null}
+    } catch { return {found: false, reason: 'no-client', events: [], end: null} }
+    let res
+    try {
+        res = block > 0
+            ? await client.xread('COUNT', n, 'BLOCK', block, 'STREAMS', key, cursor)
+            : await client.xread('COUNT', n, 'STREAMS', key, cursor)
+    } catch (e) {
+        const lg = (typeof llm !== 'undefined' && llm.logger) ? llm.logger : console
+        lg.warn(`任务事件阻塞读失败，按不可用处理: ${rootCode} ${String(e?.message || e).slice(0, 140)}`)
+        return {found: false, reason: 'unreadable', events: [], end: null}
+    }
+    // 服务端 BLOCK 超时回 nil；部分客户端形态回空数组——两种都是"空窗"这一句真话
+    if (!res || !res.length || !res[0] || !res[0][1] || !res[0][1].length) {
+        return {found: false, reason: 'timeout', events: [], end: null}
+    }
+    const {events, end} = parseEventRows(res[0][1])
+    return {found: true, reason: 'ok', events, end}
+}
+
+export default {TASK_EVENT_KEY_PREFIX, taskEventKey, createTaskEventMirror, readTaskEventLog, waitTaskEventLog, TASK_EVENT_WAIT_MAX_MS}

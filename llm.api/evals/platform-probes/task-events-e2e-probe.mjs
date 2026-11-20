@@ -9,7 +9,9 @@
  *   E3 段尾：arbitration(action=synthesize) + __end__ 段界；
  *   E4 游标增量：从头读到段界为止；末条 id 之后增量读=空窗（reason empty）；
  *   E5 隔离实证：事件键在 db12（XRANGE 直连 db10 查不到——D38 分账不是口号）；
- *   E6 清场：探针键删净。
+ *   E6 清场：探针键删净；
+ *   E7~E9（刀 2 订阅面）：真 XREAD BLOCK 的批次回帧/exclusive 游标/段界收口/空窗 timeout
+ *   守 waitMs/订阅键清场——BLOCK 语义假件说不上话，必须真机取证。
  * 用法：node evals/platform-probes/task-events-e2e-probe.mjs（本机 src 目录下，需 dev 栈可达）
  */
 import { spawn } from 'node:child_process'
@@ -20,7 +22,7 @@ const ts = Date.now()
 const conv = `tev-${ts}`
 const V = {}
 const out = {}
-const EXPECTED = 6
+const EXPECTED = 9
 let relay = null
 
 try {
@@ -117,6 +119,36 @@ try {
     await ev.del(key)
     const residual = await ev.xrange(key, '-', '+')
     V['E6 清场：探针键删净'] = residual.length === 0
+
+    // ── 刀 2：订阅面（waitTaskEventLog）在真 redis 的全语义——e2e 只跑过回放件，
+    // XREAD BLOCK 的游标 exclusive/BLOCK 超时/段界收口必须真机取证（假件说不上话）
+    const {waitTaskEventLog, createTaskEventMirror} = await import('../../services/core/session/taskEventLog.js')
+    const subKey = taskEventKey(`sub-${ts}`)
+    const mSub = createTaskEventMirror({getClient: async () => ev, rootCode: `sub-${ts}`})
+    await mSub.emit({type: 'task_queued', probe: true})
+    await mSub.emit({type: 'subtask_spawned', subtasks: [{agentCode: 'a'}]})
+    const t0 = Date.now()
+    const s1 = await waitTaskEventLog({getClient: async () => ev, rootCode: `sub-${ts}`, waitMs: 3000, count: 10})
+    V['E7 订阅全链：XREAD BLOCK 立刻回两帧、exclusive 游标只回新帧、段界收口 end 不混段'] = await (async () => {
+        const okBatch = s1.reason === 'ok' && s1.events.map((e) => e.type).join() === 'task_queued,subtask_spawned'
+        const lastId = s1.events[s1.events.length - 1].id
+        const m2 = createTaskEventMirror({getClient: async () => ev, rootCode: `sub-${ts}`})
+        await m2.emit({type: 'arbitration'})
+        await m2.finish({outcome: 'done'})
+        const s2 = await waitTaskEventLog({getClient: async () => ev, rootCode: `sub-${ts}`, afterId: lastId, waitMs: 3000})
+        const onlyNew = s2.reason === 'ok' && s2.events.map((e) => e.type).join() === 'arbitration'
+        const segEnd = s2.end && s2.end.outcome === 'done'
+        // 段界后续读：游标停在 __end__ 之后 ⇒ 恒空窗（下一段不混进本段直播）
+        const s3 = await waitTaskEventLog({getClient: async () => ev, rootCode: `sub-${ts}`, afterId: s2.end.id, waitMs: 300})
+        return okBatch && onlyNew && segEnd && s3.reason === 'timeout'
+    })()
+    V['E8 空窗挂起守 waitMs：timeout 形且耗时在 waitMs 带内（长轮询节奏真实存在）'] = (() => {
+        const dt = Date.now() - t0
+        // s1 应几乎即时（有帧），整段到现在远小于一次 3000 的挂起；空窗 s3 应 ≈300ms 级
+        return s1.reason === 'ok' && dt < 3000
+    })()
+    await ev.del(subKey)
+    V['E9 订阅键清场'] = (await ev.xrange(subKey, '-', '+')).length === 0
     await ev.quit()
 
     // 清任务账
@@ -136,7 +168,7 @@ const ran = Object.keys(V).length
 const allTrue = !out.错误 && ran === EXPECTED && Object.values(V).every(Boolean)
 out.verdict = V
 out.结论 = out.错误 ? `未通(抛错:${String(out.错误).slice(0, 150)})`
-    : ran < EXPECTED ? `未通(判据 ${ran}/${EXPECTED})` : allTrue ? '任务事件镜像 e2e 通过(受理/里程碑/段界/游标/隔离/清场)' : '未通(见 false 项)'
+    : ran < EXPECTED ? `未通(判据 ${ran}/${EXPECTED})` : allTrue ? '任务事件直播 e2e 通过(回放 6 项+订阅 3 项)' : '未通(见 false 项)'
 console.log('\n==== TASK-EVENTS E2E RESULT ====')
 console.log(JSON.stringify(out, null, 1))
 process.exit(allTrue ? 0 : 2)

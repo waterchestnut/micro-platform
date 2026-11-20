@@ -42,19 +42,42 @@ describe('发射点位（五处，全部走 emitTaskEvents 单口）', () => {
 describe('读面与承载（D38 隔离）', () => {
     test('/events：先查 root 定归属、后读事件账（fail-closed 顺序）；401/403/scope-reject 三道门', () => {
         const code = readCode('routes/core/agentTask/root.js')
-        const seg = code.slice(code.indexOf("fastify.post('/events'"), code.indexOf("fastify.post('/events'") + 2600)
+        const seg = code.slice(code.indexOf("fastify.post('/events'"), code.indexOf("fastify.post('/eventsSubscribe'"))
         const atRoot = seg.indexOf('getByCode(code)')
         const atEvents = seg.indexOf('readTaskEventLog')
         assert.ok(atRoot >= 0 && atEvents > atRoot, '事件账读取早于归属校验=授权旁路')
         assert.ok(/err\.statusCode = 403/.test(seg))
         assert.ok(/scope-reject/.test(seg))
     })
+    test('/eventsSubscribe（刀 2）：与 /events 同顺序同契约——归属在前、events/lastId/end/available/reason 五件齐', () => {
+        const code = readCode('routes/core/agentTask/root.js')
+        const seg = code.slice(code.indexOf("fastify.post('/eventsSubscribe'"))
+        assert.ok(seg.length > 500, '订阅端点没接上（找不到段）')
+        const atRoot = seg.indexOf('getByCode(code)')
+        const atEvents = seg.indexOf('waitTaskEventLog')
+        assert.ok(atRoot >= 0 && atEvents > atRoot, '订阅面读事件账早于归属校验=授权旁路')
+        assert.ok(/err\.statusCode = 403/.test(seg), '订阅面缺归属 403')
+        assert.ok(/scope-reject/.test(seg), '订阅面缺编排形拒绝')
+        // 契约同形：消费器一个形状两个面通用（两处各定形必分叉）
+        for (const k of ['events', 'lastId', 'end:', 'available', 'reason']) {
+            assert.ok(seg.includes(k), `订阅面响应缺 ${k}`)
+        }
+    })
     test('redisEventClient：独立 db 默认 12、lazyConnect+fail-open（拿不到返回 null 不抛）', () => {
         const code = readCode('daos/cache/redisEventClient.js')
         assert.match(code, /db: Number\.isFinite\(ec\.db\) \? ec\.db : 12/)
         assert.match(code, /lazyConnect: true/)
         assert.match(code, /return null/)
-        assert.ok(!/XREAD/.test(code), '阻塞读不许出现在这个客户端（陪葬 redlock 的病根）')
+        assert.ok(!/\.xread\(/.test(code), '客户端模块自己不发阻塞读（发它在 taskEventLog 订阅件，且只配专用连接）')
+    })
+    test('waitTaskEventLog：XREAD BLOCK 只住订阅件、挂起钳位 5s 单源（Traefik/连接数两头）', () => {
+        const code = readCode('services/core/session/taskEventLog.js')
+        assert.match(code, /xread\('COUNT', n, 'BLOCK', block/)
+        assert.match(code, /export const TASK_EVENT_WAIT_MAX_MS = 5000/)
+        assert.match(code, /Math\.min\(Number\(waitMs\) \|\| 0, TASK_EVENT_WAIT_MAX_MS\)|Math\.max\(0, Math\.min\(Number\(waitMs\) \|\| 0, TASK_EVENT_WAIT_MAX_MS\)\)/)
+        // 段界解析单源：回放与阻塞共用一个函数，两处各写必分叉
+        assert.equal((code.match(/function parseEventRows/g) || []).length, 1)
+        assert.equal((code.match(/=\s*parseEventRows\(/g) || []).length, 2, '恰好两个调用点（回放+阻塞），第三个就是分叉苗头')
     })
     test('config：taskEvents 默认关、redisEventConfig.db 默认 12（三库分立 cache10/lock11/events12）', async () => {
         const {default: cfg} = await import('../../../conf/system.config.js')
