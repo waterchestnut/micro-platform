@@ -123,16 +123,23 @@ agentTaskSchema.index({conversationCode: 1, handleStatus: 1})
  *   同码失败重推是合法动作，不永久锁死）；
  * - 编排 root：同会话同一 idemKey **永久至多一条**（受理键一次性，duplicate 请求永远指回原树）。
  * ⚠️ partialFilterExpression 的字段必须等值（这里 agentRole/handleStatus/orchestrated 都是等值）；
- * 存量集合上 autoIndex 建索引若因**历史重复数据**失败只会打日志——探针要实证 index 真在（见 handoff §7）。
+ * ⚠️ **idemKey 缺席的行必须被排除**（母本 P-8 压测实锤的 bug：unique 索引把 missing 字段按
+ * null 收录、null 相等 ⇒ 同会话两棵不带 taskCode 的编排 root 互相撞 E11000——"受理键一次性"
+ * 不能演变成"没有受理键就同会话终身一棵树"）。修法=$type:'string'，missing 与显式 null 都
+ * 挡在门外。schema 与迁移脚本两处定义同源，谁改了另一处必须跟上（测试级对账钉住）。
+ * 存量集合上 autoIndex 建索引若因**历史重复数据**失败只会打日志——探针要实证 index 真在（见 handoff §7）；
+ * **partialFilterExpression 变更不触发 autoIndex 重建**（同名索引选项冲突只报错），必须走
+ * 迁移脚本 drop+create（agentTask-idemkey-partial-index-migration）。
  */
 agentTaskSchema.index({conversationCode: 1, 'params.messageCode': 1}, {
     unique: true,
     partialFilterExpression: {agentRole: 'serialized-turn', handleStatus: 0},
     name: 'uniq_serializedTurn_messageCode',
 })
+export const ORCH_ROOT_IDEM_PARTIAL = {agentRole: 'root', orchestrated: true, 'params.idemKey': {$type: 'string'}}
 agentTaskSchema.index({conversationCode: 1, 'params.idemKey': 1}, {
     unique: true,
-    partialFilterExpression: {agentRole: 'root', orchestrated: true},
+    partialFilterExpression: ORCH_ROOT_IDEM_PARTIAL,
     name: 'uniq_orchestratedRoot_idemKey',
 })
 

@@ -111,8 +111,14 @@ describe('config 与 schema：默认关 + 双闸', () => {
         const schema = linesOf('daos/core/schema/agentTaskSchema.js').join('\n')
         assert.match(schema, /unique:\s*true,[\s\S]*?partialFilterExpression:\s*\{agentRole:\s*'serialized-turn',\s*handleStatus:\s*0\}/,
             'serialized-turn 缺 partial-unique（同码并发双行）')
-        assert.match(schema, /unique:\s*true,[\s\S]*?partialFilterExpression:\s*\{agentRole:\s*'root',\s*orchestrated:\s*true\}/,
+        assert.match(schema, /unique:\s*true,[\s\S]*?partialFilterExpression:\s*ORCH_ROOT_IDEM_PARTIAL/,
             '编排 root 缺 partial-unique（同 taskCode 并发双树）')
+        // 母本 P-8 实锤修正的锚：无键行必须排除出索引；迁移脚本与本定义同源对账
+        assert.match(schema, /'params\.idemKey':\s*\{\$type:\s*'string'\}/,
+            'uniq_orchestratedRoot_idemKey 没有排除缺席 idemKey（E11000 null 相等病复发）')
+        const mig = linesOf('evals/platform-probes/agentTask-idemkey-partial-index-migration.mjs').join('\n')
+        assert.ok(mig.includes("agentRole: 'root', orchestrated: true, 'params.idemKey': {$type: 'string'}"),
+            '迁移脚本的 partial 与 schema 定义不同源（谁改了另一处没跟上=白迁）')
         const root = linesOf('routes/core/chat/root.js').join('\n')
         // M5 重构后的合流形状：幂等预查/竞态回查住进共享入队体 enqueueSerializedTurn，
         // 四个入口（overlap-reject/stale-open-run/gate-local-full/gate-global-full）都够到同一份——
