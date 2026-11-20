@@ -37,6 +37,18 @@ describe('发射点位（五处，全部走 emitTaskEvents 单口）', () => {
         assert.match(code, /const \{emitTaskEvents\} = await import\('\.\.\/\.\.\/\.\.\/services\/agent\/taskEventEmit\.js'\)/)
         assert.match(code, /type: 'task_started'[\s\S]{0,200}type: 'subtask_spawned'/)
     })
+    test('§7-3 finalize 第六发射位：budgetStop/budgetNote 两形态过白名单判据才发，审计随 follow 落', () => {
+        const code = readCode('services/agent/handler/fanOutFinalizeTask.js')
+        assert.match(code, /import \{ budgetDegradedWorthy \} from '\.\.\/\.\.\/core\/session\/taskBudget\.js'/)
+        // 发射判据单源：worthy 闸门在，degrade 话在载荷里
+        assert.match(code, /budgetDeg && budgetDegradedWorthy\(budgetDeg\)/)
+        assert.match(code, /type: 'budget_degraded'[\s\S]{0,200}rootCode, \.\.\.budgetDeg/)
+        assert.match(code, /follow\.budgetDegraded = budgetDeg/) // 审计面：事件关也看得见
+        // 循环体不许 import 事件件——发射是接线位的职责
+        const loop = readCode('services/agent/fanOutFollow.js')
+        assert.ok(!/taskEventEmit/.test(loop), 'fanOutFollow import 了事件件——副作用进循环体的红线破了')
+        assert.match(loop, /follow\.budgetNote = \{ degrade: 'single-agent', reason: String\(planned\.reason\), allowedSubtasks: 0 \}/)
+    })
 })
 
 describe('读面与承载（D38 隔离）', () => {

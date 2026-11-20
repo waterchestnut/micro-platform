@@ -198,6 +198,7 @@ export async function runFollowLoop(p = {}) {
     const follow = {
         attempted: cfg.autoFollow === true, retryCount: 0, replanCount: 0,
         spawned: 0, superseded: [], degrade: null, stopReason: 'auto-follow-off',
+        budgetNote: null, // §7-3 replan 预算拒的话术留痕（budgetStop 是闸停形态，两者都归接线方裁决发射）
     }
     let counts = { retryCount: num(cfg.retryCount), replanCount: num(cfg.replanCount) }
     let all = await readAllChildren()
@@ -233,6 +234,11 @@ export async function runFollowLoop(p = {}) {
                 const planned = await replanSubtasks({ query: buildReplanQuery(cfg.originalQuery, fin) })
                 if (planned && planned.needFanOut) {
                     specs = buildReplanSpecs({ subtasks: planned.subtasks, planRound: nextPlanRound(all) })
+                } else if (planned && String(planned.reason || '').startsWith('budget:')) {
+                    // §7-3：replan 被预算闸拒（budget:* 话术）⇒ 留痕给接线方发降级事件。
+                    // 循环不发事件也不 import 事件件——**判"要不要发"在 taskBudget 白名单，
+                    // 执行"发"在 finalize 接线位**（副作用不进循环体是本仓一贯纪律）。
+                    follow.budgetNote = { degrade: 'single-agent', reason: String(planned.reason), allowedSubtasks: 0 }
                 }
             }
         } catch (e) {

@@ -29,6 +29,7 @@ import {getTreeUsage} from '../../core/usageStats.js'
 import { updateAgentTaskWithLock, insertSubAgentTask, addAgentTask } from '../../core/agentTask.js'
 import { finalizeFanOutRoot, buildSynthesisQuery } from '../fanOutFinalize.js'
 import { emitTaskEvents } from '../taskEventEmit.js'
+import { budgetDegradedWorthy } from '../../core/session/taskBudget.js'
 
 const tools = llm.tools
 const logger = llm.logger
@@ -94,10 +95,14 @@ class FanOutFinalizeTask extends BaseHandler {
                 const fresh = await agentTaskDac.getByCode(rootCode)
                 return fresh?.handleRet?.orchestration?.cancelled === true
             },
-            // §5-4 追活预算闸：现场按 rootCode 现算已花费（与树账同一查询面），判定转调 taskBudget 单源阈值
+            // §5-4 追活预算闸：现场按 rootCode 现算已花费（与树账同一查询面），判定转调 taskBudget 单源阈值。
+            // §7-3 预算运行时化：ceiling/est/ratio 从 fanOutPlanner cfg 透传（不配=单源缺省，现网行为不变）
             budgetGate: async ({planned}) => budgetAllowsFollow({
                 tokensUsed: await treeTokensUsed(),
                 planned,
+                rootTokenCeiling: (llm.config.agentTask?.fanOutPlanner || {}).rootTokenCeiling,
+                perSubtaskTokenEstimate: (llm.config.agentTask?.fanOutPlanner || {}).perSubtaskTokenEstimate,
+                degradeRatio: (llm.config.agentTask?.fanOutPlanner || {}).degradeRatio,
             }),
             computeFin: (active, counts) => finalizeFanOutRoot({
                 children: active, retryCount: counts.retryCount, replanCount: counts.replanCount, originalQuery,
@@ -108,7 +113,17 @@ class FanOutFinalizeTask extends BaseHandler {
             },
             replanSubtasks: async ({ query }) => {
                 const { planFanOutSubtasks } = await import('../fanOutPlannerService.js')
-                return planFanOutSubtasks({ query })
+                // §7-3 replan 路径预算运行时化：现场树账喂 rootTokensUsed + cfg 预算参数透传。
+                // 此前 replan 只吃 subtaskCeiling，预算判定从未参与追活——"缩小/改路径/降级单智能体"
+                // 的阶梯在运行时空转。留痕由循环体自己做（follow.budgetNote），这里只喂数。
+                const plannerCfg = llm.config.agentTask?.fanOutPlanner || {}
+                return planFanOutSubtasks({
+                    query,
+                    rootTokensUsed: await treeTokensUsed(),
+                    rootTokenCeiling: plannerCfg.rootTokenCeiling,
+                    perSubtaskTokenEstimate: plannerCfg.perSubtaskTokenEstimate,
+                    degradeRatio: plannerCfg.degradeRatio,
+                })
             },
             spawnReplanSpecs: async (specs) => {
                 const inserted = await insertSubAgentTask(rootCode, specs)
@@ -124,6 +139,16 @@ class FanOutFinalizeTask extends BaseHandler {
                 replanCount: Number(root.replanCount) || 0,
             },
         })
+        // §7-3 预算降级事件：追活闸停（budgetStop）与 replan 预算拒（budgetNote）两形态都在
+        // 接线位过白名单判据再发——判"要不要发"单源 taskBudget，执行"发"在 finalize（循环体零事件 import）。
+        // 事件面关 ⇒ emitTaskEvents 内部 no-op；审计字段随 follow 落 orchestration.follow——账不开也看得见降级话。
+        const budgetDeg = follow.budgetStop
+            ? { degrade: String(follow.budgetStop.degrade || 'single-agent'), reason: String(follow.budgetStop.reason || ''), allowedSubtasks: Number(follow.budgetStop.allowedSubtasks) || 0 }
+            : follow.budgetNote
+        if (budgetDeg && budgetDegradedWorthy(budgetDeg)) {
+            await emitTaskEvents({ rootCode, events: [{ type: 'budget_degraded', payload: { rootCode, ...budgetDeg } }] })
+            follow.budgetDegraded = budgetDeg
+        }
         // §5-2 写回前的取消感知：cancel 若在循环/综合落笔前已置标 ⇒ 跳过 synthesis（不再花模型钱），
         // 收尾改写为 cancelled 的如实 report(3)，且 cancelled 标记随写回保留、不被旧裁决覆盖。
         const freshRoot = await agentTaskDac.getByCode(rootCode)
