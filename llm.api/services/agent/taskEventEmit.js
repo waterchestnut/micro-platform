@@ -14,6 +14,18 @@ const logger = (typeof llm !== 'undefined' && llm.logger) || console
 /** 配置读取守卫形：离线测试无 llm 全局 ⇒ 视作未配置=关（fail-open 的镜像方向：默认关） */
 const taskEventsCfg = () => ((typeof llm !== 'undefined' && llm.config?.agentTask?.taskEvents) || {})
 
+/**
+ * 进程级活动计数（runStats.taskEvents 的发射面数据源）。语义与 runRegistry 的
+ * admitted/rejected 同族：**本进程自受理发射以来**的账——多进程各说各的（执行链在
+ * executor/cron，读面在 http），值班对照"哪个进程在发"时按容器看，聚合归监控。
+ * 为什么必须有：flag 开了但账空——分不清是发射点没走到、还是镜像写失败被 warn 吞了；
+ * 计数把这三种形态分开（calls=0 是没走到；failed>0 是写在坏）。
+ */
+const emitStats = {calls: 0, emitted: 0, failed: 0, closed: 0, disabled: 0}
+export function taskEventEmitStats() {
+    return {...emitStats}
+}
+
 /** 词表映射：taskEvents 的 snake_case 型名 ↔ camelCase 构造函数（封闭集，未知型不造） */
 const CTOR_BY_TYPE = {
     task_queued: 'taskQueued',
@@ -36,9 +48,10 @@ const CTOR_BY_TYPE = {
  * @returns {Promise<Object>} {emitted, skipped?}（skipped 只用于关/缺参，不是错误通道）
  */
 export async function emitTaskEvents({rootCode, events = [], end = null, deps = {}} = {}) {
-    if (!rootCode) return {emitted: 0, skipped: 'no-root'}
+    if (!rootCode) { emitStats.failed++; return {emitted: 0, skipped: 'no-root'} }
     const cfg = deps.cfg || taskEventsCfg()
-    if (cfg.enabled !== true) return {emitted: 0, skipped: 'disabled'}
+    if (cfg.enabled !== true) { emitStats.disabled++; return {emitted: 0, skipped: 'disabled'} }
+    emitStats.calls++
     try {
         const [{createTaskEventMirror}, TE] = await Promise.all([
             import('../core/session/taskEventLog.js'),
@@ -54,17 +67,21 @@ export async function emitTaskEvents({rootCode, events = [], end = null, deps = 
             const ctorName = CTOR_BY_TYPE[String(type)]
             if (!ctorName || typeof TE[ctorName] !== 'function') {
                 logger.warn(`任务事件未知型，不造形状: ${String(type).slice(0, 40)}`)
+                emitStats.failed++
                 continue
             }
             await mirror.emit(TE[ctorName](payload || {}))
             emitted++
         }
         if (end) await mirror.finish({outcome: end})
+        emitStats.emitted += emitted
+        if (end) emitStats.closed++
         return {emitted, closed: !!end}
     } catch (e) {
         logger.warn(`任务事件发射异常（不影响任务）: root=${rootCode} ${String(e?.message || e).slice(0, 160)}`)
+        emitStats.failed++
         return {emitted: 0, skipped: 'error'}
     }
 }
 
-export default {emitTaskEvents}
+export default {emitTaskEvents, taskEventEmitStats}

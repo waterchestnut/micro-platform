@@ -80,4 +80,9 @@ test('/runStats taskEvents 面：enabled/keyPrefix/maxEvents/ttlSec/eventDb/钳�
     // 测试环境未配 env ⇒ enabled=false、eventDb 走缺省 12（三库分立的默认读数）
     assert.equal(te.enabled, false)
     assert.equal(te.eventDb, 12)
+    // emit 活动计数（分诊单）：五计数在账且类型为数
+    assert.ok(te.emit && typeof te.emit === 'object', 'emit 计数缺席——"没走到/写坏/在发"三形态又分不开了')
+    for (const k of ['calls', 'emitted', 'failed', 'disabled', 'closed']) {
+        assert.equal(typeof te.emit[k], 'number', `emit.${k} 必须是数（分诊靠它）`)
+    }
 })

@@ -15,6 +15,7 @@ import {decideQueueOnOverlap, decideQueueOnStaleOpenRun} from '../../../services
 import {decideTaskAdmission, rejectQueueFull} from '../../../services/core/session/taskAdmission.js'
 import {buildIdemFilter, pickIdempotentHit, isDuplicateKeyError} from '../../../services/core/session/taskIdempotency.js'
 import {normalizeCreditWeights} from '../../../services/core/session/creditMeter.js'
+import {taskEventEmitStats} from '../../../services/agent/taskEventEmit.js'
 import {decideFanOutEntry} from '../../../services/core/session/fanOutEntry.js'
 import {buildSerializedTurnTask} from '../../../services/core/session/taskQueueComposer.js'
 import {rejectResponse} from '../../../services/core/session/runGate.js'
@@ -1376,6 +1377,11 @@ export default async function (fastify, opts) {
                 ttlSec: llm.config.agentTask?.taskEvents?.ttlSec,
                 eventDb: Number.isFinite(llm.config.redisEventConfig?.db) ? llm.config.redisEventConfig.db : 12,
                 subscribeWaitMaxMs: 5000,
+                /**
+                 * 本进程发射账（批⑤配套，母本 ed36e91）：calls/disabled/failed/emitted/closed
+                 * 五计数分诊"没走到发射点 / flag 没生效 / 写在坏 / 正常在发"。
+                 */
+                emit: taskEventEmitStats(),
             },
         }
     })
