@@ -19,8 +19,7 @@
 import { OpenAI } from 'openai'
 import { parsePlannerOutput, buildSystemPrompt } from './fanOutIntake.js'
 import { normalizeFanOutPlan, stampChildHandler } from './fanOutPlanner.js'
-import { layerFanOutPlan, planTotals } from './fanOutPlanGraph.js'
-import { checkBudget } from '../core/session/taskBudget.js'
+import { applyLayeredPlan } from './fanOutPlanGraph.js'
 import { buildRootTask } from '../core/session/taskQueueComposer.js'
 import { addAgentTask } from '../core/agentTask.js'
 import { buildIdemFilter, pickIdempotentHit, isDuplicateKeyError } from '../core/session/taskIdempotency.js'
@@ -94,26 +93,20 @@ export async function planFanOutSubtasks({ query, subtaskCeiling, rootTokensUsed
         return { ok: parsed.ok, needFanOut: false, subtasks: [], reason: parsed.reason, plannerRaw: text.slice(0, 300) }
     }
 
-    // 3a) §8 分层路径（layered 开且模型真声明了 deps）：图严判 ⇒ 预算吃全树总量（**不修剪图**——
-    // 删上游=下游悬空错形，超限整案不扇交回普通回答）。无 deps/单层输出走 3b 旧路，逐字现网。
+    // 3a) §8 分层路径（layered 开且模型真声明了 deps）：判据整段抽至 fanOutPlanGraph.applyLayeredPlan
+    // （纯件可穷举——reject 不修剪图/预算吃全树总量/stamp 单源）。无 deps/单层输出走 3b 旧路，逐字现网。
     if (layered && parsed.subtasks.some((s) => s.deps !== undefined)) {
-        const g = layerFanOutPlan({ subtasks: parsed.subtasks })
-        if (!g.ok) {
-            return { ok: true, needFanOut: false, subtasks: [], reason: `graph:${g.reason}`, plannerRaw: text.slice(0, 300) }
-        }
-        const totals = planTotals(g.layers)
-        const bud = checkBudget({
-            rootTokensUsed: Number(rootTokensUsed) > 0 ? Number(rootTokensUsed) : 0,
-            plannedSubtasks: totals.total,
+        const ap = applyLayeredPlan({
+            subtasks: parsed.subtasks,
+            stamp: stampChildHandler,
+            rootTokensUsed,
             subtaskCeiling: subtaskCeiling ?? cfg.subtaskCeiling,
             rootTokenCeiling, perSubtaskTokenEstimate, degradeRatio,
         })
-        if (!bud.ok || bud.degrade !== 'none' || bud.allowedSubtasks < totals.total) {
-            return { ok: true, needFanOut: false, subtasks: [], reason: `budget:${bud.degrade === 'single-agent' ? 'single-agent' : bud.reason}`, plannerRaw: text.slice(0, 300) }
+        if (!ap.ok) {
+            return { ok: true, needFanOut: false, subtasks: [], reason: ap.reason, plannerRaw: text.slice(0, 300) }
         }
-        const stamped = g.layers.map((L) => stampChildHandler(L))
-        const first = stamped.shift()
-        return { ok: true, needFanOut: true, subtasks: first, orchPlan: stamped, reason: 'layered' }
+        return { ok: true, needFanOut: true, subtasks: ap.firstBatch, orchPlan: ap.rest, reason: ap.reason }
     }
 
     // 3b) 预算/上限裁剪（阈值在 taskBudget，转调不重造）

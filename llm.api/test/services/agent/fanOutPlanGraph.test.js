@@ -8,7 +8,7 @@
  */
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { layerFanOutPlan, planTotals } from '../../../services/agent/fanOutPlanGraph.js'
+import { layerFanOutPlan, planTotals, applyLayeredPlan } from '../../../services/agent/fanOutPlanGraph.js'
 
 const S = (id, deps) => ({ id, title: `T-${id}`, query: `q-${id}`, ...(deps ? { deps } : {}) })
 
@@ -97,5 +97,42 @@ describe('planTotals：预算吃总量不是 layer0', () => {
     test('空/坏输入全 0（不炸也不补形状）', () => {
         assert.deepEqual(planTotals([]), { total: 0, firstBatch: 0, layers: 0 })
         assert.deepEqual(planTotals(null), { total: 0, firstBatch: 0, layers: 0 })
+    })
+})
+
+describe('applyLayeredPlan：service 3a 判据纯件化（recoverCandidate 教训还债——IO 壳里的组合判据必须可穷举）', () => {
+    const stamp = (ls) => ls.map((s) => ({ ...s, handler: s.handler || 'agentChat', params: { ...(s.params || {}), query: s.query } }))
+    test('两层图 ok：firstBatch/rest 分列、totals 全树、reason=layered', () => {
+        const r = applyLayeredPlan({ subtasks: [S('a'), S('b'), S('c', ['a', 'b'])], stamp })
+        assert.equal(r.ok, true); assert.equal(r.reason, 'layered')
+        assert.deepEqual(r.firstBatch.map((s) => s.id), ['a', 'b'])
+        assert.equal(r.rest.length, 1); assert.equal(r.rest[0][0].id, 'c')
+        assert.deepEqual(r.totals, { total: 3, firstBatch: 2, layers: 2 })
+        assert.equal(r.firstBatch[0].handler, 'agentChat', 'stamp 单源生效')
+    })
+    test('deps 全空的显式单层 ⇒ reason=flat（图通过，与旧路同结果由 service 分流决定）', () => {
+        const r = applyLayeredPlan({ subtasks: [S('a', []), S('b', [])], stamp })
+        assert.equal(r.ok, true); assert.equal(r.reason, 'flat'); assert.equal(r.rest.length, 0)
+    })
+    test('graph reject ⇒ reason 带 graph: 前缀整案拒（cycle 与 unknown-dep 可归因分流）', () => {
+        assert.match(applyLayeredPlan({ subtasks: [S('a', ['b']), S('b', ['a'])], stamp }).reason, /^graph:cycle$/)
+        assert.match(applyLayeredPlan({ subtasks: [S('a'), S('b', ['zz'])], stamp }).reason, /^graph:unknown-dep$/)
+    })
+    test('budget reject 三态（service 里测不到的分支这里全测）：subtaskCeiling 超限 / single-agent / 破顶', () => {
+        const big = applyLayeredPlan({ subtasks: [S('a'), S('b'), S('c'), S('d', ['a', 'b', 'c'])], stamp, subtaskCeiling: 2 })
+        assert.equal(big.ok, false); assert.match(big.reason, /^budget:/, '4>ceiling2 必须整案拒（不修剪图）')
+        const single = applyLayeredPlan({ subtasks: [S('a'), S('b', ['a'])], stamp, rootTokenCeiling: 1, rootTokensUsed: 5 })
+        assert.equal(single.ok, false); assert.match(single.reason, /single-agent/)
+    })
+    test('perSubtaskTokenEstimate 预检在位：给了估算且开了会爆 ⇒ budget 拒（"开了会不会爆"面测到）', () => {
+        const r = applyLayeredPlan({ subtasks: [S('a'), S('b', ['a']), S('c', ['b'])], stamp, rootTokenCeiling: 10000, perSubtaskTokenEstimate: 9000 })
+        assert.equal(r.ok, false); assert.match(r.reason, /^budget:/)
+    })
+    test('stamp 缺席 ⇒ 编程错误直接抛（形状单源被绕开=分叉前夜，不静默）', () => {
+        assert.throws(() => applyLayeredPlan({ subtasks: [S('a'), S('b')] }), /stamp 必填/)
+    })
+    test('maxLayers 透传：同一 4 层链 maxLayers=4 可过（阈值是参数不是教条——与 graph 层一致）', () => {
+        const r = applyLayeredPlan({ subtasks: [S('a'), S('b', ['a']), S('c', ['b']), S('d', ['c'])], stamp, maxLayers: 4 })
+        assert.equal(r.ok, true); assert.equal(r.totals.layers, 4)
     })
 })

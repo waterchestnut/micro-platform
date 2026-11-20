@@ -156,8 +156,8 @@ describe('§8 c2 分层扇出接线面（默认关的"关"要靠守卫钉，不�
     test('service：prompt 走构建函数（注入受控）+ 图严判分支 + orchPlan 返回与落库', () => {
         const svc = linesOf('services/agent/fanOutPlannerService.js').join('\n')
         assert.match(svc, /buildSystemPrompt\(\{ layered \}\)/, 'prompt 不经函数=契约段注入失控')
-        assert.match(svc, /if \(layered && parsed\.subtasks\.some\([\s\S]{0,120}layerFanOutPlan/, '分层图严判分支不在位')
-        assert.match(svc, /orchPlan:\s*stamped/, '分层输出缺 orchPlan（后续层没落库=层推进没事实）')
+        assert.match(svc, /if \(layered && parsed\.subtasks\.some\([\s\S]{0,120}applyLayeredPlan/, '分层图严判分支不在位（判据已纯件化——3a 必须走 applyLayeredPlan 单源）')
+        assert.match(svc, /orchPlan:\s*ap\.rest/, '分层输出缺 orchPlan（后续层没落库=层推进没事实）')
         assert.match(svc, /planned\.orchPlan && planned\.orchPlan\.length/, 'orchPlan 没写进 root.params')
         assert.ok(!/budget:cap|slice\(0, ?bud/.test(svc.split('3a)')[1] ? svc.split('3a)')[1].split('3b)')[0] : ''), 'layered 分支不许出现"修剪图"动作（删上游=悬空错形）')
     })

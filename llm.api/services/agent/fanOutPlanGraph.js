@@ -18,6 +18,8 @@
  * 上层拿到的形状与今天逐字一致（现网自包含拆解零行为变化）。
  */
 
+import { checkBudget } from '../core/session/taskBudget.js'
+
 const num = (v) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : 0 }
 
 /**
@@ -97,4 +99,39 @@ export function planTotals(layers) {
     return { total: flat.length, firstBatch: (arr[0] ? arr[0].length : 0), layers: arr.length }
 }
 
-export default { layerFanOutPlan, planTotals }
+export default { layerFanOutPlan, planTotals, applyLayeredPlan }
+
+/**
+ * §8 交叉债清偿：service 3a 的"图严判+预算全总量+盖形状"整段判据抽出为纯函数
+ * （recoverCandidate 教训同族——判据住 IO 壳里=从没被执行面直接测过，3a 此前只有
+ * 源码位守卫+不可控 e2e）。转调不重算：graph 判定用 layerFanOutPlan、阈值用
+ * checkBudget 单源、形状盖 stampChildHandler 单源（注入防 import 环）。
+ * 性格：reject 一律整案（reason 带 graph:/budget: 前缀供上层信封归因），**不修剪图**。
+ * @param {Object} p
+ * @param {Array}  p.subtasks 带 id/deps 的候选层图（parsePlannerOutput 收编形状）
+ * @param {Function} p.stamp 形状盖函数（必注入——缺席即编程错误抛出，不静默）
+ * @param {Number} [p.rootTokensUsed] 树账已花费（replan 现场传）
+ * @returns {{ok:Boolean, reason:String, layers?:Array, firstBatch?:Array, rest?:Array, totals?:Object}}
+ */
+export function applyLayeredPlan({
+    subtasks, stamp, rootTokensUsed = 0,
+    subtaskCeiling, rootTokenCeiling, perSubtaskTokenEstimate = 0, degradeRatio, maxLayers = 3,
+} = {}) {
+    if (typeof stamp !== 'function') throw new Error('applyLayeredPlan: stamp 必填（形状单源被绕开=分叉前夜）')
+    const g = layerFanOutPlan({ subtasks, maxLayers })
+    if (!g.ok) return { ok: false, reason: `graph:${g.reason}` }
+    const totals = planTotals(g.layers)
+    const bud = checkBudget({
+        rootTokensUsed: Number(rootTokensUsed) > 0 ? Number(rootTokensUsed) : 0,
+        plannedSubtasks: totals.total,
+        subtaskCeiling, rootTokenCeiling,
+        perSubtaskTokenEstimate: Number(perSubtaskTokenEstimate) > 0 ? Number(perSubtaskTokenEstimate) : 0,
+        degradeRatio,
+    })
+    if (!bud.ok || bud.degrade !== 'none' || bud.allowedSubtasks < totals.total) {
+        return { ok: false, reason: `budget:${bud.degrade === 'single-agent' ? 'single-agent' : bud.reason}` }
+    }
+    const stamped = g.layers.map((L) => stamp(L))
+    const firstBatch = stamped.shift()
+    return { ok: true, layers: stamped, firstBatch, rest: stamped, totals, reason: g.layers.length > 1 ? 'layered' : 'flat' }
+}

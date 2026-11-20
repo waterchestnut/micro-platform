@@ -230,19 +230,19 @@ try {
     orch.enabled = false
 } catch (e) {
     out.error = String(e?.stack || e?.message || e).slice(0, 500)
+} finally {
+    // 清账必须在 finally：主流程中途抛错（前几轮 const 遮蔽/sweep 形状错各崩一次）
+    // 曾留 5 棵残骸树——census "探针残骸"计数位当场暴露。半途崩=脏数据的结构性坑就此闭合。
+    const fin = (t) => t ? sweep(t.rootCode || t.agentCode, t.conversationCode) : Promise.resolve(-1)
+    out.residual = {
+        on: await fin(tOn), off: await fin(tOff), rescue: await fin(tR), rpl: await fin(tRpl),
+    }
+    for (const code of [tOn, tOff, tR].map((t) => t && t.rootCode).concat(tRpl ? [tRpl.agentCode] : [])) {
+        try { await evClient.del(taskEventKey(code)) } catch { /* 键清失败不掩读数 */ }
+    }
+    try { evClient.disconnect() } catch { /* 断连失败无害 */ }
 }
-// ===== 清场 =====
-const resOn = await sweep(tOn ? tOn.rootCode : '', tOn && tOn.conversationCode)
-const resOff = tOff ? await sweep(tOff.rootCode, tOff.conversationCode) : -1
-const resR = tR ? await sweep(tR.rootCode, tR.conversationCode) : -1
-const resRpl = tRpl ? await sweep(tRpl.agentCode, tRpl.conversationCode) : -1
-// redis 事件账键清场（四树 root 码）
-for (const code of [tOn, tOff, tR].map((t) => t && t.rootCode).concat(tRpl ? [tRpl.agentCode] : [])) {
-    try { await evClient.del(taskEventKey(code)) } catch { /* 键清失败不掩读数 */ }
-}
-try { evClient.disconnect() } catch { /* 断连失败无害 */ }
-V['N7 自造行清尽（四树血统 residual=0）'] = resOn === 0 && resOff === 0 && resR === 0 && resRpl === 0
-out.residual = { on: resOn, off: resOff, rescue: resR, rpl: resRpl }
+V['N7 自造行清尽（四树血统 residual=0）'] = out.residual && out.residual.on === 0 && out.residual.off === 0 && out.residual.rescue === 0 && out.residual.rpl === 0
 out.verdict = V
 const pass = Object.values(V).filter(Boolean).length
 out.结论 = pass === EXPECTED ? `分层扇出 e2e 通过(${EXPECTED}/${EXPECTED}：层推进/时序/产出注入/全层收口/OFF 不装完成/恢复补派+帽/零残留)` : `未全真 ${pass}/${EXPECTED}——读数见上`
