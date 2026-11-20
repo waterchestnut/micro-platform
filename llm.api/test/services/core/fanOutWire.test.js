@@ -202,3 +202,17 @@ describe('§8 交叉批：追活直播补批（spawned 事件三处齐发，循�
         assert.ok(!/taskEvent|emitTaskEvents/.test(loop), 'follow 循环体绝不能 import 事件件（判发在接线位的家规）')
     })
 })
+
+describe('§8/B3 自省 handler：白名单回显 + 敏感键物理隔离', () => {
+    test('taskSelfInspect 只读回显——不 import dac 写面/不调模型/不投消息', () => {
+        const h = linesOf('services/agent/handler/taskSelfInspect.js').join('\n')
+        assert.ok(!/sendMessage|execChat|deleteMany|updateMany|\.update\(/.test(h), '自省 handler 出现写/派发/调模型面——只读红线破了')
+        assert.match(h, /handleStatus: 2/, '回执必须终态 2（探针按 handleRet 判）')
+    })
+    test('敏感配置面物理不碰（models/ucenter/kafka/redis 连接面——只判代码行，注释是纪律宣言不是引用）', () => {
+        const h = codeOnly(linesOf('services/agent/handler/taskSelfInspect.js')).join('\n')
+        assert.ok(!/apiKey|access[_-]?token|password/i.test(h), 'handler 代码触到凭据字段名')
+        assert.ok(!/c\.models|config\.models/.test(h), 'models 整节不许进回显（里面有 apiKey）')
+        assert.ok(!/ucenterConfig|kafkaConfig|redisConfig\b/.test(h.replace(/redisEventConfig/g, '')), '连接配置整节引用在位——回显面失控')
+    })
+})
