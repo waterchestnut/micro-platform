@@ -52,7 +52,13 @@ export function parsePlannerOutput(text, { maxInput = 8 } = {}) {
     for (const s of raw.slice(0, cap)) {
         const query = String(s.query || '').trim()
         if (!query) continue
-        subtasks.push({ title: String(s.title || '').trim() || query.slice(0, 30), query })
+        const item = { title: String(s.title || '').trim() || query.slice(0, 30), query }
+        // §8 deps/id 原样收编（形状与图的合法性严判**单源在 fanOutPlanGraph**，这里不判第二遍）——
+        // 不带 deps 的现网输出零新键，下游逐字兼容。
+        const id = String(s.id ?? '').trim()
+        if (id) item.id = id
+        if (s.deps !== undefined) item.deps = s.deps
+        subtasks.push(item)
     }
     // 不足 2 个可独立执行的子任务 ⇒ 这不是扇出，是一次普通回答
     if (subtasks.length < 2) return noFan('single-or-empty')
