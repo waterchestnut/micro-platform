@@ -2,6 +2,7 @@ import { test, describe } from 'node:test'
 import * as assert from 'node:assert'
 import {
     checkBudget,
+    budgetDegradedWorthy,
     DEFAULT_SUBTASK_CEILING,
     DEFAULT_ROOT_TOKEN_CEILING,
 } from '../../../../services/core/session/taskBudget.js'
@@ -77,5 +78,37 @@ describe('checkBudget', () => {
         const r = checkBudget({ rootTokensUsed: 0, plannedSubtasks: 50, subtaskCeiling: 0 })
         assert.equal(r.degrade, 'none')
         assert.equal(r.allowedSubtasks, 50)
+    })
+})
+
+/**
+ * budget_degraded 发射判据穷举（§7-3）。白名单制：新 reason 默认不发——
+ * "不知道要不要发就发"会把降级提醒刷成噪音；静态上限（subtask-ceiling）不是预算事件。
+ */
+describe('budgetDegradedWorthy', () => {
+    const worthy = budgetDegradedWorthy
+    test('checkBudget 四类预算话全发', () => {
+        for (const reason of ['over-ceiling', 'no-headroom', 'near-ceiling', 'budget-headroom']) {
+            assert.equal(worthy({ degrade: 'single-agent', reason }), true, reason)
+        }
+        assert.equal(worthy({ degrade: 'cap-subtasks', reason: 'budget-headroom' }), true)
+    })
+
+    test('调用方包装话发（budget: 前缀=replan 侧、budget-exhausted=追活闸侧——源头都是预算）', () => {
+        assert.equal(worthy({ degrade: 'single-agent', reason: 'budget:no-headroom' }), true)
+        assert.equal(worthy({ degrade: 'single-agent', reason: 'budget-exhausted' }), true)
+    })
+
+    test('静态上限不发（subtask-ceiling 是并行度不是预算；每棵超限普通树都发一发=噪音）', () => {
+        assert.equal(worthy({ degrade: 'cap-subtasks', reason: 'subtask-ceiling' }), false)
+    })
+
+    test('none/缺参/未知话不发（白名单外默认静音）', () => {
+        assert.equal(worthy({ degrade: 'none', reason: 'ok' }), false)
+        assert.equal(worthy({}), false)
+        assert.equal(worthy(), false)
+        assert.equal(worthy({ degrade: 'single-agent', reason: 'some-new-internal-word' }), false)
+        assert.equal(worthy({ degrade: 'weird-grade', reason: 'over-ceiling' }), false, // 档位不对也不发
+        )
     })
 })

@@ -92,4 +92,26 @@ export function checkBudget({
     return { ok: true, allowedSubtasks: allowed, degrade: 'none', reason: 'ok' }
 }
 
-export default { checkBudget, DEFAULT_SUBTASK_CEILING, DEFAULT_ROOT_TOKEN_CEILING, DEFAULT_DEGRADE_RATIO }
+/**
+ * budget_degraded 事件的**发射判据**（§7-3；与母本同源）。白名单不是黑名单：新出的
+ * reason 值默认不发——事件面宁缺毋滥。subtask-ceiling（静态并行上限）不发：每棵超限
+ * 普通树都响一发=噪音；budget:* 前缀（replan 侧包装）与 budget-exhausted（追活闸侧）
+ * 发——同一批 checkBudget reason 被调用方包装后的真形，分包装认源头。
+ * @param {Object} [p]
+ * @param {String} [p.degrade] checkBudget 降级档
+ * @param {String} [p.reason] checkBudget 原话或带前缀包装话
+ * @returns {Boolean} 是否应发 budget_degraded
+ */
+export function budgetDegradedWorthy({ degrade, reason } = {}) {
+    if (degrade !== 'cap-subtasks' && degrade !== 'single-agent') return false
+    const r = String(reason || '')
+    if (BUDGET_DEGRADED_REASONS.has(r)) return true
+    return r.startsWith('budget:') || r.startsWith('budget-exhausted')
+}
+
+/** 预算引起的降级 reason 白名单（与 checkBudget 出话一一对应，新增必来这登记） */
+export const BUDGET_DEGRADED_REASONS = new Set([
+    'over-ceiling', 'no-headroom', 'near-ceiling', 'budget-headroom',
+])
+
+export default { checkBudget, budgetDegradedWorthy, BUDGET_DEGRADED_REASONS, DEFAULT_SUBTASK_CEILING, DEFAULT_ROOT_TOKEN_CEILING, DEFAULT_DEGRADE_RATIO }
