@@ -243,6 +243,14 @@ export default {
              * replan 额外要求 fanOutPlanner 开着，拿不到新计划时同样如实降级 report。
              */
             autoFollow: process.env['agentTask_fanOutOrchestrationAutoFollow'] === 'true',
+            /**
+             * §8 分层扇出（自适应编排 c2）。**默认关，关时逐字现网**：planner prompt 不含 deps 契约、
+             * 即便库里存着旧 orchPlan，finalize 也强制忽略（回滚语义）。开：①prompt 注入依赖契约段；
+             * ②fanOutPlanGraph 分层严判（环/悬空/坏形状=整案不扇，**layered 不修剪图**）；
+             * ③root.params.orchPlan 落库后续层；④follow 层推进（无新调度器，复用追活通道）；
+             * ⑤autoFollow 关 + 计划未走完 ⇒ 降级 report（半树综合=谎报完成，skippedLayers 如实）。
+             */
+            layered: process.env['agentTask_fanOutOrchestrationLayered'] === 'true',
             /** 保险帽：单次 finalize 内追活 spawn 的总行数上限（裁决预算 2+1 本身有界，这帽防循环 bug） */
             followSpawnCap: Number(process.env['agentTask_fanOutOrchestrationFollowSpawnCap']) || 8,
             /**

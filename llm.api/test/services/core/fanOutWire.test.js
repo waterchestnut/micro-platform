@@ -146,3 +146,27 @@ describe('config 与 schema：默认关 + 双闸', () => {
         }
     })
 })
+
+describe('§8 c2 分层扇出接线面（默认关的"关"要靠守卫钉，不靠自觉）', () => {
+    test('conf 开关 env 驱动默认关', () => {
+        const conf = linesOf('conf/system.config.js').join('\n')
+        assert.match(conf, /layered:\s*process\.env\['agentTask_fanOutOrchestrationLayered'\]/)
+    })
+    test('service：prompt 走构建函数（注入受控）+ 图严判分支 + orchPlan 返回与落库', () => {
+        const svc = linesOf('services/agent/fanOutPlannerService.js').join('\n')
+        assert.match(svc, /buildSystemPrompt\(\{ layered \}\)/, 'prompt 不经函数=契约段注入失控')
+        assert.match(svc, /if \(layered && parsed\.subtasks\.some\([\s\S]{0,120}layerFanOutPlan/, '分层图严判分支不在位')
+        assert.match(svc, /orchPlan:\s*stamped/, '分层输出缺 orchPlan（后续层没落库=层推进没事实）')
+        assert.match(svc, /planned\.orchPlan && planned\.orchPlan\.length/, 'orchPlan 没写进 root.params')
+        assert.ok(!/budget:cap|slice\(0, ?bud/.test(svc.split('3a)')[1] ? svc.split('3a)')[1].split('3b)')[0] : ''), 'layered 分支不许出现"修剪图"动作（删上游=悬空错形）')
+    })
+    test('finalizeTask：layered 关⇒强制空（回滚语义）+ 层 spawn 走 insertSubAgentTask 同通道', () => {
+        const fin = linesOf('services/agent/handler/fanOutFinalizeTask.js').join('\n')
+        assert.match(fin, /orchPlan:\s*orchCfg\.layered === true[\s\S]{0,120}:\s*\[\]/, '缺 layered 关强制空——关开关=现网逐字不成立')
+        assert.match(fin, /spawnLayerSpecs:\s*async[\s\S]{0,240}insertSubAgentTask/, '层 spawn 不走既有通道=私造调度器（红线）')
+    })
+    test('intake：契约段与 parse 同住（prompt 纯件在可测文件里，service 全局 llm 不可 import）', () => {
+        const intake = linesOf('services/agent/fanOutIntake.js').join('\n')
+        assert.ok(intake.includes('依赖模式') && intake.includes('export function buildSystemPrompt'), 'buildSystemPrompt 不在 intake')
+    })
+})

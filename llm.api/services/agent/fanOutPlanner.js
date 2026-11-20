@@ -85,17 +85,8 @@ export function normalizeFanOutPlan({
     runnable.slice(bud.allowedSubtasks).forEach((s, j) =>
         dropped.push({ index: bud.allowedSubtasks + j, title: s.title, reason: `cap:${bud.allowedSubtasks}` }))
 
-    // 5) 盖 child handler（缺省 agentChat，不覆盖调用方显式给的 handler）
-    const normalized = keep.map((s) => ({
-        title: s.title,
-        query: s.query,
-        handler: s.handler || childHandler,
-        agentType: s.agentType || 'local',
-        params: { ...(s.params || {}), query: s.query },
-        toParentOutputKey: s.toParentOutputKey,
-        errorMode: s.errorMode || 'break',
-        ...(s.deps ? { deps: s.deps } : {}),   // 原样透传，不代表本器做了依赖调度
-    }))
+    // 5) 盖 child handler（缺省 agentChat，不覆盖调用方显式给的 handler）——共享件见 stampChildHandler
+    const normalized = stampChildHandler(keep, childHandler)
 
     return {
         mode: 'fan-out',
@@ -109,4 +100,31 @@ export function normalizeFanOutPlan({
     }
 }
 
-export default { normalizeFanOutPlan, DEFAULT_CHILD_HANDLER }
+/**
+ * @description 子任务项盖 child handler/执行形状（normalize 第 5 步的**单源件**）——
+ * §8 分层模式里后续层（orchPlan 存量）spawn 时必须走同一函数：同一项形状两处定义=D66 分叉。
+ * id/deps 住进 params（不是顶层键）：子行入库经 format 只带 params——**层行要能在库里被
+ * `params.id` 反查**，下游层拼上游产出全靠这个锚（顶层键会被 format 丢=教训"未声明静默丢"的变体）。
+ * @param {Array} subtasks 已通过可行性/预算的项（含 query）
+ * @param {String} [childHandler] 缺省执行体（agentChat）
+ * @returns {Array} buildRootTask.subtasks / buildReplanSpecs 兼容形
+ */
+export function stampChildHandler(subtasks, childHandler = DEFAULT_CHILD_HANDLER) {
+    return (subtasks || []).filter(Boolean).map((s) => ({
+        title: s.title,
+        query: s.query,
+        handler: s.handler || childHandler,
+        agentType: s.agentType || 'local',
+        params: {
+            ...(s.params || {}),
+            query: s.query,
+            ...(s.id ? { id: s.id } : {}),
+            ...(s.deps ? { deps: s.deps } : {}),
+        },
+        toParentOutputKey: s.toParentOutputKey,
+        errorMode: s.errorMode || 'break',
+        ...(s.deps ? { deps: s.deps } : {}),   // 顶层也留一份（graph/service 内存面判据用）
+    }))
+}
+
+export default { normalizeFanOutPlan, stampChildHandler, DEFAULT_CHILD_HANDLER }

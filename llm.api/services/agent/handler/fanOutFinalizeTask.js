@@ -129,6 +129,12 @@ class FanOutFinalizeTask extends BaseHandler {
                 const inserted = await insertSubAgentTask(rootCode, specs)
                 await Promise.allSettled(inserted.map((t) => execAgentTask(t)))
             },
+            // §8 层推进 spawn：与 retry/replan 同通道（insertSubAgentTask+本进程并行执行），
+            // 层行的 planRound/layerIndex 由 buildLayerSpecs 盖好——没有新调度器。
+            spawnLayerSpecs: async (specs) => {
+                const inserted = await insertSubAgentTask(rootCode, specs)
+                await Promise.allSettled(inserted.map((t) => execAgentTask(t)))
+            },
             log: logger,
             cfg: {
                 autoFollow: orchCfg.autoFollow === true,
@@ -137,6 +143,9 @@ class FanOutFinalizeTask extends BaseHandler {
                 originalQuery,
                 retryCount: Number(root.retryCount) || 0,
                 replanCount: Number(root.replanCount) || 0,
+                // §8 分层队列：**layered 关⇒强制空**（库里存着旧 orchPlan 也忽略——回滚语义逐字现网）
+                orchPlan: orchCfg.layered === true && Array.isArray(root.params?.orchPlan) ? root.params.orchPlan : [],
+                planRound: 0,
             },
         })
         // §7-3 预算降级事件：追活闸停（budgetStop）与 replan 预算拒（budgetNote）两形态都在

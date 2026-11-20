@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test'
 import * as assert from 'node:assert'
-import { parsePlannerOutput } from '../../../services/agent/fanOutIntake.js'
+import { parsePlannerOutput, buildSystemPrompt } from '../../../services/agent/fanOutIntake.js'
 
 /**
  * planner 输出解析（M4b c1a）。性格测试：一切模糊向"不扇"收——
@@ -77,5 +77,33 @@ describe('parsePlannerOutput 语义严判（模型的承诺）', () => {
             const r = parsePlannerOutput(t)
             assert.equal(r.needFanOut, false)
         }
+    })
+})
+
+describe('parsePlannerOutput §8 id/deps 收编', () => {
+    test('带 id/deps 的输出 ⇒ 原样收进 subtasks（合法性严判单源 graph）', () => {
+        const r = parsePlannerOutput('{"needFanOut":true,"subtasks":[{"id":"a","title":"A","query":"qa"},{"id":"c","title":"C","query":"qc","deps":["a"]}]}')
+        assert.equal(r.needFanOut, true)
+        assert.deepEqual(r.subtasks[0], { title: 'A', query: 'qa', id: 'a' })
+        assert.deepEqual(r.subtasks[1], { title: 'C', query: 'qc', id: 'c', deps: ['a'] })
+    })
+    test('无 deps 现网文 ⇒ 零新键（deepEqual 钉死逐字旧形状）', () => {
+        const r = parsePlannerOutput('{"needFanOut":true,"subtasks":[{"title":"A","query":"qa"},{"title":"B","query":"qb"}]}')
+        assert.deepEqual(r.subtasks[0], { title: 'A', query: 'qa' })
+        assert.equal('deps' in r.subtasks[0], false); assert.equal('id' in r.subtasks[0], false)
+    })
+})
+
+describe('buildSystemPrompt §8 契约注入面', () => {
+    test('layered 关 ⇒ 无依赖模式段（默认面零漂移）且等值缺省调用', () => {
+        const off = buildSystemPrompt({})
+        assert.ok(!off.includes('依赖模式'))
+        assert.ok(off.includes('不依赖其它子任务的结果'))
+        assert.equal(buildSystemPrompt({ layered: false }), buildSystemPrompt())
+    })
+    test('layered 开 ⇒ 前缀=关时全文（只增不改）+ 三要素在位', () => {
+        const on = buildSystemPrompt({ layered: true })
+        assert.ok(on.startsWith(buildSystemPrompt({})))
+        assert.ok(on.includes('依赖模式') && on.includes('deps') && on.includes('禁止为炫技造依赖链'))
     })
 })

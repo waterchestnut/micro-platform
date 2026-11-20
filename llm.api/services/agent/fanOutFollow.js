@@ -16,7 +16,9 @@
  *   这里只加**执行侧保险**（总 spawn 帽 + 环境给不出动作时的降级），
  *   保险不许吞掉 arbitrate 的裁决——`degrade` 只发生在"裁决要的动作**没有承接方**"：
  *   replan 无 planner / spawn 帽触顶 / 预算闸停 / 规格空转 / **§7-4：autoFollow 关时的 retry/replan**
- *   （finalize 只派发一次，悬 1=永久死悬，dev 实测 5 棵——降级 report 带原裁决审计）。
+ *   （finalize 只派发一次，悬 1=永久死悬，dev 实测 5 棵——降级 report 带原裁决审计）/
+ *   **§8：分层计划未完时的半树 synthesize**（layered-not-advanced——半棵树综合=谎报完成，
+ *   skippedLayers 如实记账；层推进本身走 spawnLayer，不是重试、不吃 retry 预算）。
  */
 
 const num = (v) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : 0 }
@@ -105,23 +107,83 @@ export function nextPlanRound(children = []) {
 }
 
 /**
+ * §8 层推进规格：orchPlan 存量项（service 侧 stampChildHandler 已盖形状）→ spawn specs。
+ * 与 buildReplanSpecs 同纪律：只带执行所需，身份交下游 format；layerIndex 进 params 做血统审计
+ * （槽键=新 agentCode，active 集天然与先代分账——层间是"新槽位"不是"重试"，计数不吃 retry 预算）。
+ * **deps 的真语义在这兑现：下游 query 拼上游产出**——不传产出的 deps 只是时序约束，设计稿
+ * "先调研 A、再基于 A 写对比"要的是 A 的正文真进 B 的输入。id/deps 住 params（库内反查锚）。
+ * upstream 读不到的 dep ⇒ 如实标注"上游未产出"（缺席不装存在，绝不静默丢依赖）。
+ */
+export function buildLayerSpecs(layer = [], { planRound = 0, layerIndex = 1, upstream = {}, maxUpstreamChars = 2000 } = {}) {
+    return (layer || []).filter((s) => s && (s.query || s.params?.query)).map((s) => {
+        const base = String(s.query || s.params?.query || '')
+        const deps = Array.isArray(s.deps) ? s.deps : (Array.isArray(s.params?.deps) ? s.params.deps : [])
+        let query = base
+        if (deps.length) {
+            const parts = deps.map((d) => {
+                const u = upstream[d]
+                const body = u && typeof u.content === 'string' && u.content.trim()
+                    ? u.content.trim().slice(0, maxUpstreamChars)
+                    : '（上游未产出，标注假设继续）'
+                return `- ${d}${u && u.title ? `（${u.title}）` : ''}: ${body}`
+            })
+            query = base + '\n\n【上游子任务产出（按依赖注入）】\n' + parts.join('\n')
+        }
+        const id = s.id || s.params?.id
+        return {
+            title: s.title,
+            agentType: s.agentType || 'local',
+            handler: s.handler || 'agentChat',
+            errorMode: s.errorMode || 'break',
+            toParentOutputKey: s.toParentOutputKey,
+            params: {
+                ...(s.params || {}),
+                query,
+                planRound, followRound: 0, layerIndex,
+                ...(id ? { id } : {}),
+                ...(deps.length ? { deps } : {}),
+            },
+        }
+    })
+}
+
+/**
  * 一步决策：给定 arbitrate 的 action 与现场计数，要不要继续 spawn、做什么、计数怎么进。
- * @returns {{act:'stop'|'spawnRetry'|'spawnReplan', reason:String, counts:{retryCount,replanCount}, degrade:(String|null)}}
+ * @param {Object} p
+ * @param {Number} [p.pendingLayers] §8 分层计划剩余未 spawn 层数（0=无分层，逐字旧行为）
+ * @returns {{act:'stop'|'spawnRetry'|'spawnReplan'|'spawnLayer', reason:String, counts:{retryCount,replanCount}, degrade:(String|null)}}
  */
 export function planFollowStep({
     action, retryCount = 0, replanCount = 0,
     autoFollow = false, plannerEnabled = false, spawned = 0, spawnCap = 8, cancelled = false,
+    pendingLayers = 0,
 } = {}) {
     const counts = { retryCount: num(retryCount), replanCount: num(replanCount) }
+    const moreLayers = num(pendingLayers) > 0
     // 用户取消优先于一切追活意图：人已喊停，预算再充裕也不许再 spawn
     if (cancelled === true) return { act: 'stop', reason: 'cancelled-by-user', counts, degrade: 'cancelled-by-user' }
     // §7-4 无承接方的裁决不许悬空：OFF 形态下 retry/replan 同样降级（终局收口），
     // synthesize/report 本就是终态动作、无"等待者"问题，degrade 保持 null。
     if (autoFollow !== true) {
         const willDangle = action === 'retry' || action === 'replan'
-        return { act: 'stop', reason: 'auto-follow-off', counts, degrade: willDangle ? 'auto-follow-off' : null }
+        // §8 第二形态：分层计划没走完而 autoFollow 关——停在 synthesize=拿半棵树谎报完成，
+        // 同样"没有承接方"（这次没承接的是"后续层"），降级 report 如实收口。
+        const halfTreeSynth = action === 'synthesize' && moreLayers
+        return {
+            act: 'stop', reason: 'auto-follow-off', counts,
+            degrade: willDangle ? 'auto-follow-off' : (halfTreeSynth ? 'layered-not-advanced' : null),
+        }
     }
-    if (action === 'synthesize' || action === 'report') return { act: 'stop', reason: `terminal:${action}`, counts, degrade: null }
+    if (action === 'synthesize') {
+        // §8 层推进：计划未完不许 synthesize——交循环 spawn 下一层（无新调度器，复用追活机制）；
+        // 推进同样吃保险帽（spawnLayer 若成环是计划 bug，cap 是第二道闸）。
+        if (moreLayers) {
+            if (num(spawned) >= num(spawnCap)) return { act: 'stop', reason: 'spawn-cap', counts, degrade: 'layer-cap' }
+            return { act: 'spawnLayer', reason: 'layer-advance', counts, degrade: null }
+        }
+        return { act: 'stop', reason: 'terminal:synthesize', counts, degrade: null }
+    }
+    if (action === 'report') return { act: 'stop', reason: `terminal:${action}`, counts, degrade: null }
     if (action === 'pending') {
         // 现场还有未终局的子行。finalize 只在 root 首次到终态时派发，正常走不到这；走到说明有外部
         // 慢子行。绝不把 root 改写回 1（orchestration 已落，B1 的 alreadyFinalized 不会二次触发——root
@@ -200,12 +262,15 @@ export function rollupAllAttemptCredits(children = []) {
  * @returns {Promise<{fin:Object, all:Array, follow:Object}>}
  */
 export async function runFollowLoop(p = {}) {
-    const { readAllChildren, spawnRetrySpecs, replanSubtasks, spawnReplanSpecs, computeFin, log = console } = p
+    const { readAllChildren, spawnRetrySpecs, replanSubtasks, spawnReplanSpecs, spawnLayerSpecs, computeFin, log = console } = p
     const cfg = p.cfg || {}
+    // §8 分层计划：orchPlan=未 spawn 的后续层队列（layered 关时接线方给空数组——循环逐字旧行为）
+    const layersQ = Array.isArray(cfg.orchPlan) ? cfg.orchPlan.filter((L) => Array.isArray(L) && L.length).map((L) => L.slice()) : []
     const follow = {
         attempted: cfg.autoFollow === true, retryCount: 0, replanCount: 0,
         spawned: 0, superseded: [], degrade: null, stopReason: 'auto-follow-off',
         budgetNote: null, // §7-3 replan 预算拒的话术留痕（budgetStop 是闸停形态，两者都归接线方裁决发射）
+        spawnedLayers: 0, // §8 层推进审计：本次 finalize 内 spawn 过的后续层数
     }
     let counts = { retryCount: num(cfg.retryCount), replanCount: num(cfg.replanCount) }
     let all = await readAllChildren()
@@ -216,12 +281,17 @@ export async function runFollowLoop(p = {}) {
         // 与 replan-no-planner/not-settled 同一原则降级 report(3)：终局如实收口，
         // 原裁决留在 reason("原裁决:retry/…")与 dispatch.needRetry——观测方看得见"该追但没追"。
         // pending 不在此列："未终局不收尾"是另一条纪律，且 dev 实测 0 命中——没账不造刀。
+        // §8 同款：分层计划没走完的 synthesize=半棵树谎报完成，没承接方（后续层没人 spawn）⇒ 降级。
         let degrade = null
         if (fin.action === 'retry' || fin.action === 'replan') {
             fin = degradeFollowToReport(fin, 'auto-follow-off')
             degrade = 'auto-follow-off'
+        } else if (fin.action === 'synthesize' && layersQ.length) {
+            fin = degradeFollowToReport(fin, 'layered-not-advanced')
+            degrade = 'layered-not-advanced'
+            follow.skippedLayers = layersQ.length
         }
-        return { fin, all, follow: { ...follow, degrade, stopReason: degrade ? 'auto-follow-off' : follow.stopReason, superseded: markSuperseded(all) } }
+        return { fin, all, follow: { ...follow, degrade, stopReason: degrade ? (degrade === 'auto-follow-off' ? 'auto-follow-off' : 'layered-not-advanced') : follow.stopReason, superseded: markSuperseded(all) } }
     }
 
     // 循环上界由 planFollowStep 的 spawnCap 保证（裁决预算 2+1 本身有界，cap 是保险不是主闸）；
@@ -234,12 +304,14 @@ export async function runFollowLoop(p = {}) {
             action: fin.action, retryCount: counts.retryCount, replanCount: counts.replanCount,
             autoFollow: true, plannerEnabled: cfg.plannerEnabled === true,
             spawned: follow.spawned, spawnCap: cfg.spawnCap || 8, cancelled,
+            pendingLayers: layersQ.length,
         })
         follow.stopReason = step.reason
         if (step.act === 'stop') {
             if (step.degrade) {
                 fin = degradeFollowToReport(fin, step.degrade)
                 follow.degrade = step.degrade
+                if (layersQ.length) follow.skippedLayers = layersQ.length // §8 没走完的层如实记账
             }
             break
         }
@@ -247,10 +319,27 @@ export async function runFollowLoop(p = {}) {
         try {
             if (step.act === 'spawnRetry') {
                 specs = buildRetrySpecs({ children: all, retryAgents: fin.dispatch.retryAgents })
+            } else if (step.act === 'spawnLayer') {
+                // §8 层推进：pop 下一层 ⇒ spawn specs（项形状由 service 侧 stampChildHandler 单源产出，
+                // layerIndex 进 params 做血统审计；槽键=新 agentCode，与 active 集天然分账）
+                const layerIdx = (cfg.layerBase || 0) + follow.spawnedLayers + 1
+                // 上游产出索引：库内行按 params.id 建锚（active 集优先取最新尝试——上游被 retry 过
+                // 就给最新成果；usable 才有正文，"上游未产出"由 buildLayerSpecs 如实标注）
+                const upstream = {}
+                for (const c of activeAttempts(all)) {
+                    const k = c.params?.id
+                    if (!k) continue
+                    const content = c.handleRet?.usable === true ? String(c.handleRet?.content || '') : ''
+                    if (!upstream[k] || content) upstream[k] = { title: c.title || '', content: content || undefined }
+                }
+                specs = buildLayerSpecs(layersQ.shift(), { planRound: round(cfg.planRound) || 0, layerIndex: layerIdx, upstream })
+                follow.pendingAfter = layersQ.length
             } else {
                 const planned = await replanSubtasks({ query: buildReplanQuery(cfg.originalQuery, fin) })
                 if (planned && planned.needFanOut) {
                     specs = buildReplanSpecs({ subtasks: planned.subtasks, planRound: nextPlanRound(all) })
+                    // §8 replan 换代：新一代若带分层计划，旧代残层作废、由新代 orchPlan 接管
+                    if (Array.isArray(planned.orchPlan)) { layersQ.length = 0; layersQ.push(...planned.orchPlan.filter((L) => Array.isArray(L) && L.length)); follow.layerPlanReset = (follow.layerPlanReset || 0) + 1 }
                 } else if (planned && String(planned.reason || '').startsWith('budget:')) {
                     // §7-3：replan 被预算闸拒（budget:* 话术）⇒ 留痕给接线方发降级事件。
                     // 循环不发事件也不 import 事件件——**判"要不要发"在 taskBudget 白名单，
@@ -268,6 +357,9 @@ export async function runFollowLoop(p = {}) {
             fin = degradeFollowToReport(fin, `${step.act}-empty`)
             follow.degrade = `${step.act}-empty`
             follow.stopReason = follow.degrade
+            if (layersQ.length || step.act === 'spawnLayer') {
+                follow.skippedLayers = layersQ.length + (step.act === 'spawnLayer' ? 1 : 0)
+            }
             break
         }
         // §5-4 追活预算闸（budgetGate 由接线方给，内部转调 taskBudget——阈值单源不在这里）：
@@ -279,11 +371,16 @@ export async function runFollowLoop(p = {}) {
                 fin = degradeFollowToReport(fin, `budget-exhausted(${gate.reason})`)
                 follow.degrade = 'budget-exhausted'
                 follow.stopReason = follow.degrade
+                // §8 闸停也要记跳过层：被拦的这层（layer 动作时 specs 即它的计划）+ 队列里的余层
+                if (layersQ.length || step.act === 'spawnLayer') {
+                    follow.skippedLayers = layersQ.length + (step.act === 'spawnLayer' ? 1 : 0)
+                }
                 break
             }
         }
         try {
-            await (step.act === 'spawnRetry' ? spawnRetrySpecs(specs) : spawnReplanSpecs(specs))
+            const act = step.act === 'spawnLayer' ? spawnLayerSpecs : (step.act === 'spawnRetry' ? spawnRetrySpecs : spawnReplanSpecs)
+            await act(specs)
         } catch (e) {
             // spawn/执行的 IO 异常也不能让 finalize 空手而归:降级 report 把失败落进 root(审计带原因)。
             // (e2e 实测教训:这一行曾在 try 外,一次依赖缺失让 root 无 orchestration、探针只能猜)
@@ -295,6 +392,7 @@ export async function runFollowLoop(p = {}) {
             break
         }
         follow.spawned += specs.length
+        if (step.act === 'spawnLayer') follow.spawnedLayers += 1
         counts = step.counts
         follow.retryCount = counts.retryCount
         follow.replanCount = counts.replanCount
@@ -334,6 +432,6 @@ function markSuperseded(all) {
 
 export default {
     latestPlanRound, activeAttempts, supersededAttempts,
-    buildRetrySpecs, buildReplanSpecs, nextPlanRound, buildReplanQuery,
+    buildRetrySpecs, buildReplanSpecs, buildLayerSpecs, nextPlanRound, buildReplanQuery,
     planFollowStep, degradeFollowToReport, rollupAllAttemptCredits, runFollowLoop, mergeCancelAware,
 }

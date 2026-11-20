@@ -66,4 +66,29 @@ export function parsePlannerOutput(text, { maxInput = 8 } = {}) {
     return { ok: true, needFanOut: true, subtasks, reason: typeof obj.reason === 'string' ? obj.reason : 'planned' }
 }
 
-export default { parsePlannerOutput }
+/**
+ * §8 分层契约段——**只在 layered=true 时注入**（默认形态与现网逐字同文，守卫用例钉死）。
+ * 性格：deps 是例外不是常态（"能并行就并行"），且每个子任务必须给单字母 id 供引用——
+ * 模型若声明了环/悬空依赖，fanOutPlanGraph 整案 reject（不修剪、不猜意图，落回普通回答）。
+ */
+const LAYERED_PROMPT_PATCH = '补充（依赖模式）：若某子任务确需另一个子任务的产出作为输入（如"先调研A、再基于A写对比"），'
+    + '给每个子任务加单字母 id，并让依赖方在 deps 数组里引用先决子任务的 id（如 {"id":"c","title":"对比","query":"...","deps":["a","b"]}）；'
+    + 'deps 为空表示可并行。无真实依赖一律不写 deps——能并行就并行，禁止为炫技造依赖链。'
+
+/**
+ * planner 系统提示词组装（住 intake=与 parsePlannerOutput 同属"planner 输出边界契约"，纯件可直测；
+ * service 挂了全局 llm 不可 import）。关时逐字现网文——不对称代价：默认面漂移=现网行为变化。
+ */
+export function buildSystemPrompt({ layered = false } = {}) {
+    const base = '你是任务规划器。判断用户请求是否适合拆成多个相互独立、可并行完成的子任务。'
+        + '无论拆或不拆，都必须只输出一个 JSON 对象，禁止输出任何其它文字：'
+        + '适合拆：{"needFanOut":true,"reason":"一句话理由","subtasks":[{"title":"短标题","query":"该子任务完整自包含的问题"},...]}；'
+        + '不适合拆：{"needFanOut":false,"reason":"一句话理由"}。'
+        + '规则：仅当请求明显包含 2 个及以上可独立完成、最终能汇总的部分才 needFanOut=true；'
+        + '每个 query 必须自包含、不依赖其它子任务的结果；闲聊、单一问题、简单查询一律 false。'
+        + '示例——请求"分别调研 A 的优缺点和 B 的优缺点，最后对比"：'
+        + '{"needFanOut":true,"reason":"A、B 两部分独立可并行","subtasks":[{"title":"调研A","query":"调研A的优缺点"},{"title":"调研B","query":"调研B的优缺点"}]}。'
+    return layered ? base + LAYERED_PROMPT_PATCH : base
+}
+
+export default { parsePlannerOutput, buildSystemPrompt }

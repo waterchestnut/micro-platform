@@ -2,7 +2,7 @@ import { test, describe } from 'node:test'
 import * as assert from 'node:assert'
 import {
     activeAttempts, supersededAttempts, buildRetrySpecs, buildReplanSpecs, nextPlanRound,
-    planFollowStep, degradeFollowToReport, rollupAllAttemptCredits, runFollowLoop, buildReplanQuery, mergeCancelAware,
+    planFollowStep, degradeFollowToReport, rollupAllAttemptCredits, runFollowLoop, buildReplanQuery, mergeCancelAware, buildLayerSpecs,
 } from '../../../services/agent/fanOutFollow.js'
 
 /**
@@ -125,6 +125,55 @@ describe('planFollowStep：预算与降级', () => {
         assert.equal(f.handleStatus, 3)
         assert.match(f.reason, /replan-no-planner.*replan/)
     })
+
+    // ===== §8 分层：计划没走完不许 synthesize，层推进吃保险帽 =====
+    test('synthesize + pendingLayers>0 ⇒ spawnLayer（layer-advance，不吃 retry 预算）', () => {
+        const s = planFollowStep({ action: 'synthesize', autoFollow: true, pendingLayers: 2 })
+        assert.equal(s.act, 'spawnLayer'); assert.equal(s.reason, 'layer-advance'); assert.equal(s.degrade, null)
+        assert.deepEqual(s.counts, { retryCount: 0, replanCount: 0 }, '层推进不是重试：计数不进 retry 预算')
+    })
+    test('synthesize + pendingLayers=0 ⇒ terminal:synthesize（逐字旧行为）', () => {
+        assert.equal(planFollowStep({ action: 'synthesize', autoFollow: true }).reason, 'terminal:synthesize')
+    })
+    test('层推进触 spawn 帽 ⇒ degrade=layer-cap（保险对 layer spawn 同样成立）', () => {
+        const s = planFollowStep({ action: 'synthesize', autoFollow: true, pendingLayers: 1, spawned: 8, spawnCap: 8 })
+        assert.equal(s.act, 'stop'); assert.equal(s.degrade, 'layer-cap')
+    })
+    test('OFF + synthesize + pendingLayers ⇒ degrade=layered-not-advanced（半树综合=谎报完成）', () => {
+        const s = planFollowStep({ action: 'synthesize', autoFollow: false, pendingLayers: 1 })
+        assert.equal(s.degrade, 'layered-not-advanced')
+        // OFF + 无分层 ⇒ 仍 null（§7-4 账不变）
+        assert.equal(planFollowStep({ action: 'synthesize', autoFollow: false, pendingLayers: 0 }).degrade, null)
+    })
+    test('buildLayerSpecs 形状：query 必填、layerIndex/planRound/followRound 盖进 params、id/deps 住 params、坏项丢', () => {
+        const specs = buildLayerSpecs(
+            [{ title: 'T', query: 'q1', handler: 'agentChat', id: 'c' }, { title: '坏' }],
+            { planRound: 2, layerIndex: 1 },
+        )
+        assert.equal(specs.length, 1)
+        assert.equal(specs[0].handler, 'agentChat')
+        assert.deepEqual({ ...specs[0].params }, { query: 'q1', planRound: 2, followRound: 0, layerIndex: 1, id: 'c' })
+        assert.equal(specs[0].id, undefined, 'id 不再住顶层（format 只带 params，库内反查锚统一 params.id）')
+        // deps 项：query 必带注入段（缺上游也标注——deps 的"缺席不装存在"），deps 进 params
+        const d = buildLayerSpecs([{ title: 'D', query: 'q2', deps: ['a'] }], { layerIndex: 1 })
+        assert.equal(d[0].params.deps.join(), 'a')
+        assert.ok(d[0].params.query.startsWith('q2') && d[0].params.query.includes('上游未产出'))
+    })
+    test('§8 deps 真语义：上游 usable 正文注入下游 query；无产出 ⇒ 如实"上游未产出"（缺席不装存在）', () => {
+        const withUp = buildLayerSpecs([{ title: 'C', query: '对比吧', deps: ['a', 'b'] }], {
+            layerIndex: 1, upstream: { a: { title: 'A', content: 'A的调研结果' }, b: {} },
+        })
+        assert.match(withUp[0].params.query, /A的调研结果/)
+        assert.match(withUp[0].params.query, /- b: （上游未产出/)
+        const noUp = buildLayerSpecs([{ title: 'C', query: '对比吧', deps: ['x'] }], { layerIndex: 1, upstream: {} })
+        assert.match(noUp[0].params.query, /上游未产出/)
+    })
+    test('上游超长截断 maxUpstreamChars（下游 prompt 不被子任务长产出撑爆）', () => {
+        const r = buildLayerSpecs([{ title: 'C', query: 'q', deps: ['a'] }], {
+            layerIndex: 1, maxUpstreamChars: 50, upstream: { a: { title: 'A', content: 'x'.repeat(500) } },
+        })
+        assert.ok(r[0].params.query.includes('x'.repeat(50)) && !r[0].params.query.includes('x'.repeat(51)))
+    })
 })
 
 describe('rollupAllAttemptCredits：花钱账含失败尝试', () => {
@@ -163,6 +212,11 @@ describe('runFollowLoop：四条路径真跑（假 deps）', () => {
                     spawned.push(...specs.map((s) => ({ kind: 'replan', title: s.title })))
                     specs.forEach((s, i) => state.push({ ...kid('rp' + i, 2), params: s.params }))
                 },
+                // §8 层推进收集口：与 retry/replan 同法真跑（假 deps 纪律）
+                spawnLayerSpecs: async (specs) => {
+                    spawned.push(...specs.map((s) => ({ kind: 'layer', title: s.title, params: s.params })))
+                    specs.forEach((s, i) => state.push({ ...kid('ly' + i, 2), params: s.params }))
+                },
                 log: { warn: () => {}, error: () => {}, info: () => {} },
                 cfg: { originalQuery: 'Q', ...cfg },
             },
@@ -197,6 +251,62 @@ describe('runFollowLoop：四条路径真跑（假 deps）', () => {
         const r4 = await runFollowLoop(h4.deps)
         assert.equal(r4.fin.action, 'pending')
         assert.equal(r4.follow.degrade, null, 'pending 不许被 §7-4 顺手改判——未终局不收尾')
+    })
+
+    // ===== §8 分层：循环真跑 =====
+    test('ON + 层队列：层0 全成 ⇒ spawnLayer 真推进，推进后全成才 synthesize', async () => {
+        const orchPlan = [[{ title: '汇总', query: 'sum', handler: 'agentChat', id: 'c', deps: ['a'] }]]
+        const h = harness({ all: [kid('a', 2)], action: ['synthesize', 'synthesize'], cfg: { autoFollow: true, orchPlan } })
+        const r = await runFollowLoop(h.deps)
+        const ly = h.spawned.filter((s) => s.kind === 'layer')
+        assert.equal(ly.length, 1, '下一层被 spawn')
+        assert.equal(ly[0].params.layerIndex, 1)
+        assert.equal(ly[0].params.followRound, 0)
+        assert.equal(r.follow.spawnedLayers, 1)
+        assert.equal(r.follow.spawned, 1, '层行计入总 spawn 帽')
+        assert.equal(r.fin.action, 'synthesize', '队列走完后才 terminal')
+        assert.equal(r.follow.degrade, null)
+    })
+    test('ON + 两层队列连续推进：layerIndex 递增、终局 synthesize', async () => {
+        const orchPlan = [
+            [{ title: 'L1', query: 'q1', handler: 'agentChat' }],
+            [{ title: 'L2', query: 'q2', handler: 'agentChat' }],
+        ]
+        const h = harness({ all: [kid('a', 2)], action: ['synthesize', 'synthesize', 'synthesize'], cfg: { autoFollow: true, orchPlan } })
+        const r = await runFollowLoop(h.deps)
+        assert.equal(r.follow.spawnedLayers, 2)
+        assert.deepEqual(h.spawned.filter((s) => s.kind === 'layer').map((s) => s.params.layerIndex), [1, 2])
+    })
+    test('OFF + synthesize + 层队列 ⇒ 降级 report(3) 不半树综合；skippedLayers 如实', async () => {
+        const orchPlan = [[{ title: 'L1', query: 'q1' }], [{ title: 'L2', query: 'q2' }]]
+        const h = harness({ all: [kid('a', 2)], action: ['synthesize'], cfg: { autoFollow: false, orchPlan } })
+        const r = await runFollowLoop(h.deps)
+        assert.equal(r.fin.action, 'report')
+        assert.equal(r.fin.handleStatus, 3)
+        assert.equal(r.follow.degrade, 'layered-not-advanced')
+        assert.equal(r.follow.skippedLayers, 2, '没跑的层数如实记账——不假装计划完成')
+        assert.equal(r.follow.spawned, 0)
+    })
+    test('ON + 预算闸停在层推进 ⇒ budget-exhausted + skippedLayers，绝不裸预算 spawn', async () => {
+        const orchPlan = [[{ title: 'L1', query: 'q1' }]]
+        const deny = async () => ({ allow: false, degrade: 'single-agent', reason: 'budget: token 天花板已破', allowedSubtasks: 0 })
+        const h = harness({ all: [kid('a', 2)], action: ['synthesize', 'synthesize'], cfg: { autoFollow: true, orchPlan }, budgetGate: deny })
+        const r = await runFollowLoop(h.deps)
+        assert.equal(r.follow.degrade, 'budget-exhausted')
+        assert.equal(r.fin.action, 'report')
+        assert.equal(r.follow.skippedLayers, 1)
+        assert.deepEqual(h.spawned.filter((s) => s.kind === 'layer'), [], '闸在 spawn 前')
+    })
+    test('replan 换代带新 orchPlan ⇒ 旧残层作废接管（layerPlanReset 审计）', async () => {
+        const h = harness({
+            all: [boom('a')], action: ['replan', 'synthesize'],
+            cfg: { autoFollow: true, plannerEnabled: true, orchPlan: [[{ title: '旧残层', query: 'old' }]] },
+            replanPlan: { needFanOut: true, subtasks: [{ title: 'N', query: 'n1' }], orchPlan: [[{ title: '新层', query: 'n2' }]] },
+        })
+        const r = await runFollowLoop(h.deps)
+        assert.equal(r.follow.layerPlanReset, 1)
+        const ly = h.spawned.filter((s) => s.kind === 'layer')
+        assert.equal(ly.length, 1); assert.equal(ly[0].title, '新层', '接的是新代计划，旧残层作废')
     })
 
     test('retry 一轮后全成 ⇒ synthesize 收尾；superseded 记账；计数持久', async () => {

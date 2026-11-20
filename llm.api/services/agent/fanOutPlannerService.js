@@ -17,8 +17,10 @@
  *   的版本**，同 B1 kafka 派发的前提）；调试/e2e=manual + 本进程 execAgentTask。
  */
 import { OpenAI } from 'openai'
-import { parsePlannerOutput } from './fanOutIntake.js'
-import { normalizeFanOutPlan } from './fanOutPlanner.js'
+import { parsePlannerOutput, buildSystemPrompt } from './fanOutIntake.js'
+import { normalizeFanOutPlan, stampChildHandler } from './fanOutPlanner.js'
+import { layerFanOutPlan, planTotals } from './fanOutPlanGraph.js'
+import { checkBudget } from '../core/session/taskBudget.js'
 import { buildRootTask } from '../core/session/taskQueueComposer.js'
 import { addAgentTask } from '../core/agentTask.js'
 import { buildIdemFilter, pickIdempotentHit, isDuplicateKeyError } from '../core/session/taskIdempotency.js'
@@ -31,23 +33,23 @@ const config = llm.config
 /** 用户请求进 planner 前的截断上限（planner 只需要任务结构，不需要把 5 万字原文再吃一遍） */
 const MAX_QUERY_CHARS = 4000
 
-const SYSTEM_PROMPT = '你是任务规划器。判断用户请求是否适合拆成多个相互独立、可并行完成的子任务。'
-    + '无论拆或不拆，都必须只输出一个 JSON 对象，禁止输出任何其它文字：'
-    + '适合拆：{"needFanOut":true,"reason":"一句话理由","subtasks":[{"title":"短标题","query":"该子任务完整自包含的问题"},...]}；'
-    + '不适合拆：{"needFanOut":false,"reason":"一句话理由"}。'
-    + '规则：仅当请求明显包含 2 个及以上可独立完成、最终能汇总的部分才 needFanOut=true；'
-    + '每个 query 必须自包含、不依赖其它子任务的结果；闲聊、单一问题、简单查询一律 false。'
-    + '示例——请求"分别调研 A 的优缺点和 B 的优缺点，最后对比"：'
-    + '{"needFanOut":true,"reason":"A、B 两部分独立可并行","subtasks":[{"title":"调研A","query":"调研A的优缺点"},{"title":"调研B","query":"调研B的优缺点"}]}。'
+/**
+ * planner 提示词已迁 `fanOutIntake.buildSystemPrompt`（纯件可直测，service 挂全局 llm）——
+ * §8 分层契约段只在 layered=true 注入，关时逐字现网。
+ */
 
 /**
  * @description 只跑"判定+拆解"（不发 root 不入队）——`planFanOutFromRequest` 与 finalize 的 replan 共用这台拆解机
  * @param {Object} p
  * @param {String} p.query 给 planner 的请求文本（replan 时由调用方拼上"上一代全败"的提示）
  * @param {Number} [p.subtaskCeiling] 覆盖配置上限（replan 可收窄）
+ * @param {Number} [p.rootTokensUsed] §7-3 预算运行时化：该 root 已花费（首建不传=0 走缺省；replan 必须传现场树账）
+ * @param {Number} [p.rootTokenCeiling] 预算天花板（缺省吃 taskBudget 单源 100 万，conf 可覆盖）
+ * @param {Number} [p.perSubtaskTokenEstimate] 单子任务预估（给了才做"开了会不会爆"预检；缺省不启用）
+ * @param {Number} [p.degradeRatio] 逼近天花板降级比（缺省 0.85 单源）
  * @returns {Promise<{ok:Boolean, needFanOut:Boolean, subtasks:Array, reason:String}>}
  */
-export async function planFanOutSubtasks({ query, subtaskCeiling } = {}) {
+export async function planFanOutSubtasks({ query, subtaskCeiling, rootTokensUsed, rootTokenCeiling, perSubtaskTokenEstimate, degradeRatio } = {}) {
     const cfg = config.agentTask?.fanOutPlanner || {}
     if (cfg.enabled !== true) return { ok: false, needFanOut: false, subtasks: [], reason: 'disabled' }
     const q = String(query || '').trim()
@@ -55,6 +57,9 @@ export async function planFanOutSubtasks({ query, subtaskCeiling } = {}) {
 
     const llmConfig = (config.models || {})[cfg.model || 'relay_common_low']
     if (!llmConfig?.apiKey || !llmConfig?.baseURL) return { ok: false, needFanOut: false, subtasks: [], reason: 'planner-model-missing' }
+
+    // §8 分层：契约注入与判据都吃 fanOutOrchestration.layered（关时 prompt 逐字现网、图判不跑）
+    const layered = config.agentTask?.fanOutOrchestration?.layered === true
 
     // 1) 低档裸调用：短超时 + 少重试（planner 卡住＝拖垮交互，921s 教训在 llmChat.js:24-27 写着）
     let text = ''
@@ -69,7 +74,7 @@ export async function planFanOutSubtasks({ query, subtaskCeiling } = {}) {
         const ret = await openai.chat.completions.create({
             model: llmConfig.model,
             messages: [
-                { role: 'system', content: SYSTEM_PROMPT },
+                { role: 'system', content: buildSystemPrompt({ layered }) },
                 { role: 'user', content: q.slice(0, MAX_QUERY_CHARS) + (q.length > MAX_QUERY_CHARS ? '\n（原文过长，已截断）' : '') },
             ],
             max_tokens: Number(cfg.maxTokens) > 0 ? Number(cfg.maxTokens) : 512,
@@ -89,7 +94,29 @@ export async function planFanOutSubtasks({ query, subtaskCeiling } = {}) {
         return { ok: parsed.ok, needFanOut: false, subtasks: [], reason: parsed.reason, plannerRaw: text.slice(0, 300) }
     }
 
-    // 3) 预算/上限裁剪（阈值在 taskBudget，转调不重造）
+    // 3a) §8 分层路径（layered 开且模型真声明了 deps）：图严判 ⇒ 预算吃全树总量（**不修剪图**——
+    // 删上游=下游悬空错形，超限整案不扇交回普通回答）。无 deps/单层输出走 3b 旧路，逐字现网。
+    if (layered && parsed.subtasks.some((s) => s.deps !== undefined)) {
+        const g = layerFanOutPlan({ subtasks: parsed.subtasks })
+        if (!g.ok) {
+            return { ok: true, needFanOut: false, subtasks: [], reason: `graph:${g.reason}`, plannerRaw: text.slice(0, 300) }
+        }
+        const totals = planTotals(g.layers)
+        const bud = checkBudget({
+            rootTokensUsed: Number(rootTokensUsed) > 0 ? Number(rootTokensUsed) : 0,
+            plannedSubtasks: totals.total,
+            subtaskCeiling: subtaskCeiling ?? cfg.subtaskCeiling,
+            rootTokenCeiling, perSubtaskTokenEstimate, degradeRatio,
+        })
+        if (!bud.ok || bud.degrade !== 'none' || bud.allowedSubtasks < totals.total) {
+            return { ok: true, needFanOut: false, subtasks: [], reason: `budget:${bud.degrade === 'single-agent' ? 'single-agent' : bud.reason}`, plannerRaw: text.slice(0, 300) }
+        }
+        const stamped = g.layers.map((L) => stampChildHandler(L))
+        const first = stamped.shift()
+        return { ok: true, needFanOut: true, subtasks: first, orchPlan: stamped, reason: 'layered' }
+    }
+
+    // 3b) 预算/上限裁剪（阈值在 taskBudget，转调不重造）
     const plan = normalizeFanOutPlan({ subtasks: parsed.subtasks, subtaskCeiling: subtaskCeiling ?? cfg.subtaskCeiling })
     if (plan.mode !== 'fan-out') {
         return { ok: true, needFanOut: false, subtasks: [], reason: `budget:${plan.reason}`, plannerRaw: text.slice(0, 300) }
@@ -133,7 +160,7 @@ export async function planFanOutFromRequest({ query, conversationCode, operator,
     if (!planned.needFanOut) {
         return { fanOut: false, reason: planned.reason, plannerOk: planned.ok, plannerRaw: planned.plannerRaw }
     }
-    const plan = { subtasks: planned.subtasks, reason: planned.reason }
+    const plan = { subtasks: planned.subtasks, reason: planned.reason, orchPlan: planned.orchPlan || null }
 
     // 4) 成形入库（orchestrated:true 是 finalize 的显式声明，缺了 B1 永不触发）
     const root = buildRootTask({
@@ -151,6 +178,9 @@ export async function planFanOutFromRequest({ query, conversationCode, operator,
     })
     if (cfg.synthesisExecOptions) root.params = { ...root.params, synthesisExecOptions: cfg.synthesisExecOptions }
     if (idemKey) root.params = { ...root.params, idemKey } // 幂等键住 params.idemKey（索引字段），root 行永久占键
+    // §8 未 spawn 的后续层落库（params Mixed 已声明面，无新列）——层推进的"计划事实"住库里，
+    // 进程死在层间，recover/finalize 重派时按 root.params.orchPlan 续（与 orchestration 同源思路）。
+    if (planned.orchPlan && planned.orchPlan.length) root.params = { ...root.params, orchPlan: planned.orchPlan }
     try {
         await addAgentTask(root)
     } catch (e) {
@@ -163,8 +193,7 @@ export async function planFanOutFromRequest({ query, conversationCode, operator,
     }
     // M1-c 刀1：受理即开段——task_queued + subtask_spawned 两个里程碑进 root 事件账
     // （flag 关/redis 不可用 ⇒ emitTaskEvents 内部静默 no-op，主流程零变化）。
-    // agentCode 在 addAgentTask 的 format 里生成、title 在 plan.subtasks 里——按序 zip
-    // （format 就地改写把 root.subAgents 换成 simpleSubs，title 不在行数据里——母本 e2e 实锤）。
+    // agentCode 在 addAgentTask 的 format 里生成、title 在 plan.subtasks 里——按序 zip（两处同源同序）。
     await emitTaskEvents({
         rootCode: root.agentCode,
         events: [
@@ -172,7 +201,7 @@ export async function planFanOutFromRequest({ query, conversationCode, operator,
             { type: 'subtask_spawned', payload: { rootCode: root.agentCode, subtasks: (root.subAgents || []).map((s, i) => ({ agentCode: s.agentCode, title: plan.subtasks?.[i]?.title || '' })) } },
         ],
     })
-    return { fanOut: true, reason: plan.reason, rootCode: root.agentCode, subtasks: plan.subtasks }
+    return { fanOut: true, reason: plan.reason, rootCode: root.agentCode, subtasks: plan.subtasks, layered: !!(plan.orchPlan && plan.orchPlan.length) }
 }
 
 /**
