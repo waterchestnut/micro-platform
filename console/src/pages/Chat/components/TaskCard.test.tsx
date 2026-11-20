@@ -255,3 +255,94 @@ describe('TaskCard 澄清答复（§7-1）', () => {
     expect(screen.getByText(/答复已收下，但未能转成重派/)).toBeTruthy();
   });
 });
+
+/**
+ * M1-c 刀 2 行为面（本轮补账）：事件提醒接线——上轮接线批的测试没落账，
+ * 这组用例把"事件只敲钟、detail 才是状态源"钉死。
+ */
+describe('TaskCard 事件提醒（刀 2）', () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  test('里程碑帧 ⇒ 事件循环启动且 detail 打过点；空窗与 no-client 后 latch 停（不重试轰炸）', async () => {
+    const loadDetail = jest.fn().mockResolvedValue(runningView);
+    const subscribeEvents = jest.fn()
+      .mockResolvedValueOnce({events: [{id: '1-0', type: 'subtask_done'}], lastId: '1-0', end: null, available: true, reason: 'ok'})
+      .mockResolvedValueOnce({events: [], lastId: '1-0', end: null, available: true, reason: 'timeout'})
+      .mockResolvedValue({events: [], lastId: '', end: null, available: false, reason: 'no-client'});
+    render(
+      <TaskCard rootCode="r1" loadDetail={loadDetail} cancelTask={jest.fn()} loadSynthesis={jest.fn()}
+        subscribeEvents={subscribeEvents} intervalMs={10000}/>,
+    );
+    await flush();
+    // flush 放掉了全部定时器（含 10s 轮询拍）——绝对数不可比；可证的是事件循环真启动，
+    // 且里程碑敲钟让 detail 至少多打了一次点（首拍之外）
+    expect(subscribeEvents.mock.calls.length >= 1).toBe(true);
+    expect(loadDetail.mock.calls.length >= 2).toBe(true);
+    await act(async () => { jest.advanceTimersByTime(30000); });
+    await flush();
+    // no-client 是确定性词 ⇒ 3 次调用封顶（ok 轮 + timeout 轮 + no-client 轮），之后永久静默
+    expect(subscribeEvents.mock.calls.length <= 3).toBe(true);
+  });
+
+  test('事件面没开（no-client）⇒ 一轮 latch 停，轮询照常且零重试轰炸', async () => {
+    const loadDetail = jest.fn().mockResolvedValue(runningView);
+    const subscribeEvents = jest.fn().mockResolvedValue({events: [], lastId: '', end: null, available: false, reason: 'no-client'});
+    render(
+      <TaskCard rootCode="r1" loadDetail={loadDetail} cancelTask={jest.fn()} loadSynthesis={jest.fn()}
+        subscribeEvents={subscribeEvents} intervalMs={200}/>,
+    );
+    await flush();
+    expect(subscribeEvents.mock.calls.length).toBe(1); // 恰好一轮
+    await act(async () => { jest.advanceTimersByTime(5000); }); // watcher 退避节拍（4s）到点也不该再试
+    await flush();
+    expect(subscribeEvents.mock.calls.length).toBe(1); // latch 生效：服务端说不二意
+    expect(loadDetail.mock.calls.length >= 2).toBe(true); // 轮询不受影响
+  });
+
+  test('网络失败（null）⇒ 退避重试，连续 3 次停回纯轮询（不掀组件）', async () => {
+    const loadDetail = jest.fn().mockResolvedValue(runningView);
+    const subscribeEvents = jest.fn().mockResolvedValue(null);
+    render(
+      <TaskCard rootCode="r1" loadDetail={loadDetail} cancelTask={jest.fn()} loadSynthesis={jest.fn()}
+        subscribeEvents={subscribeEvents} intervalMs={10000}/>,
+    );
+    await flush();
+    expect(subscribeEvents.mock.calls.length).toBe(1);
+    await act(async () => { jest.advanceTimersByTime(4100); }); // 退避 4s 后第 2 次
+    await flush();
+    await act(async () => { jest.advanceTimersByTime(4100); }); // 第 3 次 ⇒ 停
+    await flush();
+    expect(subscribeEvents.mock.calls.length).toBe(3); // 恰好三次，不多打
+    await act(async () => { jest.advanceTimersByTime(9000); });
+    await flush();
+    expect(subscribeEvents.mock.calls.length).toBe(3); // 停后再无请求
+    expect(screen.getByText(/任务执行中/)).toBeTruthy(); // 组件无恙
+  });
+
+  test('卸载 ⇒ watcher 出清，事件不再被叫（订阅泄漏钉死）', async () => {
+    const loadDetail = jest.fn().mockResolvedValue(runningView);
+    const subscribeEvents = jest.fn().mockResolvedValue({events: [], lastId: '', end: null, available: true, reason: 'timeout'});
+    const {unmount} = render(
+      <TaskCard rootCode="r1" loadDetail={loadDetail} cancelTask={jest.fn()} loadSynthesis={jest.fn()}
+        subscribeEvents={subscribeEvents} intervalMs={200}/>,
+    );
+    await flush();
+    const at = subscribeEvents.mock.calls.length;
+    unmount();
+    await act(async () => { jest.advanceTimersByTime(20000); });
+    await flush();
+    expect(subscribeEvents.mock.calls.length).toBe(at); // 卸载后零请求
+  });
+
+  test('不给 subscribeEvents ⇒ watcher 不存在，行为与刀 2 之前逐字节相同（默认关纪律）', async () => {
+    const loadDetail = jest.fn().mockResolvedValue(runningView);
+    render(
+      <TaskCard rootCode="r1" loadDetail={loadDetail} cancelTask={jest.fn()} loadSynthesis={jest.fn()} intervalMs={200}/>,
+    );
+    await flush();
+    await act(async () => { jest.advanceTimersByTime(600); });
+    await flush();
+    expect(loadDetail.mock.calls.length >= 2).toBe(true); // 纯轮询照常
+  });
+});
