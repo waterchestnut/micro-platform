@@ -47,3 +47,20 @@ test('/runStats 有身份 ⇒ 200，字段包含闸、抢救表与停机状态',
     assert.equal(typeof d.shutdown.closing, 'boolean', '停机状态必须是布尔：运维要能不看代码就判断进程是否正在关闭')
     assert.ok(typeof d.archiving === 'number', 'archiving 必须是数字：闸关着时它是抢救能力的唯一可见证据')
 })
+
+test('/runStats credits 计价面：configured/pricedActive/effective/issues 四件套在账（汇率批上线的确认面）', async (t) => {
+    const app = await build(t)
+    const res = await app.inject({
+        method: 'POST', url: '/core/chat/runStats',
+        headers: {'user-info': ui}, payload: {},
+    })
+    const d = JSON.parse(res.payload).data
+    const cw = d.creditsWeights
+    assert.ok(cw && typeof cw === 'object', `creditsWeights 面缺席：${JSON.stringify(d).slice(0, 200)}`)
+    assert.equal(typeof cw.configured, 'boolean', '配没配权重必须是布尔——priced 的因')
+    assert.equal(typeof cw.pricedActive, 'boolean', '归一后是否生效必须是布尔——priced 的果')
+    assert.ok(Array.isArray(cw.issues), '坏项清单必须是数组：剔了什么要能查到，不静默')
+    // 测试环境未配权重 ⇒ 两面一致地"未计价"（configured=false 且 pricedActive=false）
+    assert.equal(cw.configured, false)
+    assert.equal(cw.pricedActive, false)
+})

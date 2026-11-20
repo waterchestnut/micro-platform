@@ -4,6 +4,7 @@ import {
     computeCredits,
     rollupCredits,
     buildUsageCreditsFields,
+    normalizeCreditWeights,
 } from '../../../../services/core/session/creditMeter.js'
 
 /**
@@ -56,6 +57,44 @@ describe('computeCredits', () => {
 
     test('零输入 ⇒ credits 0', () => {
         assert.equal(computeCredits({}).credits, 0)
+    })
+})
+
+describe('normalizeCreditWeights（坏项剔除，配错不装计价）', () => {
+    test('干净表原样通过；0 是合法语义（该项不计）不是坏值', () => {
+        const r = normalizeCreditWeights({inputWeight: 1, outputWeight: 4, toolCallCost: 0,
+            tierWeights: {qwen: {input: 0.8, output: 3}}})
+        assert.deepEqual(r.issues, [])
+        assert.equal(r.weights.outputWeight, 4)
+        assert.equal(r.weights.toolCallCost, 0)
+        assert.equal(r.weights.tierWeights.qwen.input, 0.8)
+    })
+    test('负数/NaN/字符串逐项剔除并点名；好项保留', () => {
+        const r = normalizeCreditWeights({inputWeight: -2, outputWeight: 'x', toolCallCost: 2})
+        assert.equal(r.weights.inputWeight, undefined)
+        assert.equal(r.weights.outputWeight, undefined)
+        assert.equal(r.weights.toolCallCost, 2)
+        assert.equal(r.issues.length, 2)
+    })
+    test('坏档剔档不连坐好档；tierWeights 非对象记 issue', () => {
+        const r = normalizeCreditWeights({tierWeights: {good: {input: 1, output: 2}, bad: {input: -1}}})
+        assert.ok(r.weights.tierWeights.good)
+        assert.ok(!r.weights.tierWeights.bad)
+        assert.match(r.issues.join(), /tierWeights\.bad/)
+        assert.equal(normalizeCreditWeights({tierWeights: 'junk'}).weights, null)
+    })
+    test('非对象/坏 JSON 串 ⇒ weights=null（退化计数，不炸不猜）', () => {
+        assert.equal(normalizeCreditWeights(undefined).weights, null)
+        assert.equal(normalizeCreditWeights('[1,2]').weights, null)
+        assert.equal(normalizeCreditWeights('{"a":').weights, null)
+        assert.deepEqual(normalizeCreditWeights(undefined).issues, [])
+    })
+    test('computeCredits 吃坏权重：坏项不参与、priced 只认真生效的项（负 outputWeight 不许点亮计价）', () => {
+        const r = computeCredits({promptTokens: 10, completionTokens: 5, weights: {outputWeight: -3}})
+        assert.equal(r.priced, false, '剔完只剩退化权重 ⇒ 未计价')
+        assert.equal(r.credits, 15)
+        const r2 = computeCredits({promptTokens: 10, completionTokens: 5, weights: {outputWeight: -3, toolCallCost: 2}})
+        assert.equal(r2.priced, true, 'toolCallCost 是合法项 ⇒ 计价生效')
     })
 })
 

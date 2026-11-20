@@ -25,6 +25,48 @@ const FALLBACK_WEIGHTS = {
 const num = (v) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : 0 }
 
 /**
+ * 权重表的归一校验（坏项剔除并如实列出——"配错不炸启动、也不静默当真"）：
+ * - 数值项（inputWeight/outputWeight/toolCallCost/sandboxSecondCost）：有限数且 >=0
+ *   （0 是合法语义=该项不计，负数/NaN/字符串是坏项 ⇒ 剔除并记 issue）；
+ * - tierWeights：每档 {input,output} 同规则；档名不对照 llmModel 名录（family 可扩展，
+ *   这里只管形状不管拼写——认不出的档名在 computeCredits 查不到自然不生效）；
+ * - 非对象输入（含 JSON.parse 失败的残骸）⇒ weights=null（退化纯 token 计数）。
+ * @param {Object|string|null} raw
+ * @returns {{weights: Object|null, issues: String[]}}
+ */
+export function normalizeCreditWeights(raw) {
+    const issues = []
+    let src = raw
+    if (typeof src === 'string') {
+        try { src = JSON.parse(src) } catch { return {weights: null, issues: ['weights 不是合法 JSON']} }
+    }
+    if (!src || typeof src !== 'object' || Array.isArray(src)) {
+        return {weights: null, issues: src === undefined ? [] : ['weights 不是对象']}
+    }
+    const ok = (v) => Number.isFinite(Number(v)) && Number(v) >= 0
+    const w = {}
+    for (const k of ['inputWeight', 'outputWeight', 'toolCallCost', 'sandboxSecondCost']) {
+        if (src[k] === undefined) continue
+        if (ok(src[k])) w[k] = Number(src[k])
+        else issues.push(`坏项已剔除: ${k}=${JSON.stringify(src[k])}`)
+    }
+    if (src.tierWeights && typeof src.tierWeights === 'object' && !Array.isArray(src.tierWeights)) {
+        const tw = {}
+        for (const [tier, v] of Object.entries(src.tierWeights)) {
+            if (v && typeof v === 'object' && ok(v.input ?? 0) && ok(v.output ?? 0)) {
+                tw[tier] = {input: Number(v.input ?? 0), output: Number(v.output ?? 0)}
+            } else {
+                issues.push(`坏档已剔除: tierWeights.${tier}`)
+            }
+        }
+        if (Object.keys(tw).length) w.tierWeights = tw
+    } else if (src.tierWeights !== undefined) {
+        issues.push('坏项已剔除: tierWeights 不是对象')
+    }
+    return {weights: Object.keys(w).length ? w : null, issues}
+}
+
+/**
  * @description 把一次调用/一个子任务的消耗折算成规范化 credit 单位
  * @param {Object} p 参数
  * @param {Number} [p.promptTokens] 输入 token
@@ -32,7 +74,7 @@ const num = (v) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n
  * @param {String} [p.modelTier] 模型档（llmModel family，如 common/qwen/qwen_vl）；可选
  * @param {Number} [p.toolCalls] 工具调用次数（附加消耗，需 weights 给了 toolCallCost 才计）
  * @param {Number} [p.sandboxSeconds] 沙箱占用秒（同上）
- * @param {Object} [p.weights] 注入权重（缺省退化为纯 token 计数）
+ * @param {Object} [p.weights] 注入权重（内部先归一：坏项剔除；缺省退化为纯 token 计数）
  * @returns {{credits:Number, priced:Boolean, parts:Object}} credits 与明细
  * @remarks `priced:false` 表示"这次没配价，credits 只是 token 计数，不能当钱"。
  */
@@ -41,7 +83,8 @@ export function computeCredits({
     toolCalls = 0, sandboxSeconds = 0,
     weights,
 } = {}) {
-    const w = {...FALLBACK_WEIGHTS, ...(weights || {})}
+    const {weights: clean} = normalizeCreditWeights(weights)
+    const w = {...FALLBACK_WEIGHTS, ...(clean || {})}
     const tierW = (modelTier && w.tierWeights && w.tierWeights[modelTier]) || null
     const iw = tierW ? num(tierW.input) : num(w.inputWeight)
     const ow = tierW ? num(tierW.output) : num(w.outputWeight)

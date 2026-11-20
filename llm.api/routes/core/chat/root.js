@@ -14,6 +14,7 @@ import {decideOverlap, overlapNote} from '../../../services/core/session/runOver
 import {decideQueueOnOverlap, decideQueueOnStaleOpenRun} from '../../../services/core/session/turnScheduler.js'
 import {decideTaskAdmission, rejectQueueFull} from '../../../services/core/session/taskAdmission.js'
 import {buildIdemFilter, pickIdempotentHit, isDuplicateKeyError} from '../../../services/core/session/taskIdempotency.js'
+import {normalizeCreditWeights} from '../../../services/core/session/creditMeter.js'
 import {decideFanOutEntry} from '../../../services/core/session/fanOutEntry.js'
 import {buildSerializedTurnTask} from '../../../services/core/session/taskQueueComposer.js'
 import {rejectResponse} from '../../../services/core/session/runGate.js'
@@ -1349,6 +1350,20 @@ export default async function (fastify, opts) {
                     keyPrefix: llm.config.stream?.resume?.redis?.keyPrefix,
                 },
             },
+            /**
+             * credits 计价面（M6 续刀，母本 72adb82 移植）。"看不见就等于没有"家族：账上每条
+             * llmUsage 都写着 credits/creditsPriced，但当前权重到底是什么、有没有坏项此前无处可查。
+             * normalizeCreditWeights 单源（与落账口径同一个函数，两处解读必分叉）。
+             */
+            creditsWeights: (() => {
+                const n = normalizeCreditWeights(llm.config.credits?.weights)
+                return {
+                    configured: llm.config.credits?.weights !== undefined,
+                    pricedActive: n.weights !== null,
+                    effective: n.weights,
+                    issues: n.issues,
+                }
+            })(),
         }
     })
 }
