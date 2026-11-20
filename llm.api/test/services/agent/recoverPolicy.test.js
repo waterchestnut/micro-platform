@@ -3,6 +3,7 @@ import * as assert from 'node:assert'
 import {
     RECOVER_MODES, DEFAULT_RECOVER_MODE, resolveRecoverMode, recoverAction,
     DISPATCH_AGENT_TYPES, DEFAULT_RECOVER_WINDOW_MS, DEFAULT_RECOVER_STUCK_MS, resolveRecoverWindow, buildRecoverFilter,
+    buildOrchFinalizePendingFilter, orchRescueAllowed,
     recoverDirectAllowed, skillWriteIdempotencyBound,
 } from '../../../services/agent/recoverPolicy.js'
 
@@ -239,5 +240,40 @@ describe('skillWriteIdempotencyBound（解锁输入：两个事实缺一不可�
         assert.equal(skillWriteIdempotencyBound(), false)
         assert.equal(skillWriteIdempotencyBound({limits: {skillWriteIdempotency: {enabled: true, writeTools: 'doc_api/*'}}}), false,
             '名单必须是数组：逗号串没在 conf 切过就是没接线，不许放行')
+    })
+})
+
+describe('§8/B1 buildOrchFinalizePendingFilter：收尾丢失补派判据', () => {
+    const NOW = new Date('2026-11-20T12:00:00Z').getTime()
+    test('形状四条：orchestrated root + 终态2/3 + orchestration 缺席 + 窗口内', () => {
+        const f = buildOrchFinalizePendingFilter({now: NOW, stuckMs: 30 * 60000, windowMs: 6 * 3600 * 1000})
+        assert.equal(f.orchestrated, true)
+        assert.equal(f.agentRole, 'root')
+        assert.deepEqual(f.handleStatus, {$in: [2, 3]}, '只扫终态——root=1 是"可能还在跑"，误补派=污染在途树')
+        assert.equal(f['handleRet.orchestration'], null, 'mongo null 同抓"缺席"——finalize 没写过就是候选')
+        assert.deepEqual(f['params.orchPlan.0'], {$exists: true}, 'v1 只救分层层间死——B1 前年代"终态无 orchestration"是合法形状，圈进来=替旧树跑迟到综合（越权烧钱）')
+        assert.ok(f.updateTime.$lt && f.updateTime.$gte)
+    })
+    test('窗口无效（<=stuck / 非正 / NaN）必须抛——空区间不许装"今天很干净"（主判据同款性格）', () => {
+        assert.throws(() => buildOrchFinalizePendingFilter({now: NOW, stuckMs: 60, windowMs: 60}), /orch-rescue-scan-invalid-ms/)
+        assert.throws(() => buildOrchFinalizePendingFilter({now: NOW, stuckMs: 0, windowMs: 1}), /orch-rescue-scan-invalid-ms/)
+    })
+})
+
+describe('§8/B1 orchRescueAllowed：补派帽（防无限重派烧 relay）', () => {
+    test('无记录 ⇒ 首发放行 next=1', () => {
+        assert.deepEqual(orchRescueAllowed({}), {allowed: true, count: 0, next: 1, capped: false})
+    })
+    test('数到帽 ⇒ 停（allowed=false，capped 真）', () => {
+        const r = orchRescueAllowed({params: {orchRescue: {count: 2}}}, 2)
+        assert.equal(r.allowed, false); assert.equal(r.capped, true)
+    })
+    test('脏值（NaN/负/字符串）归 0，不被洗成"到过帽"', () => {
+        for (const bad of [NaN, -3, 'x', undefined]) {
+            assert.equal(orchRescueAllowed({params: {orchRescue: {count: bad}}}, 2).allowed, true)
+        }
+    })
+    test('max 坏值回退 2（不是 0——回退 0=全案停补，静默废掉恢复面）', () => {
+        assert.equal(orchRescueAllowed({params: {orchRescue: {count: 1}}}, 0).allowed, true)
     })
 })

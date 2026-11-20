@@ -287,6 +287,21 @@ describe('runFollowLoop：四条路径真跑（假 deps）', () => {
         assert.equal(r.follow.skippedLayers, 2, '没跑的层数如实记账——不假装计划完成')
         assert.equal(r.follow.spawned, 0)
     })
+    test('§8/B1 层消费回执：spawn 成功后 onLayerSpawned 收到"剩余层"；写库炸不吞循环（layerAckFailed 留痕）', async () => {
+        const orchPlan = [[{ title: 'L1', query: 'q1' }], [{ title: 'L2', query: 'q2' }]]
+        const acks = []
+        const h = harness({ all: [kid('a', 2)], action: ['synthesize', 'synthesize', 'synthesize'], cfg: { autoFollow: true, orchPlan } })
+        h.deps.onLayerSpawned = async ({remaining}) => { acks.push(remaining.length) }
+        const r = await runFollowLoop(h.deps)
+        assert.deepEqual(acks, [1, 0], '第一层消费后剩 1，第二层消费后剩 0——恢复判据的写侧锚')
+        // 回执失败：循环继续（下一层还推进），layerAckFailed 记数，不裸崩
+        const h2 = harness({ all: [kid('a', 2)], action: ['synthesize', 'synthesize'], cfg: { autoFollow: true, orchPlan: [[{ title: 'L1', query: 'q1' }]] } })
+        h2.deps.onLayerSpawned = async () => { throw new Error('写库炸') }
+        const r2 = await runFollowLoop(h2.deps)
+        assert.equal(r2.follow.layerAckFailed, 1)
+        assert.equal(r2.follow.spawnedLayers, 1, '回执失败不吞已发生的层 spawn（事实账在 follow，恢复面靠帽防双跑）')
+    })
+
     test('ON + 预算闸停在层推进 ⇒ budget-exhausted + skippedLayers，绝不裸预算 spawn', async () => {
         const orchPlan = [[{ title: 'L1', query: 'q1' }]]
         const deny = async () => ({ allow: false, degrade: 'single-agent', reason: 'budget: token 天花板已破', allowedSubtasks: 0 })

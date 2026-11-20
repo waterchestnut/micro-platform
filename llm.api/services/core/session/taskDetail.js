@@ -65,6 +65,7 @@ export function buildTaskDetailView({ root, rows = [] } = {}) {
                 slot: r.params?.retryOf || r.agentCode,
                 planRound: Number(r.params?.planRound) || 0,
                 followRound: Number(r.params?.followRound) || 0,
+                layerIndex: Number(r.params?.layerIndex) || 0, // §8 行所属层（0=首批/非分层）
                 active: activeSet.has(r.agentCode), // false=被更新的尝试取代（历史，仍如实陈列）
                 preview,
                 previewTruncated: content ? content.length > PREVIEW_CHARS : false,
@@ -88,6 +89,14 @@ export function buildTaskDetailView({ root, rows = [] } = {}) {
             dispatch: orch.dispatch || null, follow: orch.follow || null,
         } : null,
         synthesis: root.handleRet?.synthesis || null,
+        // §8 分层计划可见性（透传不重算）：pendingLayers=库里未消费层数（写侧逐层收敛，
+        // 非空=finalize 没写完——与恢复判据同一事实源），spawnedLayers 取 follow 原账。
+        // 平铺树= null：不造 {0,0} 的空计划冒充"分层过"。
+        plan: (() => {
+            const pending = Array.isArray(root.params?.orchPlan) ? root.params.orchPlan.length : 0
+            const spawned = Number(orch?.follow?.spawnedLayers) || 0
+            return pending || spawned ? {pendingLayers: pending, spawnedLayers: spawned} : null
+        })(),
         // §7-1：澄清挂起清单透传（hold 是 finalize 写的原样；无挂起=null，不造空数组冒充"已答完"）
         clarify: root.params?.clarifyHold?.requests?.length || root.params?.clarifyHold?.capped?.length
             ? {requests: root.params.clarifyHold.requests || [], capped: root.params.clarifyHold.capped || [], sealedAt: root.params.clarifyHold.sealedAt || null}

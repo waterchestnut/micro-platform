@@ -42,7 +42,7 @@ describe('agentTask.js：finalize 触发锁内/锁外的位置纪律', () => {
     test('direct 派发必须动态 import execAgentTask；顶层绝不静态引 agent/index（core→agent→core 静态环+启动读 llm 会炸）', () => {
         assert.ok(!code.some((l) => /^import .*from '.*services\/agent\/index\.js'/.test(l)),
             'agent/index.js 被顶层静态 import——循环依赖回归')
-        const dispStart = code.findIndex((l) => /^async function dispatchFanOutFinalize/.test(l))
+        const dispStart = code.findIndex((l) => /^(export )?async function dispatchFanOutFinalize/.test(l))
         const dispBody = code.slice(dispStart, dispStart + 40).join('\n')
         assert.match(dispBody, /await import\('\.\.\/agent\/index\.js'\)/, 'direct 模式没有动态 import')
         assert.match(dispBody, /kafkaConfig\.topics\.agentTask\.topic/, 'kafka 模式没走既有 topic 派发')
@@ -113,7 +113,8 @@ describe('config 与 schema：默认关 + 双闸', () => {
             'serialized-turn 缺 partial-unique（同码并发双行）')
         assert.match(schema, /unique:\s*true,[\s\S]*?partialFilterExpression:\s*ORCH_ROOT_IDEM_PARTIAL/,
             '编排 root 缺 partial-unique（同 taskCode 并发双树）')
-        // 母本 P-8 实锤修正的锚：无键行必须排除出索引；迁移脚本与本定义同源对账
+        // P-8 实锤修正的锚：无键行必须排除出索引（$type:'string'）——"受理键一次性"
+        // 不等于"没有受理键就同会话终身一棵树"；迁移脚本与本定义同源（字面量对账）
         assert.match(schema, /'params\.idemKey':\s*\{\$type:\s*'string'\}/,
             'uniq_orchestratedRoot_idemKey 没有排除缺席 idemKey（E11000 null 相等病复发）')
         const mig = linesOf('evals/platform-probes/agentTask-idemkey-partial-index-migration.mjs').join('\n')
@@ -168,5 +169,20 @@ describe('§8 c2 分层扇出接线面（默认关的"关"要靠守卫钉，不�
     test('intake：契约段与 parse 同住（prompt 纯件在可测文件里，service 全局 llm 不可 import）', () => {
         const intake = linesOf('services/agent/fanOutIntake.js').join('\n')
         assert.ok(intake.includes('依赖模式') && intake.includes('export function buildSystemPrompt'), 'buildSystemPrompt 不在 intake')
+    })
+})
+
+describe('§8/B1 恢复接线（收尾丢失补派）：判据单源 + 写侧清账 + 帽在派发前记账', () => {
+    test('任务体引用 buildOrchFinalizePendingFilter/orchRescueAllowed（判据不手抄第二份）', () => {
+        const task = linesOf('tasks/agentTaskRecover.js').join('\n')
+        assert.match(task, /import \{[\s\S]{0,400}buildOrchFinalizePendingFilter[\s\S]{0,80}\} from '\.\.\/services\/agent\/recoverPolicy\.js'/,
+            '恢复任务没从策略层取补派判据（手抄 filter=两处漂移）')
+        assert.match(task, /if \(orchCfg\.enabled !== true\) return out/, 'enabled 关不扫——关=现网逐字（回滚语义）')
+        assert.match(task, /先记账再派发/, '派发失败也占帽——每轮白派=无限烧 relay 的门得关上')
+    })
+    test('finalizeTask 写侧：层消费 onLayerSpawned 回写剩余层 + 终局清 orchPlan（非空=没写过 的锚）', () => {
+        const fin = linesOf('services/agent/handler/fanOutFinalizeTask.js').join('\n')
+        assert.match(fin, /onLayerSpawned: async[\s\S]{0,200}params\.orchPlan/, '层消费没写库——恢复面看到过期队列会双 spawn')
+        assert.match(fin, /'params\.orchPlan': \[\]/, '终局没清账——"非空=没写完"的扫描前提不成立')
     })
 })

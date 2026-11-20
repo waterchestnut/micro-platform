@@ -135,6 +135,13 @@ class FanOutFinalizeTask extends BaseHandler {
                 const inserted = await insertSubAgentTask(rootCode, specs)
                 await Promise.allSettled(inserted.map((t) => execAgentTask(t)))
             },
+            // §8/B1 恢复判据的写侧：每层消费即把"剩余层"写回 root.params.orchPlan——
+            // 崩在中途时恢复扫描（buildOrchFinalizePendingFilter）看到的才是真未消费队列。
+            // dac.update 直写（不走 updateAgentTaskWithLock 的汇聚语义；finalize 执行期间
+            // 没有并发的同 root 写者——B1 首触闸 + 补派帽，与层写同行的轻互斥）。
+            onLayerSpawned: async ({remaining}) => {
+                await agentTaskDac.update({'params.orchPlan': remaining}, {agentCode: rootCode})
+            },
             log: logger,
             cfg: {
                 autoFollow: orchCfg.autoFollow === true,
@@ -194,7 +201,7 @@ class FanOutFinalizeTask extends BaseHandler {
                     'params.clarifyHold': decided.hold,
                 }, {agentCode: rootCode})
                 logger.info(`fan-out 澄清挂起: root=${rootCode}, 待答=${decided.hold.requests.length}, 超限=${(decided.hold.capped || []).length}`)
-                // M1-c：await 也是直播事件——发完"在等人"里程碑就收段
+                // M1-c：await 也是直播事件——发完 synthesizing 语义的"在等人"就收段
                 // （段界 __end__=await-input：订阅者据此停 poll，答复后新段由端点开）
                 await emitTaskEvents({
                     rootCode,
@@ -211,8 +218,12 @@ class FanOutFinalizeTask extends BaseHandler {
 
         /**
          * §7-2 综合宽限窗（graceMs<=0 ⇒ 逐字现状"树完成即综合"，本刀地基）：
-         * 树完成不再立刻综合——排 synth-timer 等待行，到点重算 finalize 时先问判据表：
-         * 用户在 root 原会话还有动作（窗内发过新消息）就重新计时；静默满窗才综合。
+         * 窗口没满或用户在原会话还有动作 ⇒ **不综合**，排一条 synth-timer 等待行
+         * （manual 不投 Kafka，pump 到点重算 finalize——重跑整轮 finalize 的裁决也是对的：
+         * children 事实可能变了）。排行为什么幂等查"已有未到期等待行"：finalize 可能因
+         * recover/重汇被再次触发，一 root 同时只许一张等待表。
+         * treeDoneAt 锚：首算=现在；等待行重算用行上带的原锚（倒计时起点是**树完成**，
+         * 不是"上次看它没到期"——否则每轮重算都会把自己顺延成无限等）。
          */
         const graceMs = Number(orchCfg.synthGraceMs) || 0
         if (graceMs > 0 && finFinal.dispatch?.needSynthesis === true && finFinal.cancelled !== true) {
@@ -244,7 +255,7 @@ class FanOutFinalizeTask extends BaseHandler {
                  * 本次 finalize 跑在 timer 行上（pump 派发）⇒ **同一条就地重挂**：dueAt/round 刷新、
                  * 行返回 handleStatus 0——execAgentTask 的收尾写回就是"这条闹钟还活着"的账。
                  * 不复用的话（排新行）：泵派发时旧行仍是 0、排除自己后 others 为空会双排；
-                 * 旧行随收尾变 2 又变死表（母本探针 G5 两轮撞的就是这条缝）。
+                 * 旧行随收尾变 2 又变死表（探针 G5 两轮撞的就是这条缝）。
                  * 首算（钩子的内存 fin- 任务）没有这条行可刷 ⇒ 走新排，返回 2 善终。
                  */
                 if (Number(p.synthRound) > 0 && agentTaskInfo.agentRole === SYNTH_TIMER_ROLE) {
@@ -258,7 +269,7 @@ class FanOutFinalizeTask extends BaseHandler {
                 /**
                  * 幂等查询必须**排除自己**：timer 派发场景下 finalize 就跑在等待行身上
                  * （execAgentTask 执行中不改行状态，行仍是 0）——不排除就命中自己、不排新行，
-                 * 旧行随执行终了变 2 ⇒ 闹钟销毁而倒计时没接上（顺延黑洞，母本诊断实锤）。
+                 * 旧行随执行终了变 2 ⇒ 闹钟销毁而倒计时没接上（顺延黑洞，诊断实锤的形状）。
                  */
                 const pend = await agentTaskDac.getTop(2, {complexFilter: {agentRole: SYNTH_TIMER_ROLE, handleStatus: 0, 'params.rootCode': rootCode}})
                 const others = (pend || []).filter((r) => r.agentCode !== agentTaskInfo.agentCode)
@@ -299,7 +310,7 @@ class FanOutFinalizeTask extends BaseHandler {
                     conversationCode: conv,
                     // §5-4 账本关联：综合行挂在 root 树下（role=synthesis），对账"这棵树花了多少"不再靠 conv 前缀反解
                     taskContext: {rootCode, agentCode: rootCode, agentRole: 'synthesis'},
-                    channel: p.channel || root.params?.channel || 'micro_common',
+                    channel: p.channel || root.params?.channel || 'xxzx_common',
                     protocol: p.protocol || 2,
                     memory: { enabled: false },
                     ...(p.execOptionsExtra || {}),
@@ -347,6 +358,9 @@ class FanOutFinalizeTask extends BaseHandler {
             handleStatus: finFinal.handleStatus, handleRet,
             retryCount: follow.retryCount, replanCount: follow.replanCount,
             budgetUsedTokens: handleRet.orchestration.budgetTokensUsed, // 列已声明；对账=与 orchestration.budgetTokensUsed 同值同源
+            // §8/B1 恢复锚：终局即清 orchPlan——"非空"永远等于"finalize 没成功写过"（扫描判据前提）。
+            // 计划历史不丢：spawnedLayers/skippedLayers/pendingAfter 都在 orchestration.follow 账里。
+            'params.orchPlan': [],
         })
 
         /**

@@ -205,8 +205,63 @@ export function skillWriteIdempotencyBound(config = {}) {
     return w.enabled === true && Array.isArray(w.writeTools) && w.writeTools.length > 0
 }
 
+/**
+ * §8/B1 修复：编排 root 的"收尾丢失"扫描判据（纯函数）——层间进程死/B1 派发在途丢的树
+ * 落点是"root 已机械终态(2/3)但 handleRet.orchestration 没写"：finalize 只在锁内 shouldTrigger-
+ * FirstTime 触发一次，kafka 消息丢失或 finalize 半途崩都没有第二次触发 ⇒ 主 recover 滤网
+ * （handleStatus:0）够不着。本判据补这一族。
+ *
+ * 四条收窄（每条治一个误伤）：
+ * - 只扫终态 2/3，**不扫 1**——root=1 可能 children 真在跑，误派 finalize 会把在途树打成
+ *   not-settled/pending 的提前定稿（污染比不救更坏）；
+ * - **必须 `params.orchPlan` 非空**——v1 圈定只治"分层树死在层间"（c2 特有病形，库内锚干净）。
+ *   不加这条会伤 B1 前年代的合法行（dev 保留树 891acba4 正是"终态+无 orchestration"形状——
+ *   enabled 未开期产物，当年就是让它停的）：补派=替旧代树跑迟到的综合，烧钱改档越权。
+ *   B1 派发丢失族无实测账，不混进本面（没账不造刀）；
+ * - `handleRet.orchestration` 缺席是"finalize 没成功写过"的诚实锚（写侧配套：层推进逐层回写
+ *   剩余层、终局清空 orchPlan——"非空"永远等于"没写完"，判据与恢复同一事实源）；
+ * - 滞留窗口与主扫描同参（stuckMs/windowMs），运行中的树 updateTime 持续被 child 汇聚刷新，
+ *   天然不进候选。
+ * @param {Object} [opt]
+ * @param {Number} [opt.now] 基准时刻毫秒
+ * @param {Number} [opt.stuckMs] 滞留多久算候选（复用主判据的值）
+ * @param {Number} [opt.windowMs] 更陈旧的不救（复用主判据的值）
+ * @returns {Object} mongo complexFilter 直接可用
+ */
+export function buildOrchFinalizePendingFilter({now = Date.now(), stuckMs = DEFAULT_RECOVER_STUCK_MS, windowMs = DEFAULT_RECOVER_WINDOW_MS} = {}) {
+    const stuck = Number(stuckMs)
+    const win = Number(windowMs)
+    if (!(stuck > 0) || !(win > 0) || win <= stuck) {
+        throw new Error(`orch-rescue-scan-invalid-ms:stuck=${stuckMs},window=${windowMs}`)
+    }
+    return {
+        orchestrated: true,
+        agentRole: 'root',
+        handleStatus: {$in: [2, 3]},
+        'handleRet.orchestration': null,
+        'params.orchPlan.0': {$exists: true},
+        updateTime: {$lt: new Date(now - stuck), $gte: new Date(now - win)},
+    }
+}
+
+/**
+ * 补派帽（纯判据）：finalize 重派后仍失败 ⇒ root.updateTime 不一定被刷新（没写回），
+ * 下轮扫描会再命中——无限补派烧 relay。params.orchRescue.count 记补派次数（params 是
+ * Mixed 声明面，无 schema 静默丢风险），到帽值不再补（滞留归因留给 stale 报，吵但不裸奔）。
+ * @param {Object} [root] 库内 root 行
+ * @param {Number} [max] 补派上限（默认 2，与 recoverMaxTimes 同族语义）
+ * @returns {{allowed:Boolean, count:Number, next:Number}}
+ */
+export function orchRescueAllowed(root, max = 2) {
+    const count = Number(root?.params?.orchRescue?.count)
+    const n = Number.isFinite(count) && count > 0 ? Math.floor(count) : 0
+    const cap = Number(max) > 0 ? Math.floor(Number(max)) : 2
+    return {allowed: n < cap, count: n, next: n + 1, capped: n >= cap}
+}
+
 export default {
     RECOVER_MODES, DEFAULT_RECOVER_MODE, resolveRecoverMode, recoverAction,
     DISPATCH_AGENT_TYPES, DEFAULT_RECOVER_WINDOW_MS, DEFAULT_RECOVER_STUCK_MS, resolveRecoverWindow, buildRecoverFilter,
     recoverDirectAllowed, skillWriteIdempotencyBound,
+    buildOrchFinalizePendingFilter, orchRescueAllowed,
 }

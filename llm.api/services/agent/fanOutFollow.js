@@ -262,7 +262,10 @@ export function rollupAllAttemptCredits(children = []) {
  * @returns {Promise<{fin:Object, all:Array, follow:Object}>}
  */
 export async function runFollowLoop(p = {}) {
-    const { readAllChildren, spawnRetrySpecs, replanSubtasks, spawnReplanSpecs, spawnLayerSpecs, computeFin, log = console } = p
+    // onLayerSpawned：层 spawn 成功后的"计划已被消费"回执（接线方把剩余层写回库——
+    // §8/B1 恢复判据的前提：orchPlan 非空必须真等于"没消费"，崩在 spawn 后写库前的
+    // 双 spawn 微窗与 B1 direct 窗同族，如实记不假装消除）
+    const { readAllChildren, spawnRetrySpecs, replanSubtasks, spawnReplanSpecs, spawnLayerSpecs, computeFin, onLayerSpawned, log = console } = p
     const cfg = p.cfg || {}
     // §8 分层计划：orchPlan=未 spawn 的后续层队列（layered 关时接线方给空数组——循环逐字旧行为）
     const layersQ = Array.isArray(cfg.orchPlan) ? cfg.orchPlan.filter((L) => Array.isArray(L) && L.length).map((L) => L.slice()) : []
@@ -392,7 +395,16 @@ export async function runFollowLoop(p = {}) {
             break
         }
         follow.spawned += specs.length
-        if (step.act === 'spawnLayer') follow.spawnedLayers += 1
+        if (step.act === 'spawnLayer') {
+            follow.spawnedLayers += 1
+            // 计划消费回执（接线方写库"剩余层"——恢复判据 orchPlan 非空=真没消费 的前提）
+            if (typeof onLayerSpawned === 'function') {
+                try { await onLayerSpawned({remaining: layersQ.slice()}) } catch (e) {
+                    log.warn(`层消费回执写库失败(恢复面可能双 spawn 该层，B1 同族窗): ${String(e?.message || e).slice(0, 200)}`)
+                    follow.layerAckFailed = (follow.layerAckFailed || 0) + 1
+                }
+            }
+        }
         counts = step.counts
         follow.retryCount = counts.retryCount
         follow.replanCount = counts.replanCount

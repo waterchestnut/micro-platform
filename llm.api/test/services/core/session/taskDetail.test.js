@@ -102,3 +102,24 @@ describe('buildTaskDetailView 装配', () => {
         assert.equal(byCode.b1.followRound, 1)
     })
 })
+
+describe('§8 plan 节（分层可见性，透传不重算）', () => {
+    const root2 = (over = {}) => ({agentCode: 'r', handleStatus: 2, title: 'T', params: {}, subAgents: [], ...over})
+    test('平铺树 ⇒ plan=null（不造 {0,0} 冒充"分层过"）且行 layerIndex=0', () => {
+        const v = buildTaskDetailView({root: root2({handleRet: {orchestration: {action: 'synthesize', follow: {spawnedLayers: 0}}}}), rows: [kid('a', 2)]})
+        assert.equal(v.plan, null)
+        assert.equal(v.subtasks[0].layerIndex, 0)
+    })
+    test('未消费层非空 ⇒ pendingLayers 直读 params.orchPlan（恢复判据同一事实源）', () => {
+        const v = buildTaskDetailView({root: root2({params: {orchPlan: [[{query: 'x'}], [{query: 'y'}]]}, handleRet: {orchestration: {action: 'synthesize'}}}), rows: [kid('a', 2)]})
+        assert.deepEqual(v.plan, {pendingLayers: 2, spawnedLayers: 0})
+    })
+    test('已推进层取 follow 原账 + 行级 layerIndex 透传', () => {
+        const v = buildTaskDetailView({
+            root: root2({handleRet: {orchestration: {action: 'synthesize', follow: {spawnedLayers: 2}}}}),
+            rows: [kid('a', 2), kid('c', 2, {params: {layerIndex: 1}})],
+        })
+        assert.deepEqual(v.plan, {pendingLayers: 0, spawnedLayers: 2})
+        assert.equal(v.subtasks.find((s) => s.agentCode === 'c').layerIndex, 1)
+    })
+})

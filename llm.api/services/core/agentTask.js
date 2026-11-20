@@ -142,7 +142,7 @@ export async function updateParentAgentTaskWithLock(parentCode, curAgentTaskInfo
  * @param {Object} cfg `agentTask.fanOutOrchestration`
  * @returns {Promise<void>}
  */
-async function dispatchFanOutFinalize(rootTask, cfg) {
+export async function dispatchFanOutFinalize(rootTask, cfg) {
     const finTask = {
         agentCode: 'fin-' + rootTask.agentCode,
         agentType: 'local',

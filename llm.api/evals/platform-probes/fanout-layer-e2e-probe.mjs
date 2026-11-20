@@ -25,7 +25,7 @@ const userCode = 'menglb'
 const CHILD_EXTRA = { cache: false, llmParams: { maxTokens: 48 } }
 const V = {}
 const out = { phases: {} }
-const EXPECTED = 7
+
 
 const orch = llm.config.agentTask.fanOutOrchestration
 orch.enabled = false // 手动派 finalize（防 B1 自动派发竞态——已知探针坑）
@@ -86,7 +86,8 @@ async function sweep(rootCode, conversationCode) {
     return await AgentTask.collection.countDocuments({ $or: [{ agentCode: rootCode }, { parentCode: rootCode }] })
 }
 
-let tOn = null, tOff = null
+let tOn = null, tOff = null, tR = null
+const EXPECTED = 10
 try {
     // ===== ON：真追活 + 真层推进 =====
     tOn = await buildLayerTree('on', true)
@@ -118,16 +119,53 @@ try {
         && rOff.handleRet?.orchestration?.follow?.degrade === 'layered-not-advanced'
         && rOff.handleRet?.orchestration?.follow?.skippedLayers === 1
         && kOff.filter((c) => c.params?.layerIndex).length === 0
+
+    // ===== R：§8/B1 恢复补派——"层间死"病形（层0 终局、finalize 从没跑、orchPlan 剩一层） =====
+    // 建树期间 enabled=false（防 B1 自动派发与手工/补派竞态——已知双 finalize OOM 坑）；
+    // 病形成真后开 enabled+**direct**（kafka 会被 dev consumer 异步捡走，读数时机失控）。
+    tR = await buildLayerTree('rescue', true)
+    const { rescueOrchPending } = await import('../../tasks/agentTaskRecover.js')
+    orch.enabled = true
+    orch.dispatch = 'direct'
+    await new Promise((r) => setTimeout(r, 80))
+    const rr = await rescueOrchPending({stuckMs: 1, windowMs: 60000, max: 2})
+    out.phases.RESCUE = rr
+    // direct=fire-and-forget：轮询等 finalize 真跑完（层推进 relay+综合 ≈ 分钟级）
+    let rR = null
+    for (let i = 0; i < 14; i++) {
+        await new Promise((r) => setTimeout(r, 8000))
+        rR = await agentTaskDac.getByCode(tR.rootCode)
+        if (rR.handleRet?.orchestration) break
+    }
+    V['R1 补派命中派发:scanned>=1 rescued>=1'] = rr.scanned >= 1 && rr.rescued >= 1
+    V['R2 恢复闭环:orchestration 补写+层推进续跑(spawnedLayers>=1)+orchPlan 清账+帽记账 1'] =
+        !!rR.handleRet?.orchestration && (rR.handleRet?.orchestration?.follow?.spawnedLayers || 0) >= 1
+        && (rR.params?.orchPlan || []).length === 0 && (rR.params?.orchRescue?.count || 0) === 1
+    // R3 病形再现且已到帽（max=1：count 已 1 ⇒ 1<1 false）⇒ 只吵不补。
+    // updateTime 回拨不可行（schema auto 语义在 update 时也会重设为当下——ut 读数实锤），
+    // 改用真实等待穿过 stuckMs：注入后睡过阈值再扫，判据一字不放松。
+    // 病形注入必须走 collection 层 $set：dac.update 的 schema cast 会把 'handleRet.orchestration':null
+    // **静默滤掉**（铁证：R3diag 行里 orchestration 键原样在——上一轮把乱码"在"读成"缺席"绕了三圈）。
+    // 教训入家族：模拟库内病形用原生 driver，别借业务写面（业务面本来就不该能写出这种形状）。
+    const { AgentTask: ATc } = await import('../../daos/core/schema/index.js')
+    await ATc.collection.updateOne({ agentCode: tR.rootCode }, { $set: { 'handleRet.orchestration': null, 'params.orchPlan': [[{ title: '再注入', query: '不该再跑', handler: 'agentChat' }]] } })
+    await new Promise((r) => setTimeout(r, 1400))
+    const rr3 = await rescueOrchPending({stuckMs: 1000, windowMs: 60000, max: 1})
+    const rR3 = await agentTaskDac.getByCode(tR.rootCode)
+    V['R3 到帽停补:capped>=1 且未再派发（orchestration 仍缺席、count 不加）'] =
+        rr3.capped >= 1 && (rr3.rescued || 0) === 0 && !rR3.handleRet?.orchestration && (rR3.params?.orchRescue?.count || 0) === 1
+    orch.enabled = false
 } catch (e) {
     out.error = String(e?.stack || e?.message || e).slice(0, 500)
 }
 // ===== 清场 =====
 const resOn = await sweep(tOn ? tOn.rootCode : '', tOn && tOn.conversationCode)
 const resOff = tOff ? await sweep(tOff.rootCode, tOff.conversationCode) : -1
-V['N7 自造行清尽（两树血统 residual=0）'] = resOn === 0 && resOff === 0
-out.residual = { on: resOn, off: resOff }
+const resR = tR ? await sweep(tR.rootCode, tR.conversationCode) : -1
+V['N7 自造行清尽（三树血统 residual=0）'] = resOn === 0 && resOff === 0 && resR === 0
+out.residual = { on: resOn, off: resOff, rescue: resR }
 out.verdict = V
 const pass = Object.values(V).filter(Boolean).length
-out.结论 = pass === EXPECTED ? `分层扇出 e2e 通过(${EXPECTED}/${EXPECTED}：层推进/时序/产出注入/全层收口/OFF 不装完成/零残留)` : `未全真 ${pass}/${EXPECTED}——读数见上`
+out.结论 = pass === EXPECTED ? `分层扇出 e2e 通过(${EXPECTED}/${EXPECTED}：层推进/时序/产出注入/全层收口/OFF 不装完成/恢复补派+帽/零残留)` : `未全真 ${pass}/${EXPECTED}——读数见上`
 console.log(JSON.stringify(out, null, 1))
 process.exit(pass === EXPECTED ? 0 : 1)

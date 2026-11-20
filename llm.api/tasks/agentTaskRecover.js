@@ -27,7 +27,7 @@ import agentTaskDac from '../daos/core/dac/agentTaskDac.js'
 import {execAgentTask} from '../services/agent/index.js'
 import {acquireOnce} from '../daos/cache/l2Cache.js'
 import {sendMessage} from '../daos/kafka/client.js'
-import {resolveRecoverMode, recoverAction, resolveRecoverWindow, buildRecoverFilter, skillWriteIdempotencyBound, DISPATCH_AGENT_TYPES, DEFAULT_RECOVER_STUCK_MS} from '../services/agent/recoverPolicy.js'
+import {resolveRecoverMode, recoverAction, resolveRecoverWindow, buildRecoverFilter, skillWriteIdempotencyBound, DISPATCH_AGENT_TYPES, DEFAULT_RECOVER_STUCK_MS, buildOrchFinalizePendingFilter, orchRescueAllowed} from '../services/agent/recoverPolicy.js'
 import {acquireClaim, releaseClaim, leaseSafety, DEFAULT_LEASE_MS} from '../services/agent/execClaim.js'
 import {recoverOneCandidate} from '../services/agent/recoverCandidate.js'
 
@@ -120,8 +120,10 @@ const recoverDeps = {
  * @see docs/session-run-plan.md §25 v1.84
  */
 function roundLine(p) {
+    const o = p.orch || {}
     return `agentTask 恢复轮结束: 扫到=${p.scanned}, 触发=${p.recovered}, 跳过=${p.skipped}, `
         + `延后=${p.deferred ?? 0}, 未处理=${p.idle}, 窗口外滞留=${p.stale}, 模式=${recoverModeCfg.mode}`
+        + (o.scanned !== undefined ? `, 编排补派=${o.rescued ?? 0}/帽=${o.capped ?? 0}/候选=${o.scanned}` : '')
 }
 
 /**
@@ -170,8 +172,11 @@ export async function runAgentTaskRecover(params = {}) {
             updateTime: {$lt: filter.updateTime.$gte},
         },
     })
+    // §8/B1 收尾丢失补派（层间进程死/kafka 派发在途丢）——独立于主扫描结果，
+    // 空扫描轮也要跑（编排树滞留与 handleStatus:0 队列是两族病）
+    const orch = await rescueOrchPending({stuckMs, windowMs: windowResolved.windowMs, max: Number(params.orchRescueMax ?? 2)})
     if (!rows?.length) {
-        logger.info(roundLine({scanned: 0, recovered: 0, skipped: 0, deferred: 0, idle: 0, stale}))
+        logger.info(roundLine({scanned: 0, recovered: 0, skipped: 0, deferred: 0, idle: 0, stale, orch}))
         return 0
     }
     let recovered = 0
@@ -213,6 +218,55 @@ export async function runAgentTaskRecover(params = {}) {
             logger.error(`agentTask 恢复失败: ${task.agentCode} ${String(e?.stack || e?.message || e).slice(0, 400)}`)
         }
     }
-    logger.info(roundLine({scanned: rows.length, recovered, skipped, deferred, idle, stale}))
+    logger.info(roundLine({scanned: rows.length, recovered, skipped, deferred, idle, stale, orch}))
     return recovered
+}
+
+/**
+ * §8/B1 修复：编排 root"收尾丢失"补派段（纯扫描 + 有界重派）。
+ * 病形：finalize 只在 root 首次到终态时派发一次（B1 锁内触发）——kafka 消息在途丢、
+ * 或 finalize 进程死在层推进中途（orchPlan 还有剩余层），树就悬在"机械终态、无
+ * orchestration 账"上没人管。主 recover 滤网（handleStatus:0）够不着这一族。
+ * 判据（buildOrchFinalizePendingFilter 单源）：orchestrated root + 终态(2/3) +
+ * handleRet.orchestration 缺席 + 滞留窗口内。**不扫 root=1**（在途树误补派=污染）。
+ * 防循环：params.orchRescue.count 有界（Mixed 键零 schema 风险），到帽只吵不补。
+ * 双跑防护：补派走 dispatchFanOutFinalize 同路（direct 同 agentCode 由 execClaim 互斥，
+ * 且 finalize 重跑本身幂等——重读现场 + orchPlan 写侧逐层收敛）。
+ * 返回计数进本轮 roundLine 日志（rescued/capped/scanned）。
+ */
+export async function rescueOrchPending({stuckMs, windowMs, max = 2}) {
+    const out = {scanned: 0, rescued: 0, capped: 0}
+    const orchCfg = config.agentTask?.fanOutOrchestration || {}
+    if (orchCfg.enabled !== true) return out
+    try {
+        const f = buildOrchFinalizePendingFilter({stuckMs, windowMs})
+        const roots = await agentTaskDac.getTop(5, {complexFilter: f}, {updateTime: 1})
+        out.scanned = roots?.length || 0
+        if (!out.scanned) return out
+        const {dispatchFanOutFinalize} = await import('../services/core/agentTask.js')
+        for (const root of roots) {
+            const cap = orchRescueAllowed(root, max)
+            if (!cap.allowed) {
+                out.capped++
+                logger.warn(`编排收尾补派到帽不再补(留人看): ${root.agentCode} count=${cap.count} `
+                    + '（finalize 反复失败——查 handler 错误，别等第四轮）')
+                continue
+            }
+            try {
+                // 先记账再派发：派发失败也占帽——"每轮白派一次"比"补派无限循环烧 relay"坏
+                await agentTaskDac.update(
+                    {'params.orchRescue': {count: cap.next, at: new Date().toISOString()}},
+                    {agentCode: root.agentCode},
+                )
+                await dispatchFanOutFinalize(root, orchCfg)
+                out.rescued++
+                logger.info(`编排收尾补派: ${root.agentCode} 第${cap.next}次（终态无 orchestration，滞留超阈）`)
+            } catch (e) {
+                logger.error(`编排收尾补派失败: ${root.agentCode} ${String(e?.message || e).slice(0, 300)}`)
+            }
+        }
+    } catch (e) {
+        logger.error(`编排收尾补派段异常(不殃及主恢复): ${String(e?.message || e).slice(0, 300)}`)
+    }
+    return out
 }
