@@ -10,7 +10,7 @@
  */
 import { test, describe } from 'node:test'
 import * as assert from 'node:assert/strict'
-import { planReconcile, diffManifestItem, stalePendingNote } from '../../../../services/core/skill/featureManifest.js'
+import { planReconcile, diffManifestItem, stalePendingNote, planFeatureMigration } from '../../../../services/core/skill/featureManifest.js'
 
 const MD = '---\nname: a\ndescription: d\n---\nb'
 const item = (over = {}) => ({ skillCode: 'c1', skillName: 'feat-a', skillMD: MD, channels: ['xxzx_common'], ...over })
@@ -72,5 +72,31 @@ describe('匹配键兜底与 note', () => {
         const n = stalePendingNote('c1', 'v3')
         assert.ok(n.includes('manifest-stale:v3') && n.includes('回捞而非误批'))
         assert.ok(stalePendingNote('c1', '').includes('no-stamp'))
+    })
+})
+
+describe('planFeatureMigration：迁移=补标注不是改行为（Phase 2 判据）', () => {
+    test('存量无 effectClass ⇒ tag read + featurePrivs:[] + sourceManifest（subsystemCode 带 clientCode 事实）', () => {
+        const { plan } = planFeatureMigration([{ skillCode: 's1', skillName: 'a', clientCode: 'learoad' }])
+        assert.equal(plan[0].action, 'tag')
+        assert.equal(plan[0].add.effectClass, 'read', '写 guide 就是降级现调用面——read 才是行为保持')
+        assert.deepEqual(plan[0].add.featurePrivs, [])
+        assert.equal(plan[0].add.sourceManifest.subsystemCode, 'learoad')
+        assert.equal(plan[0].add.sourceManifest.version, 'migration-v1')
+        assert.equal('browseGate' in plan[0].add, false, 'browseGate 不硬编——未核事实不入档（缺失=判据层保守 true）')
+    })
+    test('已显式 effectClass ⇒ skip 不覆盖（人工核定面优先，重跑幂等）', () => {
+        for (const ec of ['guide', 'read', 'write']) {
+            const { plan } = planFeatureMigration([{ skillCode: 's', effectClass: ec }])
+            assert.equal(plan[0].action, 'skip', ec)
+        }
+    })
+    test('effectClass 脏值（空串/非串）不算显式 ⇒ 走 tag 修正面', () => {
+        const { plan } = planFeatureMigration([{ skillCode: 's', effectClass: '  ' }, { skillCode: 't', effectClass: 7 }])
+        assert.deepEqual(plan.map((x) => x.action), ['tag', 'tag'])
+    })
+    test('无 skillCode/空行 ⇒ 不入计划（不炸不硬编）', () => {
+        const { plan } = planFeatureMigration([null, {}, { skillName: 'x' }])
+        assert.deepEqual(plan, [])
     })
 })

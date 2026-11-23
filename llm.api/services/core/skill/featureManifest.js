@@ -85,4 +85,39 @@ export function stalePendingNote(skillCode, stamp) {
     return `manifest-stale:${normStr(stamp) || 'no-stamp'}｜最近一次对账中该子系统清单已不含此条；批准将重新纳入装配，请确认是回捞而非误批`
 }
 
-export default { planReconcile, diffManifestItem, stalePendingNote }
+/**
+ * 存量技能升格目录条目的迁移判据（Phase 2，纯函数——"迁移=补标注不是改行为"的执法面）。
+ * 现状在册技能都是"频道在册即全量可调用"（装配面本就没有过滤）；本判据只回答"这行该补什么"：
+ * - 已有 effectClass 显式值 ⇒ skip（人工核定过的不覆盖，重跑幂等）；
+ * - 无 effectClass ⇒ tag：effectClass:'read'（2026-11 逐档核查全读方法的账实现形；
+ *   现调用面保持——写 guide 反而是行为降级）+ featurePrivs:[]（现状无私有 priv，如实）+
+ *   sourceManifest 溯源（migration 身份）；
+ * - **browseGate 一律不动**：缺失=判据层保守 true；写 true/false 都是替 ucenter 注册表
+ *   没核过的"事实"入库——留 P6 开闸时随 priv 点建档逐条核定（数据建档与核定同场，
+ *   脚本硬编=假事实入档）。
+ * @param {Array} rows grpcSkill 现有行
+ * @returns {{plan:Array<{skillCode,action:'tag'|'skip',reason,add?:Object}>}}
+ */
+export function planFeatureMigration(rows = []) {
+    const plan = []
+    for (const r of (Array.isArray(rows) ? rows : [])) {
+        if (!r || !r.skillCode) continue
+        const declared = typeof r.effectClass === 'string' && r.effectClass.trim()
+        if (declared) {
+            plan.push({ skillCode: r.skillCode, action: 'skip', reason: `effectClass 已显式（${r.effectClass}），人工核定面不覆盖` })
+            continue
+        }
+        plan.push({
+            skillCode: r.skillCode, action: 'tag',
+            reason: '存量无 effectClass：补 read（现调用面保持）+ featurePrivs:[]（如实无）+ sourceManifest 溯源',
+            add: {
+                effectClass: 'read',
+                featurePrivs: [],
+                sourceManifest: { subsystemCode: String(r.clientCode || ''), version: 'migration-v1', stamp: 'feature-catalog-migration' },
+            },
+        })
+    }
+    return { plan }
+}
+
+export default { planReconcile, diffManifestItem, stalePendingNote, planFeatureMigration }
