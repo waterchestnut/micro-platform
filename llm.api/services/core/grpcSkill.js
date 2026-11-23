@@ -15,6 +15,7 @@ import {
     SKILL_ACTIONS, SKILL_REVIEW, normalizeReviewStatus, skillEligibleForAssembly,
     checkContentHash, hostAllowed, decideSkillWrite, decideReviewTransition, governanceFieldsForWrite,
 } from './skill/skillGovernance.js'
+import { planReconcile, stalePendingNote } from './skill/featureManifest.js'
 import {skillContentAllowed, scanSkillContent, scanSummaryForLog} from './skill/skillScan.js'
 import yaml from 'js-yaml'
 
@@ -311,7 +312,7 @@ export async function getGrpcSkillsByChannel(channel) {
             await grpcSkillDac.update({
                 skillCode: d.skillCode,
                 reviewStatus: SKILL_REVIEW.PENDING,
-                reviewedBy: null,
+                reviewedBy: {$unset: true},
                 reviewedAt: null,
                 reviewNote: `装配期自动打回：${d.reason}`,
             })
@@ -591,7 +592,7 @@ export async function updateGrpcSkill(curUserInfo, skillCode, newGrpcSkillInfo) 
         reviewStatus: gov.reviewStatus,
         skillMDHash: gov.skillMDHash,
         contentVersion: (currentSkill.contentVersion || 1) + (mdChanged ? 1 : 0),
-        ...(mdChanged ? {reviewedBy: null, reviewedAt: null, reviewNote: ''} : {}),
+        ...(mdChanged ? {reviewedBy: {$unset: true}, reviewedAt: null, reviewNote: ''} : {}),
     }
 
     let ret = await grpcSkillDac.update(grpcSkillInfo)
@@ -660,6 +661,169 @@ export async function deleteGrpcSkill(curUserInfo, skillCode) {
  * 如果 enable 不看审核态，"注册(pending) → 启用"就能绕过批准，治理做成了走形式。
  * 判据复用装配侧的 `skillEligibleForAssembly`，两处共用一个定义而不是各写一遍。
  */
+/**
+ * 功能清单对账（platform-feature-map 刀3，W8 缺口收口）。
+ * manifest=子系统该 clientCode 的**全量**功能集声明；对账语义=增（新增条目→pending）、
+ * 改（声明面任何字段漂移→pending+新哈希）、**下线**（库里在装配而 manifest 已缺席→打回 pending
+ * reason=manifest-removed——僵尸条目是"AI 继续推荐不存在功能"的直接成因）。
+ *
+ * 三条纪律：
+ * 1. **原子预检**：items 全部结构校验（skillCode 必备/skillName 词法/skillMD frontmatter/
+ *    注入扫描/host 白名单）任一失败 ⇒ 整案拒、零写库——manifest 半入库比不入库更糟
+ *    （半套目录=推荐面与真实能力对不上，且对账方无从知道自己哪半进去了）。
+ * 2. **收缩序执行**：下线→改→新增。中途崩 ⇒ 库里剩"更小不是更大"的装配面
+ *    （少进可补对账，残留即僵尸——方向性选择，不是风格）。
+ * 3. **注册落库同款**：新行 skillCode 保留 manifest 稳定键（对账匹配键的地基）、默认 pending+
+ *    哈希、journal 逐行（op=add/update，detail 带 reconcile 与 stamp——词表不扩，evidence 说真话）。
+ * 权限：SKILL_ACTIONS.RECONCILE 不在 OWNER_ALLOWED（批量下线权不给归属人），admin 专属。
+ * @param {Object} curUserInfo 当前用户（须 admin）
+ * @param {Object} payload {clientCode, grpcHost, stamp?, items:[{skillCode, skillName, skillMD,
+ *        channels, effectClass?, browseGate?, featurePrivs?, entry?, invokeSpec?, idemKeyPolicy?}]}
+ * @returns {Promise<Object>} {reconciled:{added,updated,offlined,kept,stalePending}, stamp}
+ */
+export async function reconcileManifest(curUserInfo, payload = {}) {
+    const clientCode = String(payload.clientCode || '').trim()
+    const items = Array.isArray(payload.items) ? payload.items : []
+    const stamp = String(payload.stamp || '').trim()
+    const grpcHost = String(payload.grpcHost || '').trim()
+    if (!clientCode || !grpcHost || !Array.isArray(payload.items)) throw new Error('对账需要 clientCode/grpcHost/items（在场性检查，语义判定在权限之后）')
+
+    // 权限先行（add 判例同款）：未授权者连"空 manifest 会被怎么对待"这种语义反馈都拿不到
+    const auth = await authorizeSkillWrite(curUserInfo, SKILL_ACTIONS.RECONCILE, null)
+
+    if (!items.length) throw new Error('manifest 为空——空清单对账=整码下线，请走逐条 disable/显式空声明接口，本面对话不猜"空数组是不是故意的"')
+
+    // —— 原子预检（零写库）——
+    const skillNameRegex = /^[a-z][a-z0-9-]*$/
+    const seen = new Set()
+    for (const [idx, it] of items.entries()) {
+        const tag = `条目[${idx}(${it && it.skillCode ? String(it.skillCode) : '?'})]`
+        if (!it || typeof it !== 'object') throw new Error(`${tag}: 非对象`)
+        if (!String(it.skillCode || '').trim()) throw new Error(`${tag}: 缺 skillCode（对账匹配键，无键条目不收）`)
+        if (seen.has(String(it.skillCode))) throw new Error(`${tag}: manifest 内 skillCode 重复`)
+        seen.add(String(it.skillCode))
+        if (!it.skillName || !skillNameRegex.test(String(it.skillName))) throw new Error(`${tag}: skillName 词法不合法`)
+        if (!it.skillMD) throw new Error(`${tag}: 缺 skillMD`)
+        validateSkillMD(it.skillMD)
+        if (!Array.isArray(it.channels) || !it.channels.length) throw new Error(`${tag}: 缺 channels`)
+        const badCh = validateChannels(it.channels)
+        if (badCh.length) throw new Error(`${tag}: 无效频道 ${badCh.join(',')}`)
+        const content = assertContentGovernance({ ...it, grpcHost })   // host 白名单+注入扫描，同注册面判据
+        if (content.scanHit) throw new Error(`${tag}: 正文命中注入判据 ${JSON.stringify(content.scanSummary || {})}`)
+    }
+
+    const rows = (await grpcSkillDac.getTop(1000, { clientCode, status: { $ne: -1 } })) || []
+    const plan = planReconcile({ rows, items })
+    const byCode = new Map(rows.map((r) => [String(r.skillCode), r]))
+    const now = new Date()
+
+    const touched = []
+
+    let offlined = 0
+    for (const o of plan.toOffline) {
+        const row = byCode.get(String(o.skillCode))
+        await grpcSkillDac.update({
+            reviewStatus: SKILL_REVIEW.PENDING,
+            /** $unset 形（母本 2026-11-23 实锤同步）：标量 null 会被 notNeedUpdate 静默跳过，"清除"从未生效 */
+            reviewedBy: {$unset: true}, reviewedAt: null,
+            reviewNote: `manifest-removed:${stamp || 'no-stamp'}｜最近对账中该子系统清单已不含此条，装配已撤，复核后可再批`,
+        }, { skillCode: o.skillCode })
+        await writeJournal({
+            skillCode: o.skillCode, skillName: o.skillName, actor: 'user', op: 'update',
+            actorUser: { userCode: curUserInfo.userCode, realName: curUserInfo.realName },
+            before: summarizeSkillForJournal(row),
+            after: summarizeSkillForJournal({ ...(row || {}), reviewStatus: SKILL_REVIEW.PENDING }),
+            evidence: [{ authReason: auth.reason, reconcile: 'offline', stamp }],
+            reason: '清单对账下线（manifest 缺席）',
+        })
+        touched.push(o.skillCode)
+        offlined++
+    }
+
+    let updated = 0
+    for (const u of plan.toUpdate) {
+        const row = byCode.get(String(u.skillCode))
+        const item = items.find((x) => String(x.skillCode) === String(u.skillCode))
+        const gov = governanceFieldsForWrite({
+            skill: row, newSkillMD: item.skillMD, newHash: md5(item.skillMD), actor: curUserInfo,
+        })
+        await grpcSkillDac.update({
+            skillName: item.skillName, skillMD: item.skillMD, channels: item.channels, grpcHost,
+            effectClass: item.effectClass || 'guide',
+            browseGate: item.browseGate === false ? false : (item.browseGate === true ? true : row.browseGate),
+            featurePrivs: Array.isArray(item.featurePrivs) ? item.featurePrivs : [],
+            ...(item.entry ? { entry: item.entry } : {}),
+            ...(item.invokeSpec ? { invokeSpec: item.invokeSpec } : {}),
+            ...(item.idemKeyPolicy ? { idemKeyPolicy: item.idemKeyPolicy } : {}),
+            sourceManifest: { subsystemCode: clientCode, version: stamp, stamp },
+            ...gov,
+        }, { skillCode: u.skillCode })
+        await writeJournal({
+            skillCode: u.skillCode, skillName: item.skillName, actor: 'user', op: 'update',
+            actorUser: { userCode: curUserInfo.userCode, realName: curUserInfo.realName },
+            before: summarizeSkillForJournal(row),
+            after: summarizeSkillForJournal({ ...row, ...item, ...gov }),
+            evidence: [{ authReason: auth.reason, reconcile: 'update', diff: u.diff, stamp }],
+            reason: `清单对账变更（${u.diff.join(',')}）——回待审`,
+        })
+        touched.push(u.skillCode)
+        updated++
+    }
+
+    let added = 0
+    for (const item of plan.toAdd) {
+        const dupName = await grpcSkillDac.getOneByFilter({ skillName: item.skillName, status: { $ne: -1 } })
+        if (dupName) throw new Error(`新增条目 ${item.skillCode} 的 skillName 与库内他条冲突——整案中止（收缩序下已执行的 offline/update 保持事实，journal 可数）`)
+        const gov = governanceFieldsForWrite({
+            skill: null, newSkillMD: item.skillMD, newHash: md5(item.skillMD), actor: curUserInfo,
+        })
+        await grpcSkillDac.add({
+            skillCode: String(item.skillCode),
+            skillName: item.skillName, skillMD: item.skillMD, grpcHost, clientCode,
+            channels: item.channels,
+            effectClass: item.effectClass || 'guide',
+            browseGate: item.browseGate === undefined ? undefined : item.browseGate === true,
+            featurePrivs: Array.isArray(item.featurePrivs) ? item.featurePrivs : [],
+            ...(item.entry ? { entry: item.entry } : {}),
+            ...(item.invokeSpec ? { invokeSpec: item.invokeSpec } : {}),
+            ...(item.idemKeyPolicy ? { idemKeyPolicy: item.idemKeyPolicy } : {}),
+            sourceManifest: { subsystemCode: clientCode, version: stamp, stamp },
+            operator: { userCode: curUserInfo.userCode, realName: curUserInfo.realName },
+            status: 0,
+            ...gov,
+            reviewedBy: {$unset: true}, reviewedAt: null,
+        })
+        await writeJournal({
+            skillCode: String(item.skillCode), skillName: item.skillName, actor: 'user', op: 'add',
+            actorUser: { userCode: curUserInfo.userCode, realName: curUserInfo.realName },
+            before: null,
+            after: summarizeSkillForJournal({ ...item, reviewStatus: gov.reviewStatus, skillMDHash: gov.skillMDHash, contentVersion: 1, channels: item.channels, grpcHost, status: 0 }),
+            evidence: [{ authReason: auth.reason, reconcile: 'add', stamp }],
+            reason: '清单对账新增（默认待审核）',
+        })
+        touched.push(String(item.skillCode))
+        added++
+    }
+
+    // 陈旧 pending 行（manifest 缺席且本来就没在装配）：不劫持审核，只把事实挂进 note
+    let stalePending = 0
+    for (const sc of plan.stalePending) {
+        const row = byCode.get(String(sc))
+        await grpcSkillDac.update({ reviewNote: stalePendingNote(sc, stamp) }, { skillCode: sc })
+        stalePending++
+        void row
+    }
+
+    if (touched.length) await invalidateGrpcSkillCache()
+    logger.info(`功能清单对账 clientCode=${clientCode} stamp=${stamp || '-'} 下线=${offlined} 变更=${updated} 新增=${added} 保持=${plan.keep.length} 陈旧待审=${stalePending}`)
+    return {
+        reconciled: {
+            offlined, updated, added, kept: plan.keep.length, stalePending,
+        },
+        stamp, clientCode, at: now.toISOString(),
+    }
+}
+
 export async function enableGrpcSkill(curUserInfo, skillCode) {
     if (!skillCode) {
         throw new Error('缺少技能标识')

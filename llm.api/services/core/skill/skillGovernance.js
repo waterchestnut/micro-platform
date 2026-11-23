@@ -37,6 +37,11 @@ export const SKILL_ACTIONS = {
     ENABLE: 'enable',
     DISABLE: 'disable',
     REVIEW: 'review',
+    /**
+     * 目录对账（feature-map 刀3，W8）：manifest 是全量语义，**含"该删"的表达权**——
+     * 归属人无权单方删掉整批目录条目（投毒者最想要的正是这个批量面），不进 OWNER_ALLOWED。
+     */
+    RECONCILE: 'reconcile',
 }
 
 /** 哪些动作允许"技能归属人"自己做（不需要管理员） */
@@ -157,9 +162,13 @@ export function decideSkillWrite({action = '', actor = null, skill = null, polic
     if (ok) {
         return {allow: true, statusCode: 200, reason: isAdmin ? 'admin' : 'owner'}
     }
-    const denyReason = action === SKILL_ACTIONS.ADD || action === SKILL_ACTIONS.REVIEW
-        ? 'admin-required'
-        : 'not-owner-not-admin'
+    /**
+     * 拒绝措辞（刀3等价改写）：**不在 owner 可自助清单里的动作本就是管理动作**，
+     * 按集合取反而非逐个枚举——上一版枚举 ADD/REVIEW，reconcile 进来就会漏报成
+     * "not-owner-not-admin"（明明是 admin-only 动作却按归属失败叙述）。取反式对未来新增
+     * admin-only 动作自动正确（枚举式忘改=措辞漂移，这次是预防）。
+     */
+    const denyReason = OWNER_ALLOWED.has(action) ? 'not-owner-not-admin' : 'admin-required'
     /**
      * 应急开关只旁路"权限"这一层（身份缺失已经在上面拦掉了）。
      * 旁路时 reason 前面加 `enforce-off:` —— 上一版这里直接返回真实拒绝结论，

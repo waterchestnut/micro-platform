@@ -70,6 +70,53 @@ export function registerCommonRoutes(fastify, opts, tags = ['grpc-skill-ipmi']) 
         return await grpcSkillService.deleteGrpcSkill(request.userInfo, request.reqParams.skillCode)
     })
 
+    /**
+     * 功能清单对账（platform-feature-map 刀3，W8）：子系统发布时推"全量功能集"，
+     * 增/改/下线一次表达。admin 专属（批量下线权不给归属人）；空 items 拒（整码下线
+     * 不走本面）。原子预检+收缩序执行的纪律在 service 层，本端点只做形状与转发。
+     */
+    fastify.post('/reconcile', {
+        schema: {
+            description: '子系统功能清单对账（全量语义：增改下线一次表达，需平台管理员）',
+            summary: '功能清单对账',
+            body: {
+                type: 'object',
+                properties: {
+                    clientCode: {type: 'string'},
+                    grpcHost: {type: 'string'},
+                    stamp: {type: 'string', description: '对账批次戳（进审计，幂等溯源用）'},
+                    items: {type: 'array', items: {type: 'object'}},
+                },
+                required: ['clientCode', 'grpcHost', 'items'],
+            },
+            tags,
+            response: {
+                default: {
+                    type: 'object',
+                    properties: {
+                        code: {type: 'integer'},
+                        message: {type: 'string'},
+                        data: {
+                            type: 'object',
+                            properties: {
+                                reconciled: {
+                                    type: 'object',
+                                    properties: {
+                                        offlined: {type: 'integer'}, updated: {type: 'integer'}, added: {type: 'integer'},
+                                        kept: {type: 'integer'}, stalePending: {type: 'integer'},
+                                    },
+                                },
+                                stamp: {type: 'string'}, clientCode: {type: 'string'}, at: {type: 'string'},
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }, async function (request, reply) {
+        return await grpcSkillService.reconcileManifest(request.userInfo, request.reqParams)
+    })
+
     fastify.post('/enable', {
         schema: {
             description: '启用远程技能',
