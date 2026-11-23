@@ -74,12 +74,15 @@ const grpcSkillSchema = new Schema({
      */
     /** 目录三级效果（设计稿 §2）：guide=仅推荐引导；read=只读调用；write=有副作用（提案-确认-执行三段） */
     effectClass: {type: String, default: 'guide', enum: ['guide', 'read', 'write'], description: '功能效果级别'},
-    /** 可见/可用权限点（ucenter priv 系；默认随 {clientCode}-browse 与主应用菜单同源——"菜单可见=AI 可推荐"；空数组=平台公共） */
-    featurePrivs: {type: [String], description: '目录条目权限点（装配过滤与执行复验共用；空=公共）'},
+    /** 功能级权限点（属主 11-23 修正的两层模型：{clientCode}-browse=入口门，子系统内功能项另有细粒度 priv——
+     *  本字段**只存功能级**，入口门不重复登记（由 browseGate+clientCode 推导，单源）；空数组=入口内公共 */
+    featurePrivs: {type: [String], description: '功能级权限点（不含入口 browse；空=入口内公共）'},
+    /** 入口门控事实（来源=ucenter client 注册表 needAuth2Show，注册时同步）：true=可见性需 hasPriv({clientCode}-browse) */
+    browseGate: {type: Boolean, description: '入口是否受 {clientCode}-browse 门控（needAuth2Show 事实同步）'},
     /** 引导入口：url=主应用路由（/sub/{clientCode} 或主应用自身路由，D4 裁定禁子应用直链） */
     entry: {
         type: new Schema({
-            subsystem: {type: String, description: '所属子系统 clientCode（main=主应用自身，N1）'},
+            subsystem: {type: String, description: '所属子系统 clientCode（主应用条目的 clientCode=部署实测值（xxzx/micro 等），不硬编——属主 11-23 修正）'},
             menuPath: {type: String, description: '菜单路径文案（兜底引导面）'},
             url: {type: String, description: '主应用内访问路由（相对主应用根；不含域名——域名归部署环境）'},
         }, {_id: false}),

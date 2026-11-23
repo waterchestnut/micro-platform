@@ -40,7 +40,8 @@
   // —— 既有面：skillName / skillMD / channels / status / approveStatus / skillMDHash / contentVersion
   // —— 扩展面（NEW 字段）：
   effectClass:    'guide' | 'read' | 'write',     // 三级：仅引导 / 只读调用 / 有副作用操作
-  privs:          [String],                        // 可见/可用权限点（**默认挂 {clientCode}-browse 与主应用菜单同源**，更细粒度才自定义；空=平台公共）
+   featurePrivs:   [String],                        // 功能级权限点（子系统内细粒度；空=入口内公共）；browse 入口门不在此列（§9 两层模型，11-23 属主修正）
+   browseGate:     Boolean,                         // 入口门控事实（=client 注册表 needAuth2Show 同步）⇒ 需 hasPriv({clientCode}-browse)
   entry:          { subsystem, menuPath?, url? },  // 引导面：url=主应用路由（/sub/{clientCode} 或主应用自身路由，D4 裁定；禁子应用直链）
   invokeSpec:     { handler|api, paramsSchema, timeoutMs },  // read/write 的调用形状（复用现 grpcSkill 方法面）
   idemKeyPolicy:  'per-run' | 'explicit',          // write 必填（接 skillWrite 闸的键策略）
@@ -85,7 +86,7 @@
 ```
 用户 → [防线1 装配过滤] → 模型视野 → [防线2 执行复验] → 子系统 API → [防线3 审计]
 ```
-1. **防线 1 · 装配过滤**：`platform_features` 与技能清单装配时，按 `hasPriv(会话userCode, entry.privs)` 过滤——**用户无权限的功能对模型不存在**（不推荐、不提及：目录名本身可能是敏感信息，如未上线/内部子系统）。推荐即披露，披露即权限面。
+1. **防线 1 · 装配过滤**：`platform_features` 与技能清单装配时，按两层合取过滤（`browseGate ⇒ hasPriv({clientCode}-browse)` ∧ `hasPriv(featurePrivs)`，§9 权限两层模型）——**用户无权限的功能对模型不存在**（不推荐、不提及：目录名本身可能是敏感信息，如未上线/内部子系统）。推荐即披露，披露即权限面。
 2. **防线 2 · 执行复验**：工具被调用时，**服务端以会话 userCode 重跑 hasPriv**——不信任模型转述（模型可能幻觉出不存在的 privs 组合、被注入文案诱导、或拿错参数）。执行身份=该用户本人凭证（`user-info` 透传现形），调的 API 走子系统对 humans 的**同一条鉴权中间件**——AI 权限恒等于用户权限，不更高。
 3. **防线 3 · 审计**：每次目录检索/功能调用落账（§6），越权请求（防线 2 拒）单独标记上报——"模型被诱导尝试越权"是攻击面探测器。
 
@@ -125,19 +126,29 @@
 | D1 | **独立 priv** | `platform-catalog:manage` 覆盖注册/审核/下线全部写入口（单一管理 priv，不拆审核面）；ucenter 权限点建档=运维前置（点不存在时 hasPriv 全员 false——**含管理员**，reject 面先行可测，allow 面等权限数据就位，同 P-8 家规） |
 | D2 | 按建议 | 首批 2~3 子系统（learoad/raisef/callin 现有 read 技能升格）10~20 条 |
 | D3 | **复用 xxzx_common** | 域简介进该频道 sysPrompt（改动敏感面：默认关开关 `featureCatalog.enabled` 分叉，关时 sysPrompt 逐字现网——对齐"频道不新开、行为可回退"）；platform_features 工具按开关注入 |
-| D4 | **$wujie 主应用路由形态** | `entry.url` = 主应用访问链接（活码 `console/src/pages/Apps/Jump.tsx` + `app.tsx:65-72`：`/sub/{clientCode}` 或 visitPath 主应用路由规则）——**禁子应用直链**（旁路主应用=丢登录态/wujie 上下文/权限守卫）；主应用内部功能用主应用自身路由（`/home`、`/personal`、`/apps`） |
+| D4 | **$wujie 主应用路由形态** | `entry.url` = 主应用访问链接（活码 `console/src/pages/Apps/Jump.tsx` + `app.tsx:65-72`：`/sub/{clientCode}` 或 visitPath 主应用路由规则）——**禁子应用直链**（旁路主应用=丢登录态/wujie 上下文/权限守卫）；主应用内部功能用主应用自身路由（`/home`、`/personal`、`/apps`）；**privs 两层模型（同日属主修正）**：`{clientCode}-browse`=入口门，子系统内功能项另有功能级 priv——两道合取，见下 §9 权限两层模型 |
 | D5 | 复用 approval | 写面确认走调研线 approval 气泡语义（四端 provider 已消费，不造第五种题面协议） |
 | D6 | 自动转 pending | 探针判死 ⇒ `reviewStatus=pending` 自动下线 + runStats 吵（宁缺勿死链） |
 
 ### 裁定后新增的两条能力需求（同日属主令）
 
-**N1 主应用本身入册**：portal 主应用功能（首页/个人中心/应用市场/消息…）作为伪子系统注册（`clientCode='main'`），与 wujie 子应用同表同权限面（主应用静态菜单项=guide 级条目现成种子）。
+**N1 主应用本身入册**：portal 主应用功能（首页/个人中心/应用市场/消息…）入目录；**clientCode 不硬编**（部署可能注册为 xxzx/micro/…）——取 conf env `featureCatalog_mainClientCode`（Phase 1 落地），主应用条目与 wujie 子应用同表同两层权限面（主应用静态菜单项=guide 级条目现成种子）。
 
 **N2 机制同步底座（micro-platform）**：目录字段扩展、注册面收权、`platform_features` 工具、装配过滤——整套属**底座能力**（方案本身平台无关：目录是各平台自己的数据）。落地节奏=母本每刀判据+接线+探针，底座同刀镜像（既有镜像家规，含"测试文件用例数一起核"红线）；xxzx 侧与底座侧各自登记各自目录，共用同一套治理与消费代码。
 
-### 权限模型对齐主应用现状（D4/D1 落地时的活码发现，重要）
+### 权限两层模型（2026-11-23 属主修正，覆盖初稿"privs 默认挂 browse"的混谈）
 
-主应用菜单可见性=`needAuth2Show ⇒ authority: ["{clientCode}-browse"]`（`app.tsx:71`，经 `menuDataRender(..., currentUser.privs)` 过滤）。**目录的 privs 采用同一权限点命名系**：guide/read 条目默认挂 `{clientCode}-browse`——**"菜单里可见=AI 可推荐"零新体系**；功能级更细的可见性才用自定义 priv。防线 1 的过滤判据与防线 2 的复验都吃这同一系（ucenter 单源）。
+ucenter 权限系在本平台是**两层**的，目录判据必须分家：
+
+```
+条目可见/可用 = (browseGate ⇒ hasPriv("{clientCode}-browse"))   ← 入口门（子系统级）
+              ∧ hasPriv(∀ p ∈ featurePrivs)                      ← 功能级（子系统内细粒度，可空）
+```
+
+- **入口门**：`{clientCode}-browse` = "可以访问该子系统"（主应用菜单同源，`app.tsx:71`）。目录条目**不重复登记 browse**——由 `browseGate`（注册时同步 client 注册表 `needAuth2Show` 的事实）+ 条目 `clientCode` 推导，两处登记必分叉（D66 同源纪律）。`browseGate` 缺省/老数据 ⇒ 保守按 `true` 处理（入口制平台默认严）。
+- **功能级**：子系统内功能项可另有权限标识（如报表管理、审核类 priv），存 `featurePrivs`；空=入口内公共。**"菜单可见=AI 可推荐"只在无功能级细粒度时成立**——声明了 featurePrivs 的条目，两道都要过。
+- 防线 1（装配过滤）与防线 2（执行复验）**吃同一个合取判据纯件**（Phase 1 落 `decideFeatureAccess`，两处共用防漂移——与 skillGovernance 的 normalizeReviewStatus 同款单源纪律）。
+- **主应用 clientCode 不硬编**（D4/N1 修正）：主应用本身可能注册为 clientCode=`xxzx`/`micro`/…（部署而定）。主应用功能条目的入口门同样走"该 clientCode 的 browse（若注册表如此）"；实现上 `platform_features` 的装配上下文必须带**当次部署的主应用 clientCode 配置**（conf env，如 `featureCatalog_mainClientCode`），代码里不许出现字面 'main'。
 
 ## 10. 与既有各线的边界声明
 
