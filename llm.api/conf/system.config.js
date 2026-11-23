@@ -653,6 +653,22 @@ export default {
         /** 装配时校验内容哈希（防 rug pull）。默认开；关掉等于允许"批过之后偷偷改内容" */
         hashCheckEnabled: process.env['grpcSkill_hashCheckEnabled'] !== 'false',
     },
+    /**
+     * 功能目录（platform-feature-map Phase 1，R3-10 定稿形状）。**缺省全关**：
+     * enabled=false 时 sysPrompt 无静态钩子、platform_features 不注册、装配零触碰——
+     * 关=现网逐字不变（开关分叉纪律，同 conversationTaskQueue/fanOutOrchestration 家规）。
+     */
+    featureCatalog: {
+        enabled: process.env['featureCatalog_enabled'] === 'true',
+        /**
+         * 生效频道白名单（JSON 数组）。空=不开（W9：频道名是部署事实不是方案常量——
+         * xxzx 侧配 xxzx_common，底座平台配自己的名字；判据内禁硬编频道名）。
+         */
+        enabledChannels: process.env['featureCatalog_enabledChannels'] ? JSON.parse(process.env['featureCatalog_enabledChannels']) : [],
+        /** N1：主应用自身 clientCode（部署事实，代码禁字面 'main'；装配上下文注入条目推导用） */
+        mainClientCode: process.env['featureCatalog_mainClientCode'] || '',
+        searchTopK: Number(process.env['featureCatalog_searchTopK']) > 0 ? Number(process.env['featureCatalog_searchTopK']) : 5,
+    },
     cache: {
         skillEnabled: process.env['cache_skill'] !== 'false',
         skillTtlSeconds: Math.min(parseInt(process.env['cache_skillTtlSeconds'] || parseInt(process.env['cacheExpiresTime'] || 60 * 24 * 7) * 60) || 3600, 4 * 3600),

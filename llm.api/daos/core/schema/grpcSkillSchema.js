@@ -94,6 +94,8 @@ const grpcSkillSchema = new Schema({
             api: {type: String, description: '被调子系统接口标识（受控字典值，非自由 URL）'},
             paramsSchema: {type: Object, description: '入参 JSON Schema（服务端复验依据）'},
             timeoutMs: {type: Number, description: '调用超时'},
+            // W1 定稿声明位：身份类参数名单（执行壳以会话 userCode 强制覆写，模型给值不采信）
+            identityParams: {type: [String], description: '身份类入参名清单（B0-1 覆写依据；与 paramsSchema.x-identity 收敛单源）'},
         }, {_id: false}),
         description: '功能调用规格',
     },
