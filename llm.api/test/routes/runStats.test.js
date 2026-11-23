@@ -105,3 +105,21 @@ test('/runStats orchestration 面：编排七开关齐报且类型严（批⑧�
     // 测试环境无 env ⇒ 全默认关（开闸批的"关=现网"零漂移读数的面证明）
     assert.equal(oa.enabled, false); assert.equal(oa.layered, false); assert.equal(oa.autoFollow, false)
 })
+
+test('/runStats featureCatalog 面：enabled 布尔 + enabledChannels 数组 + 缺省全关（P6-dev 观测——env 没铺到 vs 铺了没人用一眼分诊）', async (t) => {
+    const app = await build(t)
+    const res = await app.inject({
+        method: 'POST', url: '/core/chat/runStats',
+        headers: {'user-info': ui}, payload: {},
+    })
+    const d = JSON.parse(res.payload).data
+    const fc = d.featureCatalog
+    assert.ok(fc && typeof fc === 'object', `featureCatalog 面缺席：${JSON.stringify(d).slice(0, 200)}`)
+    assert.equal(typeof fc.enabled, 'boolean', 'featureCatalog.enabled 必须布尔')
+    assert.ok(Array.isArray(fc.enabledChannels), 'enabledChannels 必须数组（W9：不硬编频道，读数面如实报配了哪些）')
+    assert.equal(typeof fc.mainClientCode, 'string', 'mainClientCode 必须串（N1 部署实测值，缺省空）')
+    assert.ok(fc.searchTopK > 0, 'searchTopK 正数（缺省 5）')
+    // 测试环境无 env ⇒ 缺省全关（"关=现网零影响"读数面）
+    assert.equal(fc.enabled, false)
+    assert.deepEqual(fc.enabledChannels, [])
+})

@@ -1402,6 +1402,21 @@ export default async function (fastify, opts) {
                     followSpawnCap: Number(oa.followSpawnCap) || 8,
                 }
             })(),
+            /**
+             * 功能目录开关面（P6-dev 开闸配套，"看不见就等于没有"家族同款）：装配是
+             * enabled × enabledChannels.includes(channel) 双闸（刀2 判据原形，runStats 面
+             * 照抄语义不另发明）。**诚实边界**：这是 http 进程自己的 env 真相，executor
+             * 面看 featureCallLog 行为读；生效判定 = chat 行为面 + featureCallLog 账面。
+             */
+            featureCatalog: (() => {
+                const fc = llm.config.featureCatalog || {}
+                return {
+                    enabled: fc.enabled === true,
+                    enabledChannels: Array.isArray(fc.enabledChannels) ? fc.enabledChannels : [],
+                    mainClientCode: fc.mainClientCode || '',
+                    searchTopK: Number(fc.searchTopK) || 5,
+                }
+            })(),
         }
     })
 }
