@@ -712,7 +712,7 @@ export async function reconcileManifest(curUserInfo, payload = {}) {
         if (content.scanHit) throw new Error(`${tag}: 正文命中注入判据 ${JSON.stringify(content.scanSummary || {})}`)
     }
 
-    const rows = (await grpcSkillDac.getTop(1000, { clientCode, status: { $ne: -1 } })) || []
+    const rows = (await grpcSkillDac.getTop(1000, { clientCode, status: 0 })) || []  // 形照 getGrpcSkillsByChannel 先例（$ne 算子形被 dac cast 拒——母本探针真链逼出，同款修复同步）
     const plan = planReconcile({ rows, items })
     const byCode = new Map(rows.map((r) => [String(r.skillCode), r]))
     const now = new Date()
@@ -772,6 +772,10 @@ export async function reconcileManifest(curUserInfo, payload = {}) {
 
     let added = 0
     for (const item of plan.toAdd) {
+        // 撞码防御（母本同款）：rows 只含 status:0 面，manifest 复用历史禁用/软删码时
+        // add 会插第二同码行（skillCode 索引非唯一）——整案中止优于脏行
+        const ghost = await grpcSkillDac.getByCode(String(item.skillCode))
+        if (ghost) throw new Error(`新增条目 ${item.skillCode} 与库内非活跃历史行撞码——manifest 复用历史码，整案中止请改码后重对账`)
         const dupName = await grpcSkillDac.getOneByFilter({ skillName: item.skillName, status: { $ne: -1 } })
         if (dupName) throw new Error(`新增条目 ${item.skillCode} 的 skillName 与库内他条冲突——整案中止（收缩序下已执行的 offline/update 保持事实，journal 可数）`)
         const gov = governanceFieldsForWrite({
