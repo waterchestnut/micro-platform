@@ -2036,6 +2036,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                         try { args = JSON.parse(toolCall?.function?.arguments || '{}') } catch { /* 按空参数，检索自会回 miss 形状 */ }
                         const content = await executeFeatureCatalogSearch({
                             keyword: String(args.keyword || ''), userCode: curUserInfo?.userCode || '', channel,
+                            conversationCode, runCode: messageCode,
                         })
                         return { toolCallId: toolCall.id, role: 'tool', name: FEATURE_SEARCH_TOOL_NAME, content }
                     }))

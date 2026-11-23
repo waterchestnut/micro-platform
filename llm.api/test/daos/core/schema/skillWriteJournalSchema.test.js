@@ -39,11 +39,17 @@ describe('2 状态出生与词表（判据 ↔ schema 对账）', () => {
         const M = mongoose.model('T_swj_enum', skillWriteJournalSchema)
         assert.ok(new M({idempotencyKey: 'k', status: 'DONE'}).validateSync()?.errors?.status)
     })
-    test('词表集合 = 判据认识的两种状态（done 走 replay、started 走 refuse；多一个都算漂移）', () => {
-        assert.deepEqual([...paths.status.enumValues].sort(), ['done', 'started'])
-        assert.deepEqual(skillWriteJournalSchema.STATUSES, ['started', 'done'])
+    test('词表集合 = 判据认识的四态（刀4 提案态：done replay、started refuse、proposed/abandoned 显式 refuse 档；多一个少一个都算漂移）', () => {
+        assert.deepEqual([...paths.status.enumValues].sort(), ['abandoned', 'done', 'proposed', 'started'])
+        assert.deepEqual([...skillWriteJournalSchema.STATUSES].sort(), ['abandoned', 'done', 'proposed', 'started'])
         assert.equal(decideSkillWriteGate({...W, existing: {status: 'done', resultSnapshot: ''}}).action, 'replay')
         assert.equal(decideSkillWriteGate({...W, existing: {status: 'started'}}).action, 'refuse')
+        assert.equal(decideSkillWriteGate({...W, existing: {status: 'proposed'}}).reason, 'proposed-unconfirmed')
+        assert.equal(decideSkillWriteGate({...W, existing: {status: 'abandoned'}}).reason, 'abandoned-hit')
+    })
+    test('default 保持 started（最小迁移：claim 不带 status 的现行写闸链路逐字不变；proposed 由提案层显式出生）', () => {
+        const M = mongoose.models.T_swj_def || mongoose.model('T_swj_def', skillWriteJournalSchema)
+        assert.equal(new M({idempotencyKey: 'k'}).toObject().status, 'started')
     })
     test('快照默认空串+truncated=false（started 行没资格携带内容）', () => {
         const M = mongoose.model('T_swj_snap', skillWriteJournalSchema)

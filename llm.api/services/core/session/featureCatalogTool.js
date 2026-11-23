@@ -55,11 +55,11 @@ export function isFeatureCatalogTool(name) {
  * @param {Object} [p.deps] 注入面 {readCatalogRows, fetchGrants, auditSink, topK, now}
  * @returns {Promise<String>} 工具回包
  */
-export async function executeFeatureCatalogSearch({ keyword = '', userCode = '', channel = '', deps = {} } = {}) {
+export async function executeFeatureCatalogSearch({keyword = '', userCode = '', channel = '', conversationCode = '', runCode = '', deps = {}} = {}) {
     const {
         readCatalogRows = defaultReadCatalogRows,
         fetchGrants = defaultFetchGrants,
-        auditSink = null,
+        auditSink = defaultAuditSink,
         topK = (llm.config.featureCatalog || {}).searchTopK || 5,
     } = deps
 
@@ -68,7 +68,7 @@ export async function executeFeatureCatalogSearch({ keyword = '', userCode = '',
         rows = await readCatalogRows({ channel })
     } catch (e) {
         logger.warn(`功能目录读取失败(检索如实报不可用): ${String(e?.message || e).slice(0, 200)}`)
-        return finish(auditSink, { userCode, channel, keyword, status: 'catalog-unreadable' },
+        return finish(auditSink, {kind: 'search', userCode, conversationCode, runCode, channel, keyword, status: 'catalog-unreadable', decision: 'unavailable'},
             JSON.stringify({ status: 'catalog-unreadable', hint: '功能目录暂时不可用，稍后再试；请勿据此推断平台没有相关功能。' }))
     }
 
@@ -90,7 +90,7 @@ export async function executeFeatureCatalogSearch({ keyword = '', userCode = '',
     } catch (e) {
         // V7：RPC 炸不跑"全拒"路径——故障与无权限必须两态（后者会把"你没权限"泄漏成推断面）
         logger.warn(`目录权限判定不可用(userCode=${userCode}): ${String(e?.message || e).slice(0, 160)}`)
-        return finish(auditSink, { userCode, channel, keyword, status: 'permission-service-unavailable' },
+        return finish(auditSink, {kind: 'search', userCode, conversationCode, runCode, channel, keyword, status: 'permission-service-unavailable', decision: 'unavailable'},
             JSON.stringify({ status: 'permission-service-unavailable', hint: '暂时无法确认功能权限，请稍后重试。' }))
     }
 
@@ -114,8 +114,9 @@ export async function executeFeatureCatalogSearch({ keyword = '', userCode = '',
     const out = { matched: res.matched, total: res.total }
     if (!res.matched.length) out.hint = '平台当前没有与此匹配的已上线功能；请如实告知用户，不要编造功能或入口，也不要据此断言平台不存在该能力（可能权限服务刚恢复后另有可见项）。'
     await finishAsync(auditSink, {
-        userCode, channel, keyword, status: 'ok',
-        matched: res.matched.map((m) => m.skillCode), visibleCount: visible.length, grantedCount: Object.keys(granted || {}).length,
+        kind: 'search', userCode, conversationCode, runCode, channel, keyword, status: 'ok', decision: 'ok',
+        matchedCount: res.matched.length, visibleCount: visible.length,
+        matched: res.matched.map((m) => m.skillCode), grantedCount: Object.keys(granted || {}).length,
     })
     return JSON.stringify(out)
 }
@@ -146,6 +147,13 @@ async function finishAsync(auditSink, rec) {
 async function defaultReadCatalogRows({ channel }) {
     const { getGrpcSkillsByChannel } = await import('../grpcSkill.js')
     return getGrpcSkillsByChannel(channel)
+}
+
+/** 默认审计：featureCallLog 只追加流水（log-and-forget——finishAsync 已兜抛错；
+ *  审计缺席坏观测面，不坏检索——与 settle 的"留痕失败不回滚主操作"同族分工） */
+async function defaultAuditSink(rec) {
+    const dac = (await import('../../../daos/core/dac/featureCallLogDac.js')).default
+    await dac.log({...rec, conversationCode: rec.conversationCode || '', runCode: rec.runCode || ''})
 }
 
 /**

@@ -56,14 +56,15 @@ test('LRU 到期即失效并计入统计', async () => {
 })
 
 test('LRU 覆盖同键不增长且刷新时间', async () => {
-  /** 留足时间余量：setTimeout 可能提前几毫秒触发，压线断言会变成随机失败 */
-  const lru = createLRU({max: 2, ttlMs: 50})
+  /** 墙钟比 1:6（窗口 600ms，两次间隔 100ms）：全量并发下定时器抖动几十 ms 是常态，
+   *  1:2 配比实测已现 flaky（2643 全量红/单跑绿的标本）——时间敏感用例的余量按抖动量级给，不按理论值给 */
+  const lru = createLRU({max: 2, ttlMs: 600})
   lru.set('a', 1)
-  await tick(30)
+  await tick(100)
   lru.set('a', 2)
   assert.equal(lru.size(), 1)
-  await tick(30)
-  /** 距首次写入已 60ms（>50），距最近写入 30ms：仍读到 2 说明重写重置了存活期 */
+  await tick(100)
+  /** 距首次写入 200ms（<600 但重写已发生），距最近写入 100ms：读到 2 说明存活期被重写重置 */
   assert.equal(lru.get('a'), 2, '重新写入应重置存活期')
 })
 

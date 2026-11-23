@@ -17,8 +17,10 @@
  * 接线方注入"启用且名单非空"两个事实，缺一不可——闸关着或名单空着都不许洗成 safe。
  */
 
-/** 决策理由全词表（穷举测试逐项断言；新状态进表必须同时进测试，不留 default 分支吞错） */
-export const GATE_REASONS = ['gate-off', 'not-write', 'no-key', 'done-hit', 'started-hit', 'unknown-status', 'first-seen']
+/** 决策理由全词表（穷举测试逐项断言；新状态进表必须同时进测试，不留 default 分支吞错）。
+ *  proposed-unconfirmed/abandoned-hit（feature-map 刀4）：写面三段式的 refusal 档——
+ *  闸见到未确认提案=模型绕过确认环直调，与 started-hit 同危险取向（宁拒不双跑/不静默执行）。 */
+export const GATE_REASONS = ['gate-off', 'not-write', 'no-key', 'done-hit', 'started-hit', 'unknown-status', 'first-seen', 'proposed-unconfirmed', 'abandoned-hit']
 
 /** started 形态回给模型的话——它要能明白"不是失败重来的理由，是别重做同一件事" */
 export const WRITE_STARTED_MSG = '写面幂等闸：同一 run 同一 toolCallId 有一次未完成的先前执行（副作用可能已发生），本次未重复执行；如需重做请发起新的调用'
@@ -78,7 +80,44 @@ export function decideSkillWriteGate({enabled = false, toolName = '', writeTools
         return {action: 'replay', reason: 'done-hit', snapshot: existing.resultSnapshot ?? '', truncated: !!existing.snapshotTruncated}
     }
     if (existing.status === 'started') return {action: 'refuse', reason: 'started-hit'}
+    // 刀4 两态：proposed=等人确认的存档，闸直调执行=绕过确认环（"写面不静默执行"红线的
+    // 运行时执法位）；abandoned=被重提案取代的死行，同 refuse（词表内显式处理，不落 unknown）
+    if (existing.status === 'proposed') return {action: 'refuse', reason: 'proposed-unconfirmed'}
+    if (existing.status === 'abandoned') return {action: 'refuse', reason: 'abandoned-hit'}
     return {action: 'refuse', reason: 'unknown-status'}
+}
+
+/**
+ * 提案判据（B0-2 出生段，纯函数；IO 归接线层）。
+ * @param {Object} params
+ * @param {Object|null} [params.existing] 同键账行现状（lookup 结果）
+ * @returns {{action: 'propose'|'repropose'|'refuse', reason: String}}
+ *  - propose：无账 ⇒ 新建 proposed 行（paramSnapshot+paramsHash 必填由接线层保证）
+ *  - repropose：同键旧行是 proposed ⇒ 旧行标 abandoned、新建（R3-5"一键至多一条活动提案"）
+ *  - refuse：同键已 started/done/abandoned——执行链已开过或已死透，重提案只会造出
+ *    第二个"等待确认"的假象（模型对同一 toolCallId 二次提案=行为漂移，拒并说清）
+ */
+export function decideProposal({existing = null} = {}) {
+    if (!existing) return {action: 'propose', reason: 'first-seen'}
+    if (existing.status === 'proposed') return {action: 'repropose', reason: 'repropose-supersede'}
+    if (existing.status === 'started') return {action: 'refuse', reason: 'already-started'}
+    if (existing.status === 'done') return {action: 'refuse', reason: 'already-done'}
+    return {action: 'refuse', reason: 'abandoned-or-unknown'}
+}
+
+/**
+ * 确认执行判据（B0-2 的"执行只认存档参数"执法位，纯函数）。
+ * @param {Object} params
+ * @param {Object|null} [params.existing] proposed 账行
+ * @param {String} [params.confirmHash] 确认请求携带的参数哈希（=提案时同一算法；防确认与执行间漂移）
+ * @returns {{action: 'proceed'|'refuse', reason: String, useParams?: String}}
+ *  proceed 只回存档 paramSnapshot——**调用方拿到什么执行什么，模型本轮再生成的参数不作数**。
+ */
+export function decideConfirm({existing = null, confirmHash = ''} = {}) {
+    if (!existing || existing.status !== 'proposed') return {action: 'refuse', reason: 'not-proposed'}
+    const stored = typeof existing.paramsHash === 'string' ? existing.paramsHash.trim() : ''
+    if (!stored || !confirmHash || stored !== confirmHash) return {action: 'refuse', reason: 'param-mismatch'}
+    return {action: 'proceed', reason: 'confirmed', useParams: existing.paramSnapshot ?? ''}
 }
 
 /**
@@ -96,5 +135,5 @@ export function clipSnapshot(text, maxChars = 0) {
 }
 
 export default {
-    GATE_REASONS, WRITE_STARTED_MSG, buildSkillWriteKey, matchWriteTool, decideSkillWriteGate, clipSnapshot,
+    GATE_REASONS, WRITE_STARTED_MSG, buildSkillWriteKey, matchWriteTool, decideSkillWriteGate, decideProposal, decideConfirm, clipSnapshot,
 }

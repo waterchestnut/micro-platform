@@ -13,6 +13,7 @@ import answerCacheSchema from './answerCacheSchema.js'
 import grpcSkillSchema from './grpcSkillSchema.js'
 import skillJournalSchema from './skillJournalSchema.js'
 import skillWriteJournalSchema from './skillWriteJournalSchema.js'
+import featureCallLogSchema from './featureCallLogSchema.js'
 import memoryEventSchema from './memoryEventSchema.js'
 import memoryCandidateSchema from './memoryCandidateSchema.js'
 import memoryAtomSchema from './memoryAtomSchema.js'
@@ -57,6 +58,7 @@ export const GrpcSkill = conn.model('GrpcSkill', grpcSkillSchema, 'grpcSkill')
 export const SkillJournal = conn.model('SkillJournal', skillJournalSchema, 'skillJournal')
 /** B-4 二期：skill 写面幂等账（claim→settle；不是审计表，与 SkillJournal 语义不同） */
 export const SkillWriteJournal = conn.model('SkillWriteJournal', skillWriteJournalSchema, 'skillWriteJournal')
+export const FeatureCallLog = conn.model('FeatureCallLog', featureCallLogSchema, 'featureCallLog')
 export const MemoryEvent = conn.model('MemoryEvent', memoryEventSchema, 'memoryEvent')
 export const MemoryCandidate = conn.model('MemoryCandidate', memoryCandidateSchema, 'memoryCandidate')
 export const MemoryAtom = conn.model('MemoryAtom', memoryAtomSchema, 'memoryAtom')

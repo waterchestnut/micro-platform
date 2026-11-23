@@ -9,7 +9,7 @@ import {describe, test} from 'node:test'
 import assert from 'node:assert/strict'
 import {
     GATE_REASONS, WRITE_STARTED_MSG,
-    buildSkillWriteKey, matchWriteTool, decideSkillWriteGate, clipSnapshot,
+    buildSkillWriteKey, matchWriteTool, decideSkillWriteGate, decideProposal, decideConfirm, clipSnapshot,
 } from '../../../../services/core/skill/skillWriteIdempotency.js'
 
 describe('buildSkillWriteKey（§7 line 741 口径）', () => {
@@ -94,6 +94,8 @@ describe('decideSkillWriteGate 决策表（穷举）', () => {
             {enabled: true, toolName: 'doc_api/upload', writeTools: W, key: K},
             {enabled: true, toolName: 'doc_api/upload', writeTools: W, key: K, existing: {status: 'done', resultSnapshot: ''}},
             {enabled: true, toolName: 'doc_api/upload', writeTools: W, key: K, existing: {status: 'started'}},
+            {enabled: true, toolName: 'doc_api/upload', writeTools: W, key: K, existing: {status: 'proposed'}},
+            {enabled: true, toolName: 'doc_api/upload', writeTools: W, key: K, existing: {status: 'abandoned'}},
             {enabled: true, toolName: 'doc_api/upload', writeTools: W, key: K, existing: {status: '?'}},
         ]
         for (const c of cases) {
@@ -124,5 +126,62 @@ describe('clipSnapshot（钳制如实打标）', () => {
         assert.deepEqual(clipSnapshot(null, 10), {text: '', truncated: false})
         assert.equal(clipSnapshot(undefined, 10).text, '')
         assert.equal(clipSnapshot({a: 1}, 100).text, '[object Object]')
+    })
+})
+
+// ===== 刀4：提案态决策（B0-2 参数冻结 / B0-3 任务级幂等 / R3-5 一键一活动提案）=====
+describe('decideSkillWriteGate 对提案两态（闸直调不许绕过确认环）', () => {
+    const W = {enabled: true, toolName: 'doc_api/upload', writeTools: ['doc_api/*'], key: 'm1:t1'}
+    test('proposed 行存在时闸再执行 ⇒ refuse proposed-unconfirmed（"写面不静默执行"的运行时执法位）', () => {
+        const d = decideSkillWriteGate({...W, existing: {status: 'proposed'}})
+        assert.equal(d.action, 'refuse'); assert.equal(d.reason, 'proposed-unconfirmed')
+    })
+    test('abandoned ⇒ refuse abandoned-hit（词表内显式态，不落 unknown-status）', () => {
+        const d = decideSkillWriteGate({...W, existing: {status: 'abandoned'}})
+        assert.equal(d.action, 'refuse'); assert.equal(d.reason, 'abandoned-hit')
+    })
+    test('GATE_REASONS 封闭集核对：新两态已入表（表进测试不进=本用例红）', () => {
+        assert.ok(GATE_REASONS.includes('proposed-unconfirmed') && GATE_REASONS.includes('abandoned-hit'))
+        const handled = ['gate-off', 'not-write', 'no-key', 'done-hit', 'started-hit', 'unknown-status', 'first-seen', 'proposed-unconfirmed', 'abandoned-hit']
+        for (const r of GATE_REASONS) assert.ok(handled.includes(r), '理由 ' + r + ' 无对应决策档')
+        for (const r of handled) assert.ok(GATE_REASONS.includes(r), '决策档 ' + r + ' 未进词表')
+    })
+})
+
+describe('decideProposal：提案出生判据', () => {
+    test('无账 ⇒ propose', () => {
+        assert.deepEqual(decideProposal({existing: null}), {action: 'propose', reason: 'first-seen'})
+    })
+    test('同键 proposed ⇒ repropose（同行存档更新——唯一索引兑现"一键至多一活动提案"）', () => {
+        assert.equal(decideProposal({existing: {status: 'proposed'}}).action, 'repropose')
+    })
+    test('started/done/abandoned/unknown ⇒ 全拒（执行链已开或已死透，二次提案=假象）', () => {
+        for (const [st, want] of [['started', 'already-started'], ['done', 'already-done'], ['abandoned', 'abandoned-or-unknown'], ['weird', 'abandoned-or-unknown']]) {
+            const d = decideProposal({existing: {status: st}})
+            assert.equal(d.action, 'refuse', st)
+            assert.equal(d.reason, want, st)
+        }
+    })
+})
+
+describe('decideConfirm：执行只认存档（B0-2）', () => {
+    const stored = {status: 'proposed', paramsHash: 'h1', paramSnapshot: '{"fileCode":"f1"}'}
+    test('hash 一致 ⇒ proceed 且 useParams=存档快照（不是模型本轮参数）', () => {
+        const d = decideConfirm({existing: stored, confirmHash: 'h1'})
+        assert.equal(d.action, 'proceed')
+        assert.equal(d.useParams, '{"fileCode":"f1"}')
+    })
+    test('hash 不符 ⇒ param-mismatch（提案后漂移/确认错对象，两种都不许执行）', () => {
+        assert.equal(decideConfirm({existing: stored, confirmHash: 'h2'}).reason, 'param-mismatch')
+        assert.equal(decideConfirm({existing: stored, confirmHash: ''}).reason, 'param-mismatch', '空确认哈希同样拒——"没带哈希"不是"哈希匹配"')
+    })
+    test('非 proposed 态 ⇒ not-proposed（started 已进执行链，迟到确认不许二次 proceed）', () => {
+        for (const st of ['started', 'done', 'abandoned', 'nope', undefined]) {
+            assert.equal(decideConfirm({existing: {status: st, paramsHash: 'h1'}, confirmHash: 'h1'}).reason, 'not-proposed', String(st))
+        }
+        assert.equal(decideConfirm({existing: null, confirmHash: 'h1'}).reason, 'not-proposed')
+    })
+    test('存档行缺 hash ⇒ param-mismatch（坏账不许被空对空放行——"不知道"站危险面）', () => {
+        assert.equal(decideConfirm({existing: {status: 'proposed', paramsHash: ''}, confirmHash: ''}).reason, 'param-mismatch')
     })
 })

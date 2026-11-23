@@ -69,6 +69,75 @@ export class SkillWriteJournalDac {
             {new: true},
         )
     }
+
+    // ===== 写面提案态（feature-map 刀4，B0-2）=====
+    // 一键一行的唯一索引天然兑现"至多一条活动提案"（R3-5 的实现演化：repropose=同行存档
+    // 更新而非弃旧插新——没有重复行窗口，abandoned 只留给"用户显式否决"）
+    /**
+     * @description 提案 create-once：插入成功返回 null（我是提案人）；行已存在返回旧行
+     * （proposed ⇒ 判据走 repropose；started/done/abandoned ⇒ refuse）。
+     * @param {Object} meta {key, runCode, toolCallId, toolName, conversationCode, userCode, paramSnapshot, paramsHash}
+     * @returns {Promise<Object|null>} 旧行或 null
+     */
+    async proposeOnce(meta = {}) {
+        if (!meta.key) throw new Error('skillWriteJournal.proposeOnce: key 不能为空')
+        if (!meta.paramsHash) throw new Error('skillWriteJournal.proposeOnce: paramsHash 必填（B0-2 确认比对的资本）')
+        return await SkillWriteJournal.findOneAndUpdate(
+            {idempotencyKey: meta.key},
+            {
+                $setOnInsert: {
+                    idempotencyKey: meta.key,
+                    runCode: meta.runCode || '',
+                    toolCallId: meta.toolCallId || '',
+                    toolName: meta.toolName || '',
+                    conversationCode: meta.conversationCode || '',
+                    userCode: meta.userCode || '',
+                    status: 'proposed',
+                    paramSnapshot: meta.paramSnapshot || '',
+                    paramsHash: meta.paramsHash,
+                    resultSnapshot: '',
+                    snapshotTruncated: false,
+                    insertTime: new Date(),
+                    updateTime: new Date(),
+                },
+            },
+            {upsert: true, new: false},
+        )
+    }
+
+    /**
+     * @description repropose：同键旧提案的参数存档更新（CAS 限 proposed，确认竞态下
+     * 行已被 confirm 转 started ⇒ 返回 null，调用方按"已确认不可改"处理）。
+     */
+    async updateProposed(key, {paramSnapshot = '', paramsHash = ''} = {}) {
+        if (!paramsHash) throw new Error('skillWriteJournal.updateProposed: paramsHash 必填')
+        return await SkillWriteJournal.findOneAndUpdate(
+            {idempotencyKey: key, status: 'proposed'},
+            {$set: {paramSnapshot, paramsHash, updateTime: new Date()}},
+            {new: true},
+        )
+    }
+
+    /**
+     * @description 确认转执行：proposed → started（CAS）。返回行=参数存档（proceed 后
+     * 执行侧用行里的 paramSnapshot，绝不回模型本轮参数——B0-2 执法位）。
+     */
+    async startConfirmed(key) {
+        return await SkillWriteJournal.findOneAndUpdate(
+            {idempotencyKey: key, status: 'proposed'},
+            {$set: {status: 'started', updateTime: new Date()}},
+            {new: true},
+        )
+    }
+
+    /** 显式否决：proposed → abandoned（CAS；超时不点=行留在 proposed，无害） */
+    async rejectProposed(key) {
+        return await SkillWriteJournal.findOneAndUpdate(
+            {idempotencyKey: key, status: 'proposed'},
+            {$set: {status: 'abandoned', updateTime: new Date()}},
+            {new: true},
+        )
+    }
 }
 
 export default new SkillWriteJournalDac()

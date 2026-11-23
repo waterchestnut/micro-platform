@@ -19,8 +19,11 @@ import mongoose from 'mongoose'
 
 const Schema = mongoose.Schema
 
-/** 状态词表（与判据 decideSkillWriteGate 的处理面一一对应；测试级对账防漂移） */
-const STATUSES = ['started', 'done']
+/** 状态词表（与判据 decideSkillWriteGate/confirm* 的处理面一一对应；测试级对账防漂移）。
+ *  proposed/abandoned（feature-map 刀4，B0-2/B0-3/R3-5）：写面"提案→确认→执行"三段的
+ *  前两态。proposed=参数快照已存档等人确认（**没执行，零副作用**）；abandoned=被同键
+ *  重提案取代或过期废弃。started 只在确认后出现——词表顺序即生命周期。 */
+const STATUSES = ['proposed', 'started', 'done', 'abandoned']
 
 /**
  * @description skillWriteJournal 的结构
@@ -43,7 +46,11 @@ const skillWriteJournalSchema = new Schema({
     toolName: {type: String, default: '', description: '工具名'},
     conversationCode: {type: String, default: '', description: '会话标识'},
     userCode: {type: String, default: '', description: '发起者'},
-    status: {type: String, enum: STATUSES, default: 'started', description: 'started|done'},
+    status: {type: String, enum: STATUSES, default: 'started', description: 'proposed|started|done|abandoned；default 保持 started=既有写面闸链路逐字现网（claim 不带 status 的现行形），proposed 行由提案层显式出生（最小迁移原则：default 变更=静默改存量语义）'},
+    /** 提案参数存档（B0-2：执行只认这里，模型二次生成的参数不作数）——proposed 行必填由判据层保证 */
+    paramSnapshot: {type: String, default: '', description: '提案时冻结的参数 JSON（确认执行的唯一参数源）'},
+    /** paramSnapshot 的哈希（确认时比对，漂移即拒）；md5 与 grpcSkill.skillMDHash 同口径=变更检测非对抗 */
+    paramsHash: {type: String, default: '', description: '参数快照哈希（md5）'},
     resultSnapshot: {type: String, default: '', description: 'done 时回放的 tool 消息 content'},
     snapshotTruncated: {type: Boolean, default: false, description: '快照是否被钳'},
     insertTime: {
