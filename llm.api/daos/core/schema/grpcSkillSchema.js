@@ -66,6 +66,45 @@ const grpcSkillSchema = new Schema({
     /** 内容版本号：每次正文变化 +1，让审计能说出"批的是第 3 版，现在跑的是第 5 版" */
     contentVersion: {type: Number, default: 0, description: '正文版本号（skillMD 每变一次 +1）'},
     tags: {type: [Tag], description: '标签'},
+    /**
+     * ===== 功能目录扩展面（platform-feature-map Phase 0，D1~D6 已裁）=====
+     * 声明纪律（本仓教训三连）：新字段必须声明进 schema，未声明=$set/bulkWrite 按 cast 静默丢。
+     * 默认值全部"零行为"：老记录不回填、装配链不读这些字段时行为逐字不变——
+     * 容器先于消费（Phase 1 的 platform_features 检索才吃它们）。
+     */
+    /** 目录三级效果（设计稿 §2）：guide=仅推荐引导；read=只读调用；write=有副作用（提案-确认-执行三段） */
+    effectClass: {type: String, default: 'guide', enum: ['guide', 'read', 'write'], description: '功能效果级别'},
+    /** 可见/可用权限点（ucenter priv 系；默认随 {clientCode}-browse 与主应用菜单同源——"菜单可见=AI 可推荐"；空数组=平台公共） */
+    featurePrivs: {type: [String], description: '目录条目权限点（装配过滤与执行复验共用；空=公共）'},
+    /** 引导入口：url=主应用路由（/sub/{clientCode} 或主应用自身路由，D4 裁定禁子应用直链） */
+    entry: {
+        type: new Schema({
+            subsystem: {type: String, description: '所属子系统 clientCode（main=主应用自身，N1）'},
+            menuPath: {type: String, description: '菜单路径文案（兜底引导面）'},
+            url: {type: String, description: '主应用内访问路由（相对主应用根；不含域名——域名归部署环境）'},
+        }, {_id: false}),
+        description: '功能入口（guide 级必填项，Phase 1 校验刀生效前允许缺席）',
+    },
+    /** 调用形状（read/write 消费面；Phase 1-3 才接线，此处只当容器） */
+    invokeSpec: {
+        type: new Schema({
+            api: {type: String, description: '被调子系统接口标识（受控字典值，非自由 URL）'},
+            paramsSchema: {type: Object, description: '入参 JSON Schema（服务端复验依据）'},
+            timeoutMs: {type: Number, description: '调用超时'},
+        }, {_id: false}),
+        description: '功能调用规格',
+    },
+    /** 写面幂等键策略（接 skillWriteIdempotency 闸；Phase 3 名单登记时读） */
+    idemKeyPolicy: {type: String, default: 'per-run', enum: ['per-run', 'explicit'], description: 'write 条目幂等键策略'},
+    /** 注册源溯源（子系统 manifest；version 变更由哈希/探针驱动回 pending 的 D6 面） */
+    sourceManifest: {
+        type: new Schema({
+            subsystemCode: {type: String, description: '注册来源子系统'},
+            version: {type: String, description: 'manifest 版本'},
+            stamp: {type: String, description: '内容戳（对齐 skillMDHash 家规）'},
+        }, {_id: false}),
+        description: '目录条目注册源',
+    },
     insertTime: {
         type: Date, default: function () {
             return new Date()
