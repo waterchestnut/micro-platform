@@ -30,14 +30,26 @@ const out = {}
 const TS = Date.now()
 const CONV = `p6fcprobe-${TS}`
 try {
-    // F1 部署面
+    // F1 部署面——分层分诊（§17 探针校表教训：auth 层/部署层/开关层各报各的，
+    // "token 无效"绝不能被吞成"开关没生效"——P6 首跑 10 轮空等的现形）
     const rs = await post('/core/chat/runStats', {}, 30000)
-    const fc = rs.j?.data?.featureCatalog ?? null
+    const j = rs.j || {}
+    if (j.data == null || (j.code != null && j.code !== 0 && j.code !== 200)) {
+        out.F1_layer = 'auth/gateway'
+        out.F1 = { status: rs.status, code: j.code, msg: String(j.msg || '').slice(0, 80) }
+        out.note = 'runStats 未返数据（token 过期/网关故障）——非本功能开闸问题，鉴权修复后再跑'
+        out.verdict = V; out.结论 = `auth 层失败(code=${j.code} msg=${String(j.msg || '').slice(0, 40)})：exit 4 语义，与功能目录开闸无关`
+        console.log(JSON.stringify(out, null, 1)); process.exit(4)
+    }
+    const fc = j.data.featureCatalog ?? null
     out.F1 = fc
     V.F1 = !!(fc && fc.enabled === true && (fc.enabledChannels || []).includes('xxzx_common'))
     if (!V.F1) {
-        out.note = 'featureCatalog 未生效（面缺席=镜像未到 / enabled=false=env 未铺 / 频道不在=配置漂移）——不测行为面'
-        out.verdict = V; out.结论 = '等待部署：exit 2 语义（复跑前先核 runStats）'
+        out.F1_layer = fc == null ? 'deploy(镜像未到)' : 'switch(env 未铺/漂移)'
+        out.note = fc == null
+            ? 'runStats 正常应答但 featureCatalog 面缺席 ⇒ 镜像未到（核母本 push 触发的构建是否滚完），不测行为面'
+            : `featureCatalog 面在但 enabled=${fc.enabled} channels=${JSON.stringify(fc.enabledChannels)} ⇒ env 未到 pod/配置漂移，核 jenkins yaml，不测行为面`
+        out.verdict = V; out.结论 = '等待部署/配置：exit 2 语义（' + out.F1_layer + '）'
         console.log(JSON.stringify(out, null, 1)); process.exit(2)
     }
     // F2 行为面：显式要求目录检索的题（意愿提升，不赌调用）
