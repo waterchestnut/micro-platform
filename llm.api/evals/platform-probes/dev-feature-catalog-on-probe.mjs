@@ -111,4 +111,4 @@ try {
     out.结论 = '执行异常，读数见上'
 }
 console.log(JSON.stringify(out, null, 1))
-process.exit(V.F1 && V.F2 ? 0 : 1)
+process.exit(V.F1 && V.F2 && V.F2b ? 0 : 1)
