@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 文档版本 | v0.4（2026-11-23：裁定落定 → 核查一 V1~V10（§11）→ 核查二 W1~W11（§12）；两轮修订均已织进正文，残留一致性三处同修） |
+| 文档版本 | v0.5（2026-11-23：裁定 → 核查一 V（安全）→ 核查二 W（一致性/载体）→ 核查三 R3（实现者 dry-run），三轮修订全部织进正文，记录 §11/§12/§13 |
 | 编制日期 | 2026-11-23 |
 | 适用 | `xxzx.*` 及所有 micro-platform 底座搭建的平台（方案平台无关：目录是数据不是代码） |
 | 主落点仓库 | `xxzx.llm.api`（装配与执行面）、`micro-platform`（底座镜像）、各子系统（注册源） |
@@ -70,13 +70,13 @@
 ### A 推荐与引导（guide 级 + 全目录检索面）
 - **两段注入，全目录永不进 prompt**：
   1. **域简介常驻**（sysPrompt 级，频道配置）：每子系统一行"能解决什么"，**不含权限敏感细节**——让模型知道"平台有哪些方向"从而发起检索，而不是直接背目录；
-  2. **按需检索工具 `platform_features`**（NEW，判据件+装配进技能链）：入参=意图关键词/子系统名；执行=拉当前会话 `userCode` 的可见目录（§5 过滤）→ 返回 top-k 条目（title/description/entry/引导话术原料）。**模型只能引用检索结果，不许自由生成入口**——目录里没有的功能，如实说"平台目前没有现成功能，建议…"（缺席不编造，本仓一贯纪律的 UI 化）。
+  2. **按需检索工具 `platform_features`**（NEW。载体定稿于核查三 R3-1：现状装配面是 `llmChat.js:522-603` 的 buildXxxTools 家族十二处注入口——**local 查询工具属这一族**（`buildFeatureCatalogTools()`，门 `featureCatalog.enabled`×enabledChannels`），**不是 grpcSkill**（那是远程方法形状，装"读本地目录"是错件；核查二"装配进技能链"的含混话就此钉死））：入参=意图关键词/子系统名；执行=拉当前会话 `userCode` 的可见目录（§5 过滤）→ 返回 top-k 条目（title/description/entry/引导话术原料）。**模型只能引用检索结果，不许自由生成入口**——目录里没有的功能，如实说"平台目前没有现成功能，建议…"（缺席不编造，本仓一贯纪律的 UI 化）。
 - 消费面：模型拿到条目后**说人话引导**（"你可以在 XX → YY 做这件事"），需要时附入口链接。
 
 ### B 直接调用
 - **B1 read（查询/统计/检索）**：沿用现 grpcSkill 方法面（在册 8 技能即此形状：res-discovery/learoad-stat/raisef-stat/user-score…）。执行前**服务端 hasPriv 复验**（§5），执行=现有工具调用通路，结果回会话。**Phase 1 全部开在这一级**——无副作用、账面无新增风险。
 - **B2 write（有副作用操作）**：三段式，全部用现成机制串：
-  1. **提案**：模型选 write 条目 → 装配层生成"我要替你做什么"确认题（含条目的副作用一句话 + 关键参数回显），经 **ask_user/await_input**（§7-1 在架）发回 UI；
+  1. **提案**：模型选 write 条目调 write 工具 → **工具壳直接挂确认题**（含条目副作用一句话+参数快照回显）——不赌模型自觉再调一次 ask_user；机制无新件：answerRouter 由 shell 携带 toolCall 发起 await_input 的先例在架（`llmChat.js:1553 synth 题面、:1949 同 scope`），本刀只是新调用位（核查三 R3-6）；
   2. **确认**：用户答复（MRTR `/answer`；approval 语义按 callin 线先例只认发起人）——未确认/超时 = 不执行（**永不静默执行副作用**）；
   3. **执行**：走 **skillWriteIdempotency 闸**（键= `${runCode}:${toolCallId}`，claim/done/refuse 账在架，P5 批名单登记本条目）——崩溃重放从"必然双跑"变"最多拒跑"；执行结果回会话。
   - 与 P5 的关系：本方案就是"写面技能上架"的具象——**P5 的开闸名单第一批 = 本目录的 write 条目**，两件事同批执行，互为前提。
@@ -113,7 +113,7 @@
 | Phase | 内容 | 验收 | 依赖 |
 |---|---|---|---|
 | **0 治理与容器**（**代码部分已备**——PR-E0.1 实查更正：六写入口授权+fail-closed+pending 默认+哈希全在架，含拒绝路径集成测试） | 剩余=①运维：ucenter 建 `platform-catalog:manage` 权限点 + env `grpcSkill_privCodes`；②本刀：目录扩展字段（schema 声明，默认值零行为） | 非管理员注册被拒（测试已在架）；扩展字段落库不静默丢（cast 用例） | 无 |
-| **1 推荐引导** | `platform_features` 检索工具（纯判据件+装配）；sysPrompt 域简介（频道级，默认关）；权限过滤+lru 键扩签名；审计账开写 | 越权条目对模型不可见（双用户对照 e2e）；引导引用只出自目录；runStats 面在账 | Phase 0 |
+| **1 推荐引导** | `platform_features` 检索工具（buildFeatureCatalogTools 家族位，R3-1 定稿）；域简介由目录生成（R3-7：槽预算/出槽如实复用 constraints.js 纪律，不新造截断面）；`decideFeatureAccess` 权限合取过滤；**conf 组定稿（核查三 R3-10）**：`featureCatalog: { enabled(env 缺省 false), enabledChannels(env JSON 数组，空=不开), mainClientCode(env，N1 部署值), searchTopK 默认 5 }`；reconcileManifest 对账接口（W8）随本 Phase；审计账开写 | 越权条目对模型不可见（双用户对照 e2e）；引导引用只出自目录；runStats 面在账 | Phase 0 |
 | **2 只读调用扩容** | read 条目按首批子系统铺开（候选：learoad/raisef/callin 统计面已存在→补"意图描述"即可用）；执行复验全量生效 | 真链 e2e：提问→工具→答案；复验拒越权 | Phase 1 |
 | **3 写面调用** | B2 三段式接通（ask_user 提案 + P5 skillWrite 名单同批）；确认文案模板（副作用一句话）；崩溃重放探针（journal 形状实测） | 未确认=零副作用；确认后执行成功；重放不双跑 | Phase 2 + UI 三仓点验（澄清面在架） |
 | **4 组合与自适应**（**预留不开工**） | fan-out taskMode 承载多步功能编排；跨会话的功能使用画像（记忆线接口） | 实测需求账出现才立项 | 真实使用量 |
@@ -175,7 +175,7 @@ ucenter 权限系在本平台是**两层**的，目录判据必须分家：
    以**会话 userCode 覆写**，模型给值不采信（比对不一致则拒并留痕）。这不是假想敌：在册
    `user-score`/`user-info` 技能入参就是工号，现状仅靠模型自觉——AI 替身取他人数据是最高危
    一条，**Phase 1 装配前必须先落**（判据件：paramsSchema 的身份字段标注 `x-identity: true`，
-   执行壳统一覆写）。身份字段清单按子系统评审登记，漏标=漏洞。
+   执行壳统一覆写）。身份字段清单按子系统评审登记，漏标=漏洞。**传递链取证（核查三 R3-3，疑虑已解除勿再设计**）：execChat 作用域常驻 `curUserInfo`（`llmChat.js:188-2433` 十八处现行使用），工具 handler 与执行壳同 scope 可及——身份值到得了执行层，不存在"再往下传一层"的断点。
    **载体断点如实记（核查二 W1）**：现状调用链=SKILL.md 方法定义 → toolManager 透传 args → grpc 直调，
    **不消费 invokeSpec.paramsSchema**——身份覆写不能只画在扩展字段上。执行改造点=grpcSkill 方法面
    （方法级 `identityParams: [参数名]` 声明，toolManager 调用壳强制覆写），与 invokeSpec.paramsSchema
@@ -186,7 +186,9 @@ ucenter 权限系在本平台是**两层**的，目录判据必须分家：
    语义的致命伤；哈希不符=拒绝执行并记审计。**载体=skillWriteJournal 行前移**：提案即建 journal
    行（status=`proposed`，含 paramSnapshot+hash），确认转 started，执行走既有 claim 壳；
    MRTR answerKey 与 journal key 同锚。不新建第二套"提案存储"（clarifyHold 住 root.params 是编排
-   专用结构，主会话轮没有 root，不能借用也不另造）。
+   专用结构，主会话轮没有 root，不能借用也不另造）。**proposed 残行生命周期（核查三 R3-5）**：
+   未确认的提案=正常废弃态不是执行态——同键重提案时旧 proposed 行标 abandoned（一键至多一条
+   活动提案）；存量 proposed 由 retention cron 按 TTL 收（journal 只长"发生过的事"，不长"没发生的事"）。
 3. **写面任务级幂等（V3）**：`${runCode}:${toolCallId}` 只防"同 run 崩溃重放"；**编排 retry=
    新行新 runCode ⇒ journal 必 miss ⇒ 外部动作双跑**。因此进入 Phase 3 名单的 write 条目
    **一律 `idemKeyPolicy:'explicit'`**，键=**意图轮锚 + 功能 + 业务参数哈希**三段：`messageCode(发起轮锚定)+featureCode+paramsHash`。
@@ -223,3 +225,18 @@ ucenter 权限系在本平台是**两层**的，目录判据必须分家：
 | V8改 | lru 键"频道×权限签名"方向错（签名近唯一=缓存退化+内存扩张） | 第一轮修订的工程过拟合 | 缓存粒度改 hasPriv 判定结果（priv 值级短 TTL），过滤每轮现算 |
 
 **元教训（两轮对比的价值）**：第一轮抓的是"缺失的防线"（V1~V10），第二轮抓到的大半是**第一轮修订自身引入的新问题**（W3/W11/W6/V8 四条）——修订不是终态检查点，修订本身要复查；设计稿核查应至少两轮，且第二轮明确以第一轮产物为攻击对象。
+
+## 13. 核查轮三记录（2026-11-23，实现者视角 dry-run："拿 v0.4 开工一版，看哪句写不下去"）
+
+与前两轮的差别：不再问"防线缺不缺"，而是逐判据走"文件放哪、谁调用、数据从哪来、现有件给不给"。产出 5 处 + 解除 1 疑：
+
+| # | 卡点 | 定性 | 定稿 |
+|---|---|---|---|
+| R3-1 | platform_features 载体未定——"装配进技能链"是含混话：技能链=grpcSkill=**远程方法形状**，本地查目录工具塞进去是错件 | 载体错配（前两轮的抽象语言没暴露，这一轮暴露了） | `buildFeatureCatalogTools()` 入 `llmChat.js:522-603` buildXxxTools 家族位，enabled×enabledChannels 门控 |
+| R3-6 | B2 确认环没定"谁发起题面"：写成"装配层生成确认题"但机制上 await 只由 ask_user 工具调用触发——若依赖模型自觉二次调题，模型忘了调=写操作静默丢失 | 赌模型行为的方案不是方案 | **工具壳直接挂题**；先例在架（:1553 shell 携 toolCall 发 synth 题、:1949 同 scope）——新调用位，非新机制 |
+| R3-5 | journal `proposed` 态（W2 引入）没定义残行生命周期：用户不确认的提案会永久堆积 | 第一轮修订（W2）自己引入的新账——核查二抓核查一，核查三抓核查二，同构复现 | 同键重提案旧行标 abandoned（一键至多一活动提案）；存量由 retention cron TTL 收 |
+| R3-10 | featureCatalog conf 组三处键名散在正文无定稿形状（enabled/enabledChannels/mainClientCode） | 配置文件面缺席（开工第一刀就是 conf，躲不掉） | Phase 1 行内定稿，缺省全关 |
+| R3-7 | 域简介"由目录生成"（W11）没接装配面的槽预算问题——简介长了塞不进 prompt 怎么办，前两代都没提 | 装配细节缺位 | 复用 constraints.js 槽纪律（装不下整条出槽+如实报告），不新造截断判据 |
+| R3-3 | （疑虑解除）身份覆写需要 userCode 到工具执行层——怀疑传递断链 | 取证后**不存在**：curUserInfo 常驻 execChat 作用域（18 处现行使用） | 登记取证结论，防止后人再"设计"一条不存在的通道 |
+
+**三轮对照的元结论**：核查一抓"防线缺失"（安全视角），核查二抓"修订自埋"（一致性视角），核查三抓"载体错配与赌模型行为"（实现视角）——三轮各自的盲区由下一轮补，**没有哪一轮能一锤定音**；三轮后判据基本落到了"有文件名和行号"的颗粒度，再往下的漏洞大概率只有真写代码才能现形（Phase 1 首刀自带）。
