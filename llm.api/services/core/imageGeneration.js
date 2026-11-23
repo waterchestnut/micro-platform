@@ -11,7 +11,7 @@
  *   放进响应 msg 前段，运维在调用方就能定位到"是中转站配置"还是"是参数"。
  */
 import {OpenAI} from 'openai'
-import {traceHeaders} from '../../tools/traceContext.js'
+import {traceHeaders, buildTrace} from '../../tools/traceContext.js'
 
 const SIZES = ['1024x1024', '1024x1536', '1536x1024', '512x512', '768x768', '1024x768', '768x1024']
 const MAX_PROMPT = 4000
@@ -40,7 +40,10 @@ export async function generateImage({prompt, size, llmModel}, context) {
     if (!cfg?.baseURL || !cfg?.apiKey) {
         return {code: 4001, msg: '文生图服务未配置', statusCode: 200}
     }
-    const client = new OpenAI({apiKey: cfg.apiKey, baseURL: cfg.baseURL, defaultHeaders: traceHeaders(context?.trace)})
+    // trace 可缺省（非 chat 链路无会话轮可导；空参进 traceHeaders 曾在 traceId 取值处崩——网关 500 实锤；
+    // buildTrace 两仓签名不一（xxzx 侧空参即 throw），这里不依赖它，直接给可缺省的轻量 trace）
+    const trace = context?.trace || {traceId: ''}
+    const client = new OpenAI({apiKey: cfg.apiKey, baseURL: cfg.baseURL, defaultHeaders: traceHeaders(trace)})
     try {
         const r = await client.images.generate({
             model: cfg.model,

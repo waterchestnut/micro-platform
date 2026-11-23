@@ -22,6 +22,15 @@ test('入参闸：空/超长/非法尺寸都被拒且不下游', async () => {
     assert.match(r3.msg, /尺寸不在支持列表/)
 })
 
+test('trace 缺省不崩（非 chat 链路无会话轮可导，500 回归哨——网关实锤 traceHeaders 空参崩教训）', async () => {
+    // 真触达：cfg 给假出口（端口 9 必挂）→ 流程必须走过 trace 行；修复前空参在这行崩 TypeError（500），修复后落上游失败信封
+    globalThis.llm = {config: {models: {relay_image_flash: {baseURL: 'http://127.0.0.1:9/v1', apiKey: 'x', model: 'image-flash'}}}, logger: {warn: () => {}}}
+    const r = await generateImage({prompt: 'an apple'}, undefined)
+    assert.ok(r && typeof r.code === 'number', '必须回信封不抛异常')
+    assert.ok([4001, 4002].includes(r.code), '应落参数/上游类失败码，实得 ' + r.code)
+    assert.ok(!String(r.msg).includes('undefined'), 'msg 不带实现细节')
+})
+
 test('image 族三档配置齐（relay 出口同址、真实模型名对）', () => {
     for (const k of ['relay_image_pro', 'relay_image_flash', 'relay_image_low']) {
         const m = relayModels[k]
