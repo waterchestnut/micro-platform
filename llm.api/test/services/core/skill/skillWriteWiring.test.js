@@ -90,3 +90,19 @@ describe('config：skillWriteIdempotency 默认关、env 严格开、名单从�
         assert.deepEqual(w.writeTools, ['doc_api/upload', 'ppt/gen/*'], '逗号切分必须去空白与空项')
     })
 })
+
+describe('grpcSkill：admin 判定=priv 真值主判据（属主判据——all 超管经 ucenter hasPriv 尊重，白名单只做兜底）', () => {
+    const code = codeOnly(read('services/core/grpcSkill.js')).join('\n')
+
+    test('priv 查询不跳过白名单用户（privGranted 恒真值，留痕 evidence 不失真）', () => {
+        assert.doesNotMatch(code, /privCodes\.length[^)]*adminUserCodes\.includes/,
+            '白名单短路回潮：白名单内超管不再被问 hasPriv——"all 尊重"退化成"名单内免检"，且审计 evidence.privGranted 恒 false')
+        const calls = code.split('await checkPrivAdmin(').length - 1
+        assert.equal(calls, 2, '写闸与审核闸两处都该查 priv 真值（实得 ' + calls + '=有闸漏配）')
+    })
+    test('checkPrivAdmin 走 grpc hasPriv（后端 privs 被网关清空，grpc 是唯一可信源）', () => {
+        assert.match(code, /return \(await hasPriv\(userCode, privCodes\)\) === true/,
+            'priv 判定不是 grpc hasPriv——照搬前端 privs.includes("all") 在后端恒 false（网关清空 privs）')
+        assert.match(code, /catch \(e\) \{[\s\S]{0,200}return false/, 'hasPriv 失败必须 fail-closed（依赖故障自动放行=后门）')
+    })
+})

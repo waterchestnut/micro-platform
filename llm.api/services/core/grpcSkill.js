@@ -83,6 +83,12 @@ async function writeJournal(entry) {
  * @param {String} userCode 用户标识
  * @param {String[]} privCodes 特权码清单
  * @returns {Promise<Boolean>} 结果
+ *
+ * 超管语义（属主判据 `privs.includes('all')` 的后端等价物）：ucenter 侧
+ * hasPriv(needPrivs, assignedPrivs) 对 assignedPrivs 含 'all' **无条件返真**
+ * （auth/index.js:95），所以本函数传任意 privCodes 都会给超管放行——
+ * 后端不能直接读 curUserInfo.privs（网关 checkAuth 注入前清空，auth/index.js:192），
+ * grpc 是唯一可信来源。
  */
 export async function checkPrivAdmin(userCode, privCodes) {
     if (!userCode || !privCodes.length) {
@@ -112,8 +118,18 @@ export async function checkPrivAdmin(userCode, privCodes) {
 export async function authorizeSkillWrite(curUserInfo, action, skill, policy = null) {
     const p = policy || governancePolicy()
     const userCode = curUserInfo?.userCode || ''
+    /**
+     * privGranted 是 ucenter 权限的**真值**（含 `all` 超管：ucenter hasPriv 对 assignedPrivs
+     * 含 'all' 直接返真，auth/index.js:95）——照属主判据全量查，白名单用户也不跳过：
+     * ① 后端 curUserInfo.privs 恒空（网关 checkAuth 注入前清空，auth/index.js:192"内容太多"），
+     *    前端 authority.ts 的 `privs.includes('all')` 约定在后端**不能字面照搬**，
+     *    grpc hasPriv 是它的忠实等价物——这正是"参考现有判断"在后端的正确落点；
+     * ② 留痕 evidence 记 privGranted，旧版白名单短路使它恒 false——超管批准在审计账上
+     *    显示成"纯白名单特权"，失真。
+     * adminUserCodes 保留为 OR 兜底（ucenter 不可达时白名单 admin 仍能管闸，fail-closed 不锁死）。
+     */
     let privGranted = false
-    if (p.privCodes.length && userCode && !p.adminUserCodes.includes(userCode)) {
+    if (p.privCodes.length && userCode) {
         privGranted = await checkPrivAdmin(userCode, p.privCodes)
     }
     const d = decideSkillWrite({action, actor: curUserInfo, skill, policy: {...p, privGranted}})
@@ -928,7 +944,7 @@ export async function reviewGrpcSkill(curUserInfo, skillCode, {to = '', reason =
      */
     const p = governancePolicy()
     let privGranted = false
-    if (p.privCodes.length && curUserInfo?.userCode && !p.adminUserCodes.includes(curUserInfo.userCode)) {
+    if (p.privCodes.length && curUserInfo?.userCode) {   // 同 authorizeSkillWrite：priv 真值全量查（all 超管经 hasPriv 尊重），白名单只做 OR 兜底
         privGranted = await checkPrivAdmin(curUserInfo.userCode, p.privCodes)
     }
     const d = decideReviewTransition({to, actor: curUserInfo, policy: {...p, privGranted}})

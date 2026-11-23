@@ -1416,6 +1416,20 @@ export default async function (fastify, opts) {
                     mainClientCode: fc.mainClientCode || '',
                     searchTopK: Number(fc.searchTopK) || 5,
                 }
+            })(),            /**
+             * 技能写面治理开关面（manage 链开闸配套，同族"看不见就等于没有"）：
+             * privCodes 是 manage 授权的主判据来源（含 all 超管经 ucenter hasPriv 尊重），
+             * adminUserCodes 只报**数量不报名单**（runStats 对全体登录用户开放，
+             * 管理员名单是枚举辅助——计数够对表"env 铺没铺到"，名单本身不该外泄）。
+             */
+            skillGovernance: (() => {
+                const gs = llm.config.grpcSkill || {}
+                return {
+                    enforce: gs.enforce !== false,
+                    privCodes: Array.isArray(gs.privCodes) ? gs.privCodes : [],
+                    adminUserCodesCount: Array.isArray(gs.adminUserCodes) ? gs.adminUserCodes.length : 0,
+                    hashCheckEnabled: gs.hashCheckEnabled === true,
+                }
             })(),
         }
     })

@@ -123,3 +123,23 @@ test('/runStats featureCatalog 面：enabled 布尔 + enabledChannels 数组 + �
     assert.equal(fc.enabled, false)
     assert.deepEqual(fc.enabledChannels, [])
 })
+
+test('/runStats skillGovernance 面：enforce/privCodes/名单计数/hashCheck 在账（manage 链观测——privCodes 没配 vs 配了没人授，一眼分诊）', async (t) => {
+    const app = await build(t)
+    const res = await app.inject({
+        method: 'POST', url: '/core/chat/runStats',
+        headers: {'user-info': ui}, payload: {},
+    })
+    const d = JSON.parse(res.payload).data
+    const gs = d.skillGovernance
+    assert.ok(gs && typeof gs === 'object', `skillGovernance 面缺席：${JSON.stringify(d).slice(0, 200)}`)
+    assert.equal(typeof gs.enforce, 'boolean', 'enforce 必须布尔')
+    assert.ok(Array.isArray(gs.privCodes), 'privCodes 必须数组（manage 主判据配没配到本进程，看这个）')
+    assert.equal(typeof gs.adminUserCodesCount, 'number', 'admin 面只报计数')
+    assert.equal(gs.hashCheckEnabled, true, '哈希核验缺省开（关=能 rug pull，缺省必须严）')
+    // 测试环境无 env ⇒ 治理缺省：enforce 开、privCodes 空、白名单空
+    assert.equal(gs.enforce, true)
+    assert.deepEqual(gs.privCodes, [])
+    assert.equal(gs.adminUserCodesCount, 0)
+    assert.equal('adminUserCodes' in gs, false, '管理员名单不得经 runStats 外泄（对全体登录用户是枚举辅助——只给计数）')
+})
