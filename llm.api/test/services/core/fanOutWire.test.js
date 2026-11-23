@@ -232,4 +232,11 @@ describe('功能目录刀2 装配面（llmChat/llmLoop 接线位钉桩，关=现
         const loop = linesOf('services/core/llmLoop.js').join('\n')
         assert.match(loop, /&& !isFeature\(tc\.function\?\.name\)/, 'otherCalls 取反串没带 feature——漏接的检索请求会被丢给 mcpToolManager')
     })
+    test('featureResults 结果键必须是 tool_call_id（下划线）——驼峰 toolCallId 会让前端"未知工具"（dev 实测回归哨）', () => {
+        const src = linesOf('services/core/llmChat.js').join('\n')
+        assert.match(src, /return \{ tool_call_id: toolCall\.id, role: 'tool', content \}/,
+            'featureResults 结果键回潮驼峰/或挂 name：:2080 nameById[tool_call_id] 反查取不到 → tool:null → 前端未知工具，且进模型的 tool 消息缺 tool_call_id 畸形')
+        assert.doesNotMatch(src, /return \{ toolCallId: toolCall\.id, role: 'tool'/,
+            'featureResults 又用驼峰 toolCallId——这正是"未知工具"的成因，禁止回潮')
+    })
 })

@@ -65,7 +65,7 @@ try {
         throw new Error('stream 非 SSE 响应（信封见 F2），人工分诊')
     }
     const txt = await sres.text()   // 流跑到收口才返回（同步会话）
-    let metaTools = null, matched = null, events = {}
+    let metaTools = null, matched = null, featureToolName = undefined, events = {}
     for (const line of txt.split('\n')) {
         if (!line.startsWith('data:')) continue
         let d = null
@@ -73,12 +73,16 @@ try {
         if (d.type === 'meta') metaTools = d.tools || []
         if (d.role === 'tool' && String(d.content || '').includes('"matched"')) {
             try { matched = JSON.parse(d.content) } catch { }
+            featureToolName = d.tool   // 帧上的工具名：修复前为 null（toolCallId 笔误），修复后应='platform_features'
         }
         events[d.type || d.role || 'other'] = (events[d.type || d.role || 'other'] || 0) + 1
     }
     out.F2 = { toolsHasPlatformFeatures: !!(metaTools && metaTools.includes('platform_features')), toolCount: metaTools ? metaTools.length : null, events }
     V.F2 = !!(metaTools && metaTools.includes('platform_features'))   // 装配面=开闸核心判据
-    out.F3 = { matchedCount: matched ? (matched.matched || []).length : null, entries: matched ? (matched.matched || []).map((m) => `${m.skillCode}/${m.effectClass}`) : null }
+    // 回归哨：tool_result 帧必须带工具名（前端据此显示，null=驼峰笔误回潮→"未知工具"）
+    out.F2b = { featureToolName }
+    V.F2b = featureToolName === 'platform_features'
+    out.F3 = { matchedCount: matched ? (matched.matched || []).length : null, entries: matched ? (matched.matched || []).map((m) => `${m.skillCode}/${m.effectClass}/entry=${m.entryUrl || '(空)'}`) : null }
     V.F3 = !!(matched && (matched.matched || []).length > 0)
     // ===== 账面：featureCallLog 按探针 conv 读回 =====
     await new Promise((r) => setTimeout(r, 5000))
@@ -97,8 +101,9 @@ try {
     }
     out.verdict = V
     out.结论 = V.F2
-        ? (V.F3 && V.L ? `P6-dev 开闸全真：配置面+装配面+检索链(${out.F3.matchedCount} 条命中)+账面(${rows.length} 行)`
-            : 'P6-dev 装配面生效（tools 含 platform_features）；检索链/账面读数见上')
+        ? (V.F2b && V.F3 && V.L
+            ? `P6-dev 开闸全真：配置面+装配面+工具名在帧(${featureToolName})+检索链(${out.F3.matchedCount} 条命中)+账面(${rows.length} 行)`
+            : (V.F2b ? '装配面生效；检索链/账面读数见上' : '⚠ 装配面生效但 tool_result 帧工具名=' + JSON.stringify(featureToolName) + '（前端会显示"未知工具"——tool_call_id 笔误回潮，核 llmChat featureResults）'))
         : 'F1 过而 F2 装配面未过——检查 executor/http 镜像与频道（读数见上）'
 } catch (e) {
     out.error = String(e?.message || e).slice(0, 300)

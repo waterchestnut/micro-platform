@@ -36,7 +36,7 @@ import {buildPlanTools, isPlanTool, planToolEnabled, executePlanTool} from './se
 import {buildSaveArtifactTools, isSaveArtifactTool, saveArtifactToolEnabled, executeSaveArtifactTool} from './artifact/saveArtifactTool.js'
 import {buildReadArtifactTools, isReadArtifactTool, executeReadArtifactTool} from './artifact/readArtifactTool.js'
 import {buildReadAttachmentTools, isReadAttachmentTool, executeReadAttachmentTool} from './attachment/readAttachmentTool.js'
-import {buildFeatureCatalogTools, isFeatureCatalogTool, executeFeatureCatalogSearch, FEATURE_SEARCH_TOOL_NAME} from './session/featureCatalogTool.js'
+import {buildFeatureCatalogTools, isFeatureCatalogTool, executeFeatureCatalogSearch} from './session/featureCatalogTool.js'
 import {buildClarifyRequestTools, isClarifyRequestTool, parseClarifyRequest, CLARIFY_TOOL_NAME} from '../agent/clarifyBubble.js'
 import {withRecitation, planForPersistence, seedPlanFromPrior} from './session/planAssembly.js'
 import {decideCompletionSelfCheck, buildSelfCheckHint, interpretSelfCheckReply} from './session/planState.js'
@@ -2038,7 +2038,13 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                             keyword: String(args.keyword || ''), userCode: curUserInfo?.userCode || '', channel,
                             conversationCode, runCode: messageCode,
                         })
-                        return { toolCallId: toolCall.id, role: 'tool', name: FEATURE_SEARCH_TOOL_NAME, content }
+                        /**
+                         * 键必须是 `tool_call_id`（下划线）：:2080 靠 nameById[toolResult.tool_call_id] 反查
+                         * 工具名下发给前端，写成驼峰 toolCallId 会取到 undefined → tool:null → 前端"未知工具"
+                         * （dev 实测回归哨）。且这条消息会原样进模型上下文，缺 tool_call_id 是 OpenAI 格式畸形。
+                         * 不带 name 字段：框架只认反查，结果上挂 name 是"看着带了名实则没人读"的错觉。
+                         */
+                        return { tool_call_id: toolCall.id, role: 'tool', content }
                     }))
                     if (otherCalls.length) {
                         /**
