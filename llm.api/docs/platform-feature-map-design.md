@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 文档版本 | v0.3（2026-11-23 属主裁定落定 + 核查轮 V1~V10 修订入正文，§11 留核查记录） |
+| 文档版本 | v0.4（2026-11-23：裁定落定 → 核查一 V1~V10（§11）→ 核查二 W1~W11（§12）；两轮修订均已织进正文，残留一致性三处同修） |
 | 编制日期 | 2026-11-23 |
 | 适用 | `xxzx.*` 及所有 micro-platform 底座搭建的平台（方案平台无关：目录是数据不是代码） |
 | 主落点仓库 | `xxzx.llm.api`（装配与执行面）、`micro-platform`（底座镜像）、各子系统（注册源） |
@@ -62,6 +62,7 @@
   2. **入口活性探针**：定时任务对 guide/read/write 条目的 `entry.url` / `invokeSpec.api` 做轻量可达探测（不执行副作用）。**判死标准（V6，防 D6 自动下线误杀）**：401/403=**活着**（恰恰证明入口存在且受保护），只有超时/DNS 失败/持续 5xx 且**连续两轮**确认才标 stale；首轮可疑只记 runStats 计数；
   3. manifest `version/stamp` 入条目（平台版本闸同族思路），对账可溯源。
 - **生命周期**：pending（新/变更）→ approved（管理员审核，**skillScan 必须先过**——目录正文进 prompt 即注入面）→ active → stale/offline。
+- **对账接口（核查二 W8，真实缺口）**：manifest 的语义是"该子系统**全量**功能集"，而 grpcSkill 现状只有单条 add/update——**子系统删了功能，llm.api 侧永远不知道**（条目成僵尸，推荐引导到不存在的东西）。Phase 1 新增 `reconcileManifest(clientCode, items[], stamp)` 批量对账：upsert 新增/变更（走哈希→pending 不变）、**manifest 缺席的该码条目 ⇒ 转 pending reason=`manifest-removed`**（下线亦过审一步，不静默删；删除动作归 manage priv 审计）。单条 add 面保留（散件注册场景）。
 - **治理前置（2026-11-23 开工前实查更正）**：设计初稿引的"零权限判断"是 `skillGovernance.js` 头注里 **2026-11-13 的历史快照**——**PR-E0.1 早已把这条修完**：`authorizeSkillWrite` 挂全部六个写入口（add/update/delete/enable/disable/review，判据先于内容校验、先于落库）、ucenter `hasPriv(userCode, privCodes)` fail-closed（ucenter 挂了=无权限，不留自动放行后门）、`reviewStatus` 默认 pending 不进装配、`skillMDHash` 防 rug-pull、拒绝回 4xx 且集成测试在架（`test/routes/grpcSkillAuth.test.js`）。**Phase 0 的真实剩余=运维数据**：①ucenter 建档独立 priv 点（D1 裁定 `platform-catalog:manage`）②env `grpcSkill_privCodes='["platform-catalog:manage"]'`（过渡兜底 `grpcSkill_adminUserCodes` 清单）③dev/生产各自配置。**代码零新增即达标**，本方案开工不被治理卡。
 
 ## 4. 会话内消费链
@@ -79,6 +80,7 @@
   2. **确认**：用户答复（MRTR `/answer`；approval 语义按 callin 线先例只认发起人）——未确认/超时 = 不执行（**永不静默执行副作用**）；
   3. **执行**：走 **skillWriteIdempotency 闸**（键= `${runCode}:${toolCallId}`，claim/done/refuse 账在架，P5 批名单登记本条目）——崩溃重放从"必然双跑"变"最多拒跑"；执行结果回会话。
   - 与 P5 的关系：本方案就是"写面技能上架"的具象——**P5 的开闸名单第一批 = 本目录的 write 条目**，两件事同批执行，互为前提。
+- **B2 作用域红线（核查二 W10）**：写面三段式**只开在主会话轮**。编排 child 挂 write 工具=死锁陷阱——child 红线是"不注册 ask_user、绝不挂起等人拖死树"（`agentChat.js:13` 在架注），提案发不出去也等不了确认。装配判据 `decideFeatureToolScope({isOrchestratedChild})` ⇒ child 只见 guide/read；编排内需要 write 的正确走法=该操作留在主会话轮完成、树才继续（或将来的 §7-1 冒泡专项裁定）。**Phase 3 不做编排内写面，边界登记不装看不见**。
 - **B3 多步组合**（跨功能的"帮我完成 X"）：**Phase 4 之前不做**。判定推迟的理由：单工具调用+引导尚未有真实使用读数，组合拆解=在没有分母的面上开编排复杂度。真需求出现时载体现成（taskMode fan-out）。
 
 ## 5. 权限模型（方案的生命线——三段防线）
@@ -90,9 +92,11 @@
 2. **防线 2 · 执行复验**：工具被调用时，**服务端以会话 userCode 重跑 hasPriv**——不信任模型转述（模型可能幻觉出不存在的 privs 组合、被注入文案诱导、或拿错参数）。执行身份=该用户本人凭证（`user-info` 透传现形），调的 API 走子系统对 humans 的**同一条鉴权中间件**——AI 权限恒等于用户权限，不更高。**参数面同受本防线（B0-1/B0-2）**：privs 对了不代表参数对了，身份覆写与参数冻结在执行壳强制。
 3. **防线 3 · 审计**：每次目录检索/功能调用落账（§6），越权请求（防线 2 拒）单独标记上报——"模型被诱导尝试越权"是攻击面探测器。
 
-性能纪律（V8）：每轮装配对条目逐条 RPC hasPriv 不可接受——**priv 判定按 run 首查批量**（needPrivs 全集去重一次 hasPriv），run 内复用快照；撤销生效窗=run 粒度（下一个 run 生效，与"角色变化处理"同条纪律，不额外承诺实时性）。
+性能纪律（V8 修正于核查二）：缓存对象是 **hasPriv 判定结果**（priv 值级、TTL≤60s 短缓存），不是"过滤后的目录"——过滤每轮现算（目录≤百条量级，内存合取成本可忽略）。原"lru 键=频道×权限签名"作废：签名空间近唯一（每用户一槽），缓存退化+内存扩张，方向错了。run 内快照复用仍成立；撤销生效窗=run 粒度，不承诺实时。
 
-角色变化处理：目录过滤发生在**每轮装配**（不缓存跨用户结果——lru 键必须含权限签名维度，现有 skill lru 键"频道"级，扩为"频道×privs 摘要"，否则 A 用户的缓存喂给 B 用户=权限泄漏的第三条路）。
+**域简介单源（核查二 W11——第一轮修订自己埋的第二个源）**：sysPrompt 域简介**由目录生成**（enabledChannels × guide 级 approved 行聚合，装配期拼接），**不是人工维护的频道文案**——手添子系统忘改简介=漂移新源，违反本方案自己的同源纪律。人工侧只保留一句静态钩子（"平台有功能目录，需要时用 platform_features 检索"），零功能名词。
+
+角色变化处理：目录过滤发生在**每轮装配、现算**（核查二修正落点：过滤后的装配产物**不做跨用户缓存**——A 用户的可见集喂给 B 用户=权限泄漏第三条路，解法不是把缓存键做得更聪明，是没权限的产物根本不进缓存；允许缓存的只有 hasPriv 判定值与目录原始行，两者天然按 code/priv 分键）。
 
 ## 6. 审计与观测
 
@@ -123,7 +127,7 @@
 - **运维数据未就位时 write/review 面不开工**：治理代码已备（PR-E0.1 实查更正），但 `privCodes` 未配 + ucenter 权限点未建档 ⇒ hasPriv 全员 false ⇒ 没人能注册/审核——write 条目上架前这两件必须先落（reject 面反向验证可用，allow 面依赖权限数据）。
 - **不做运行时爬菜单自动生成**：扫描只作离线初稿工具；入目录必须过人审+skillScan。
 - **不提前建 B3 组合编排**：没账不造刀（编排线 M4 当年"不做依赖调度不承诺"的同款自律）。
-- **lru 键不带权限维度 = 事故**：装配缓存必须按"频道×权限签名"分片（防线 1 的实现陷阱，单独立用例）。
+- **过滤后的目录产物绝不进跨用户缓存**（核查二修正落点）：防线 1 的实现陷阱不变，但解法定为"产物不缓存、每轮现算"（缓存只允许 hasPriv 判定值级短 TTL）——用"权限签名当缓存键"是错误方向（键近唯一=缓存退化，见 §12 V8改）。
 - **模型参数里没有"可信的 userCode"**（B0-1）：身份类参数一律服务端覆写；子系统侧"信任上游传的工号"的接口在挂入 read/write 名单前必须先收口参数面鉴权（AI 代理调用的子系统侧改造义务，随注册评审）。
 - **确认了什么就执行什么**（B0-2）：执行参数=提案存档参数，重算即拒；不存在"模型记得用户批准过"。
 - **per-run 幂等键的条目不进写面名单**（B0-3）：跨 run 稳定性是 Phase 3 名单准入门槛。
@@ -134,7 +138,7 @@
 |---|---|---|
 | D1 | **独立 priv** | `platform-catalog:manage` 覆盖注册/审核/下线全部写入口（单一管理 priv，不拆审核面）；ucenter 权限点建档=运维前置（点不存在时 hasPriv 全员 false——**含管理员**，reject 面先行可测，allow 面等权限数据就位，同 P-8 家规） |
 | D2 | 按建议 | 首批 2~3 子系统（learoad/raisef/callin 现有 read 技能升格）10~20 条 |
-| D3 | **复用 xxzx_common** | 域简介进该频道 sysPrompt（改动敏感面：默认关开关 `featureCatalog.enabled` 分叉，关时 sysPrompt 逐字现网——对齐"频道不新开、行为可回退"）；platform_features 工具按开关注入 |
+| D3 | **复用 xxzx_common** | 域简介进该频道 sysPrompt（改动敏感面：默认关开关 `featureCatalog.enabled` 分叉，关时 sysPrompt 逐字现网——对齐"频道不新开、行为可回退"）；platform_features 工具按开关注入。**频道白名单走 env** `featureCatalog_enabledChannels`（核查二 W9：D3 的"复用 xxzx_common"是 xxzx 部署决定——底座平台频道名不同，micro_common 先例在案；代码/判据禁硬编频道名，白名单空=不开，缺省即拒） |
 | D4 | **$wujie 主应用路由形态** | `entry.url` = 主应用访问链接（活码 `console/src/pages/Apps/Jump.tsx` + `app.tsx:65-72`：`/sub/{clientCode}` 或 visitPath 主应用路由规则）——**禁子应用直链**（旁路主应用=丢登录态/wujie 上下文/权限守卫）；主应用内部功能用主应用自身路由（`/home`、`/personal`、`/apps`）；**privs 两层模型（同日属主修正）**：`{clientCode}-browse`=入口门，子系统内功能项另有功能级 priv——两道合取，见下 §9 权限两层模型 |
 | D5 | 复用 approval | 写面确认走调研线 approval 气泡语义（四端 provider 已消费，不造第五种题面协议） |
 | D6 | 自动转 pending | 探针判死 ⇒ `reviewStatus=pending` 自动下线 + runStats 吵（宁缺勿死链） |
@@ -161,7 +165,7 @@ ucenter 权限系在本平台是**两层**的，目录判据必须分家：
 
 ## 10. 与既有各线的边界声明
 
-- **vs grpcSkill 现状**：不是替换是收编——8 个在册技能=Phase 2 的存量种子（补 featurePrivs/effectClass/description 后升格为目录条目）。**存量迁移义务（V10）**：effectClass 缺省 guide ⇒ 升级落库后这 8 条会"从被调用降级为只被推荐"——Phase 2 前置=人工逐条核定 effectClass/featurePrivs/browseGate 的迁移脚本（dry-run/confirm 形制），核定前装配面对无 effectClass 的存量行**按原行为直通**（不因容器字段缺省而改变现网调用面——"默认关=现网"纪律在存量数据上的镜像）。
+- **vs grpcSkill 现状**：不是替换是收编——8 个在册技能=Phase 2 的存量种子（补 featurePrivs/effectClass/description 后升格为目录条目）。**存量迁移义务（V10）**：effectClass 缺省 guide ⇒ 升级落库后这 8 条会"从被调用降级为只被推荐"——Phase 2 前置=人工逐条核定 effectClass/featurePrivs/browseGate 的迁移脚本（dry-run/confirm 形制），核定前装配面对无 effectClass 的存量行**按原行为直通**（不因容器字段归一而改变现网调用面——"默认关=现网"纪律在存量数据上的镜像）。**归一单源（核查二 W6）**：`decideEffectClass(skill)` 纯函数——字段存在⇒取字段；**缺失⇒legacyPassthrough（read 面允许，guide 引导照常）**；schema default:`guide` 只约束**新写入**行，装配判据不吃 schema 默认（两处判据必分叉——normalizeReviewStatus 同款纪律的第 N 次应用）。
 - **vs skillWrite P5**：P5 是"闸"，本方案 Phase 3 是"过闸的第一批活物"；开闸批与 write 条目上架**同批互锁**（名单空=闸零载的现状，正是为这一天留的）。
 - **vs 编排线（fan-out）**：B3 预留面，当前唯一交集=若用户从任务模式进，功能调用作为 child 工具出现（工具装配天然覆盖，无需改编排判据）。
 - **vs 记忆线 constraints**：permission 类约束的渲染纪律（整条进出/出槽 violations）作为目录过滤进 prompt 的性格模板；两系统不合并（一个是"用户给 AI 的规矩"，一个是"平台给用户的门"）。
@@ -172,13 +176,24 @@ ucenter 权限系在本平台是**两层**的，目录判据必须分家：
    `user-score`/`user-info` 技能入参就是工号，现状仅靠模型自觉——AI 替身取他人数据是最高危
    一条，**Phase 1 装配前必须先落**（判据件：paramsSchema 的身份字段标注 `x-identity: true`，
    执行壳统一覆写）。身份字段清单按子系统评审登记，漏标=漏洞。
-2. **确认参数冻结（V2）**：write 提案生成时把完整参数快照+哈希落库（随 answerKey=toolCallId 锚），
-   执行**只认存档参数**——提案回显与执行之间隔着模型的另一次生成，"确认 A 执行 B"是
-   approval 语义的致命伤；哈希不符=拒绝执行并记审计。
+   **载体断点如实记（核查二 W1）**：现状调用链=SKILL.md 方法定义 → toolManager 透传 args → grpc 直调，
+   **不消费 invokeSpec.paramsSchema**——身份覆写不能只画在扩展字段上。执行改造点=grpcSkill 方法面
+   （方法级 `identityParams: [参数名]` 声明，toolManager 调用壳强制覆写），与 invokeSpec.paramsSchema
+   收敛为同一份声明（Phase 1 定稿字段位置，两处并存必分叉）。未声明 identityParams 的在册方法=该洞
+   存量，迁移核定逐条补（V10 清单成员，不是新工单）。
+2. **确认参数冻结（V2，载体定稿于核查二 W2）**：write 提案生成时把完整参数快照+哈希落库，
+   执行**只认存档参数**——提案回显与执行之间隔着模型的另一次生成，"确认 A 执行 B"是 approval
+   语义的致命伤；哈希不符=拒绝执行并记审计。**载体=skillWriteJournal 行前移**：提案即建 journal
+   行（status=`proposed`，含 paramSnapshot+hash），确认转 started，执行走既有 claim 壳；
+   MRTR answerKey 与 journal key 同锚。不新建第二套"提案存储"（clarifyHold 住 root.params 是编排
+   专用结构，主会话轮没有 root，不能借用也不另造）。
 3. **写面任务级幂等（V3）**：`${runCode}:${toolCallId}` 只防"同 run 崩溃重放"；**编排 retry=
    新行新 runCode ⇒ journal 必 miss ⇒ 外部动作双跑**。因此进入 Phase 3 名单的 write 条目
-   **一律 `idemKeyPolicy:'explicit'`**，键=功能业务级（如 conversationCode+featureCode+关键参数
-   哈希），跨 run/跨 retry 稳定；per-run 键型不许进名单。
+   **一律 `idemKeyPolicy:'explicit'`**，键=**意图轮锚 + 功能 + 业务参数哈希**三段：`messageCode(发起轮锚定)+featureCode+paramsHash`。
+   语义双向都要对：**同轮重放**（崩溃/retry/编排新行）⇒ 键相同 ⇒ journal 挡（这是目的）；
+   **用户新一轮明确再发起** ⇒ 新轮锚 ⇒ 键不同 ⇒ 合法执行。第一轮写的"conversationCode+featureCode+
+   业务哈希"是全轮去重——会把"用户真的想再做一次"误杀成 refuse：幂等挡的是重放，不是重复意愿。
+   per-run 纯 runCode 键型不许进名单；"轮锚"作为键的第一段保留正当用途。
 
 ### B3 多步组合
 
@@ -189,3 +204,22 @@ ucenter 权限系在本平台是**两层**的，目录判据必须分家：
 攻击性自查产出 10 处漏洞，全部已修订入正文：V1 身份参数冒充（**现状即暴露**：user-score/user-info 入参工号靠模型自觉——B0-1+红线+子系统侧参数收口义务）、V2 确认参数漂移（B0-2 冻结）、V3 编排 retry 幂等穿透（B0-3 explicit 门槛）、V4 存在性 oracle（miss 统一形状）、V5 browseGate 快照漂移（已知窗+对账不自动改库）、V6 探针误杀（401/403=活着+连续两轮）、V7 降级错话（permission-service-unavailable 与"没有"分态）、V8 装配 RPC 放大（run 级批量快照）、V9 审计人/AI 不分（actorKind+identityOverridden）、V10 存量 8 技能默认 guide 的调用面退化（迁移前置+缺省直通）。
 
 **V1 的严重性单独标注：这不是"方案将来要做"，是"今天 dev 在册技能已经裸奔"——Phase 1 首刀前先评估是否把身份覆写单独提前（建议：随 platform_features 同刀，因为检索让"该洞"从单点变成可发现面）。**
+
+
+## 12. 核查轮二记录（2026-11-23，属主"再多核查一次"令）
+
+本轮攻击面=**第一轮修订自身**+工程载体+多平台+生命周期，产出 8 处（W1~W11 合并计，全部已修订入正文）：
+
+| # | 漏洞 | 性质 | 修订落点 |
+|---|---|---|---|
+| W3 | explicit 幂等键全轮去重，误杀"用户明确再发起一次" | **第一轮修订自带 bug**（挡重放写成了挡重复意愿） | B0-3 键=轮锚+feature+paramsHash |
+| W11 | 域简介人工维护=目录之外第二个源 | **第一轮修订自埋**（方案违反自己的同源纪律） | 简介由目录 guide×approved 生成，人工只留静态钩子 |
+| W8 | manifest"消失的条目"无机制表达（单条 add 面表达不了"该删"） | 真实接口缺口 | reconcileManifest 批量对账：缺席转 pending `manifest-removed`，下线亦过审 |
+| W1 | 身份覆写画在 invokeSpec.paramsSchema 上，但现状调用链（toolManager→SKILL.md 方法→grpc 直调）根本不读它 | 载体断点（判据写在字段没接执行，recoverCandidate 同族） | 方法面 identityParams + toolManager 壳覆写，与 paramsSchema 收敛单源；在册方法逐条补标入 V10 清单 |
+| W2 | 提案参数快照没有存储载体（clarifyHold 是编排专用，主会话轮无 root） | 半空想 | skillWriteJournal 行前移 proposed 态（快照+哈希入行），一职两担 |
+| W6 | effectClass"缺失直通"与 schema default guide 两套判据并存 | 归一单源缺位 | decideEffectClass 纯函数：缺失⇒legacyPassthrough，schema 默认只约束新行 |
+| W10 | 写面三段式若进编排 child=死锁（child 红线不注册 ask_user，提案发不出也等不了） | 边界未声明 | decideFeatureToolScope：child 只见 guide/read；Phase 3 只开主会话轮 |
+| W9 | D3"复用 xxzx_common"被当成方案常量 | 多平台特异性（底座频道名各异，micro_common 先例） | featureCatalog_enabledChannels env 白名单，空=不开，判据禁硬编频道名 |
+| V8改 | lru 键"频道×权限签名"方向错（签名近唯一=缓存退化+内存扩张） | 第一轮修订的工程过拟合 | 缓存粒度改 hasPriv 判定结果（priv 值级短 TTL），过滤每轮现算 |
+
+**元教训（两轮对比的价值）**：第一轮抓的是"缺失的防线"（V1~V10），第二轮抓到的大半是**第一轮修订自身引入的新问题**（W3/W11/W6/V8 四条）——修订不是终态检查点，修订本身要复查；设计稿核查应至少两轮，且第二轮明确以第一轮产物为攻击对象。
