@@ -37,6 +37,8 @@ export const modelFamilies = {
     qwen: {tokenizer: 'cl100k_base', label: '千问'},
     deepseek: {tokenizer: 'cl100k_base', label: 'DeepSeek'},
     qwen_vl: {tokenizer: 'cl100k_base', imageTokens: 1024, label: '视觉', vision: true},
+    /** 文生图族：消费面是 images/generations 端点（非 chat）；tokenizer 仅占位对齐结构 */
+    image: {tokenizer: 'cl100k_base', label: '文生图', imageGen: true},
 }
 
 /** 中转站地址与密钥（所有 relay_* 的默认值） */
@@ -120,6 +122,12 @@ export const relayModels = {
     relay_qwen_vl_flash: relayModel('relay_qwen_vl_flash', 'qwen-vl-flash', 'flash', 'qwen_vl'),
     /** 中转站·视觉 Low */
     relay_qwen_vl_low: relayModel('relay_qwen_vl_low', 'qwen-vl-low', 'low', 'qwen_vl'),
+    /** 中转站·文生图 Pro（images/generations 端点消费） */
+    relay_image_pro: relayModel('relay_image_pro', 'image-pro', 'pro', 'image'),
+    /** 中转站·文生图 Flash */
+    relay_image_flash: relayModel('relay_image_flash', 'image-flash', 'flash', 'image'),
+    /** 中转站·文生图 Low */
+    relay_image_low: relayModel('relay_image_low', 'image-low', 'low', 'image'),
 }
 
 /**

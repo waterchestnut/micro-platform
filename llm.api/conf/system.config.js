@@ -780,7 +780,7 @@ export default {
     },
     /** 执行大模型调用的模型配置：中转站「族 × 档」+ 历史别名（定义见 conf/llmModel.js） */
     models: {
-        /** 12 个档位：relay_<族>_<档>，族 common/qwen/deepseek/qwen_vl，档 pro/flash/low */
+        /** 15 个档位：relay_<族>_<档>，族 common/qwen/deepseek/qwen_vl/image，档 pro/flash/low */
         ...relayModels,
         /** 历史供应商名（qwenPlus、deepseek31 …）指向对应档位，老调用方与库里老数据不用改 */
         ...Object.fromEntries(Object.entries(legacyModelAliases).map(([legacy, target]) => [legacy, relayModels[target]])),
