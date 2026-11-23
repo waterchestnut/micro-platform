@@ -25,13 +25,25 @@ import {breakerCountsFailure} from './upstreamBreaker.js'
  * @returns {{protocol: Number, emitToolResults: Boolean}}
  */
 export function resolveProtocol(options = {}) {
+    /**
+     * 协议 3（PR-B2）只在客户端**显式要求**时启用：新事件必须只出现在协议 3 的流里，
+     * 否则"加个事件"就变成一次跨仓联动发布。
+     *
+     * 消费方实测（2026-11-11，全仓扫描，清单见 `docs/api/chat-sse.md` §2.0）：
+     * **不是"四个前端"**——显式传 `protocol:2` 的有 console、mopit、pdfviewer、raisef、learoad **五个**
+     * （console 已升到 3）；此外 `xxzx.thesis.api` 作为服务端客户端调用本端点且**不传 protocol**，
+     * 于是走这里的兜底 ⇒ 协议 1。所以"缺省按 1"这条不是纸面设定，是有真实流量走着的。
+     */
     const requested = Number(options.protocol)
     const protocol = requested >= 3 ? 3 : (requested >= 2 ? 2 : 1)
     return {
         protocol,
         /** 协议 2 的客户端按事件名分派，因此默认下发工具结果；协议 1 需显式开启 */
         emitToolResults: protocol >= 2 || !!options.streamToolResults,
-        /** 段事件（segment_start/segment_end）是协议 3 相对协议 2 的全部内容差异 */
+        /**
+         * 段事件（`segment_start`/`segment_end`）是协议 3 相对协议 2 的全部内容差异。
+         * 段的**数据**（`extInfo.segments`）与协议无关、一直在落库——这里只决定要不要提前推给客户端。
+         */
         emitSegments: protocol >= 3,
     }
 }
@@ -370,8 +382,6 @@ export function exitReasonForPersist({progress, loopExit, via = '', closing = fa
     return `${cause}:${via || 'unattributed'}`
 }
 
-
-
 /* ---------- 迭代预算的增量测量（PR-K1，实测后缩小的一刀） ---------- */
 
 /**
@@ -529,6 +539,13 @@ export const DEFAULT_MAX_ITERATIONS = 6
 
 /** 允许的上限天花板：请求级/频道级配置都不能突破 */
 export const MAX_ITERATIONS_CEILING = 40
+/**
+ * 2026-11-16 由 20 放宽到 40（用户裁定："不要整体限制太死，那不是 AGI"）：
+ * 天花板原本兼着"防打爆上游"的语义，但流量闸门自有并发闸（limits_concurrentRuns）
+ * 与熔断（upstreamBreaker）把守——轮次上限管的是**单会话深度**，拿深度限制当流量
+ * 限制是错配。调研类任务的实测烧法（plan 更新独占轮次 + 技能激活话术轮）在 20 内
+ * 也会撞顶，40 给"一次认真的重试链调研"留出空间。回退=改回 20，独立一行。
+ */
 
 /**
  * @description 解析本轮的工具迭代上限（原先是硬编码 6）
@@ -638,13 +655,13 @@ export function exhaustedFallback({loopExit = 'break', answerContent = '', answe
  * @param {Function} [predicates.isAskTool] 人机提问工具判定（PR-E，挂起等非终态通道）
  * @returns {{memoryCalls: Object[], overflowCalls: Object[], codeCalls: Object[], planCalls: Object[], artifactCalls: Object[], askCalls: Object[], otherCalls: Object[]}}
  */
-export function classifyToolCalls(toolCalls = [], {isMemoryTool, isOverflowTool, isCodeTool, isPlanTool, isArtifactTool, isAskTool, isAttachmentTool, isClarifyTool} = {}) {
+export function classifyToolCalls(toolCalls = [], {isMemoryTool, isOverflowTool, isCodeTool, isPlanTool, isArtifactTool, isAskTool, isAttachmentTool, isClarifyTool, isFeatureTool} = {}) {
     const isMem = typeof isMemoryTool === 'function' ? isMemoryTool : () => false
     const isOvf = typeof isOverflowTool === 'function' ? isOverflowTool : () => false
     const isCode = typeof isCodeTool === 'function' ? isCodeTool : () => false
     /** update_plan（PR-M）：不传谓词就恒 false ⇒ 行为与加它之前逐字一致（默认关时 llmChat 也不会走到） */
     const isPlan = typeof isPlanTool === 'function' ? isPlanTool : () => false
-    /** save_artifact/read_artifact（PR-H2）：同款兼容——不传谓词恒 false，otherCalls 取反串同样带上它 */
+    /** save_artifact（PR-H2）：同款兼容——不传谓词恒 false，otherCalls 的取反串里也必须带上它 */
     const isArtifact = typeof isArtifactTool === 'function' ? isArtifactTool : () => false
     /** ask_user（PR-E）：同款兼容。它绝不能落进 otherCalls——MCP 通道里没有这个实现，漏接=模型提问石沉大海 */
     const isAsk = typeof isAskTool === 'function' ? isAskTool : () => false
@@ -652,6 +669,8 @@ export function classifyToolCalls(toolCalls = [], {isMemoryTool, isOverflowTool,
     const isAttach = typeof isAttachmentTool === 'function' ? isAttachmentTool : () => false
     /** request_clarification（§7-1 澄清冒泡）：同款兼容。漏接=申报石沉大海，child 会以为问题已递上去 */
     const isClarify = typeof isClarifyTool === 'function' ? isClarifyTool : () => false
+    /** platform_features（功能目录刀2）：同款兼容。漏接=检索请求被丢给 mcpToolManager，模型拿到"工具不存在" */
+    const isFeature = typeof isFeatureTool === 'function' ? isFeatureTool : () => false
 
     const memoryCalls = toolCalls.filter(tc => isMem(tc.function?.name))
     const overflowCalls = toolCalls.filter(tc => isOvf(tc.function?.name))
@@ -661,10 +680,11 @@ export function classifyToolCalls(toolCalls = [], {isMemoryTool, isOverflowTool,
     const askCalls = toolCalls.filter(tc => isAsk(tc.function?.name))
     const attachmentCalls = toolCalls.filter(tc => isAttach(tc.function?.name))
     const clarifyCalls = toolCalls.filter(tc => isClarify(tc.function?.name))
-    /** 其余走 MCP/Skill 通道；漏判会被整批丢给 mcpToolManager 而找不到实现，所以这里显式取反（plan/artifact 也必须进这串取反） */
+    const featureCalls = toolCalls.filter(tc => isFeature(tc.function?.name))
+    /** 其余走 MCP/Skill 通道；漏判会被整批丢给 mcpToolManager 而找不到实现，所以这里显式取反（plan 也必须进这串取反） */
     const otherCalls = toolCalls.filter(tc =>
-        !isMem(tc.function?.name) && !isOvf(tc.function?.name) && !isCode(tc.function?.name) && !isPlan(tc.function?.name) && !isArtifact(tc.function?.name) && !isAsk(tc.function?.name) && !isAttach(tc.function?.name) && !isClarify(tc.function?.name))
-    return {memoryCalls, overflowCalls, codeCalls, planCalls, artifactCalls, askCalls, attachmentCalls, clarifyCalls, otherCalls}
+        !isMem(tc.function?.name) && !isOvf(tc.function?.name) && !isCode(tc.function?.name) && !isPlan(tc.function?.name) && !isArtifact(tc.function?.name) && !isAsk(tc.function?.name) && !isAttach(tc.function?.name) && !isClarify(tc.function?.name) && !isFeature(tc.function?.name))
+    return {memoryCalls, overflowCalls, codeCalls, planCalls, artifactCalls, askCalls, attachmentCalls, clarifyCalls, featureCalls, otherCalls}
 }
 
 /**
@@ -684,8 +704,6 @@ export function buildToolNameIndex(toolCalls = []) {
 
 /* ---------- trace 快照截断（对应 llmChat.js:42-45） ---------- */
 
-
-
 /**
  * @description 按 tool_call_id 反查工具的**入参**（与 `buildToolNameIndex` 成对）
  * @param {Object[]} toolCalls 已 prune 的调用
@@ -704,8 +722,6 @@ export function buildToolArgsIndex(toolCalls = []) {
     }
     return byId
 }
-
-
 
 /** 入参进 trace 的默认字符预算（与 `clipTraceResult` 的 4000 同量级） */
 export const DEFAULT_TRACE_ARGS_CHARS = 4000
@@ -747,8 +763,12 @@ export const DEFAULT_TRACE_RESULT_CHARS = 4000
 /**
  * @description 工具结果进 trace 的截断快照
  * @param {*} content 工具返回内容
- * @param {Number} [limit] 字符上限
+ * @param {Number} [limit] 字符上限（缺省用 `DEFAULT_TRACE_RESULT_CHARS`）
  * @returns {String} 截断后的字符串
+ *
+ * 与 `clipTraceArgs` 的分工是刻意的：这边保留历史形态（尾部拼 `...[truncated]`），
+ * 因为**存量档案与四端都按这个形状渲染**；改它会变成一次跨仓的契约变更，
+ * 而本刀要改的只是"预算能不能调"。新字段（args 一族）才用分离式的三态声明。
  */
 export function clipTraceResult(content, limit = DEFAULT_TRACE_RESULT_CHARS) {
     const s = typeof content === 'string' ? content : JSON.stringify(content ?? '')
@@ -1155,7 +1175,6 @@ export default {
     buildToolNameIndex,
     buildToolArgsIndex,
     DEFAULT_TRACE_RESULT_CHARS,
-    DEFAULT_TRACE_ARGS_CHARS,
     clipTraceResult,
     clipTraceArgs,
     buildToolCallTraceEntry,

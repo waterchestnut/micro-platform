@@ -8,8 +8,6 @@ import {OpenAI} from 'openai'
 import retSchema from '../../daos/retSchema.js'
 import conversationDac from '../../daos/core/dac/conversationDac.js'
 import {isInternalConversationCode} from '../../daos/core/policy/conversationVisibility.js'
-import {buildUsageCreditsFields} from './session/creditMeter.js'
-import {extractTaskFields} from './session/taskAccounting.js'
 import llmChannelDataSet, {getChannelMemory} from '../../conf/llmChannel.js'
 import {pickModelKey, defaultModelKey, defaultVisionModelKey} from '../../conf/llmModel.js'
 import tmplParse from 'json-templates'
@@ -38,6 +36,7 @@ import {buildPlanTools, isPlanTool, planToolEnabled, executePlanTool} from './se
 import {buildSaveArtifactTools, isSaveArtifactTool, saveArtifactToolEnabled, executeSaveArtifactTool} from './artifact/saveArtifactTool.js'
 import {buildReadArtifactTools, isReadArtifactTool, executeReadArtifactTool} from './artifact/readArtifactTool.js'
 import {buildReadAttachmentTools, isReadAttachmentTool, executeReadAttachmentTool} from './attachment/readAttachmentTool.js'
+import {buildFeatureCatalogTools, isFeatureCatalogTool, executeFeatureCatalogSearch, FEATURE_SEARCH_TOOL_NAME} from './session/featureCatalogTool.js'
 import {buildClarifyRequestTools, isClarifyRequestTool, parseClarifyRequest, CLARIFY_TOOL_NAME} from '../agent/clarifyBubble.js'
 import {withRecitation, planForPersistence, seedPlanFromPrior} from './session/planAssembly.js'
 import {decideCompletionSelfCheck, buildSelfCheckHint, interpretSelfCheckReply} from './session/planState.js'
@@ -57,6 +56,8 @@ import {renderSteeringBlock, steerAckPayload} from './session/steerMailbox.js'
 import {buildAskTools, isAskTool, askToolEnabled, awaitAskUser, answerSecret} from './session/askUserTool.js'
 import {cacheIntentForArchive} from './session/cacheIntent.js'
 import {decideThinking, thinkingForArchive} from './session/thinkingMode.js'
+import {buildUsageCreditsFields} from './session/creditMeter.js'
+import {extractTaskFields} from './session/taskAccounting.js'
 import {truncateToolMessage} from '../../tools/truncate.js'
 import {resolveMemory, safeWorkspaceId} from './memory/policy.js'
 /**
@@ -112,8 +113,7 @@ const defaultLlmVLConfigKey = defaultVisionModelKey
  * 各写一份字面量的话，"哪天改缺省"就会变成只改一半的老问题（§2E-2 两份同值分家）。
  * 两侧一致性由 `test/services/core/errorTurnArchive.test.js` 里那条源码断言钉住。
  */
-/** 底座 fork：缺省频道键是 llm.api 频道表的 micro_common（源侧的 xxzx_common 在本侧不存在），且允许 env 覆盖 */
-export const defaultChannel = process.env['LLM_DEFAULT_CHANNEL'] || 'micro_common'
+export const defaultChannel = 'xxzx_common'
 export const defaultChannelGroup = 'none'
 
 /**
@@ -161,10 +161,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     /** PR-16 ③：工作区分区（严格隔离）。schema 已挡非法形态，这里二次防御；缺省 null=全局分区=现状 */
     const memoryWorkspace = safeWorkspaceId(options?.memory?.workspaceId)
     const tokenizerOptions = getTokenizerOptions(llmConfig)
-    /** 底座 fork 保护：config.models 人工维护、档位可能没有 contextWindow，源实现在缺字段时把预算算成 0 ⇒ 压空会话；缺字段 ⇒ Infinity（不压） */
-    const contextBudget = llmConfig?.contextWindow
-        ? calcContextBudget(llmConfig, {slackTokens: config.context?.slackTokens})
-        : Infinity
+    const contextBudget = calcContextBudget(llmConfig, {slackTokens: config.context?.slackTokens})
     /**
      * 本 run 的起点（§14 账本的 latencyMs 基准）。
      * 必须放在函数入口而不是循环前：装配、RAG、记忆召回都算这一轮的成本。
@@ -325,8 +322,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
          * PR-G 批二b：与账本同刻成对建**档案侧**的 processing 行（同一开关=同一个"开局记账"动作，
          * 拆两个开关只会造出"账本有行档案没行"的半态）。这把开关同时决定 2b 的全部行为：
          * 关掉 ⇒ 前端 ongoing 映射退回死分支（=批二a 之前的世界），R1 走老 add 支——**独立回退面**。
-         * query/inputs 必带（历史页提问气泡从 query 渲染，缺了刷新只见空气泡不见问题）；失败只 warn——
-         * 档案缺中途行的代价是"刷新看不见进行中"，不是这一轮答不出来。
+         * query/inputs 必带（提问气泡的渲染源）；失败只 warn——档案缺中途行的代价是
+         * "刷新看不见进行中"，不是这一轮答不出来。
          */
         try {
             await messageDac.markStarted({
@@ -442,8 +439,8 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     /**
      * PR-G 批二b：历史装配**只取终态行**。本 run 自己的 processing 中途行在 markStarted
      * 就已存在且按 insertTime 排最前——不过滤就会把"本轮的空回答"喂给模型当上一轮
-     * （还与随后单独 append 的 currentMessage 重复）。complexFilter 是 assembleParams
-     * 唯一的原生条件通道，终态集用 dac 单源。
+     * （还与下面单独 append 的 currentMessage 重复）。complexFilter 是 assembleParams
+     * 唯一的原生条件通道（getMessages 的 filter 键名有白名单映射），终态集用 dac 单源。
      */
     const historyRows = await getMessages({conversationCode, complexFilter: [{progress: {$in: TERMINAL_PROGRESS}}]}, 1, config.context?.historyMaxTurns || 10, {
         sort: {insertTime: -1},
@@ -587,7 +584,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     }
     /**
      * B-1（附件授权前门，默认关）：read_attachment 只随**任务上下文**注册——
-     * 普通轮没有授权面（root 快照不在那里），与其运行时拒话，不如不给模型这个选项。
+     * 普通轮没有授权面（root 快照在谁那里都没有定义），与其运行时拒话，不如不给模型这个选项。
      * 关/无 taskContext ⇒ 这里一行都不做，工具清单与现网逐字一致。
      */
     const attachCfg = config.limits?.taskAttachment || {}
@@ -605,6 +602,16 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
     const clarifyOn = clarifyCfg.enabled === true && options.taskContext?.agentRole === 'child' && typeof options.clarifySink === 'function'
     if (clarifyOn) {
         allTools.push(...buildClarifyRequestTools())
+    }
+    /**
+     * 功能目录检索（platform-feature-map Phase 1 刀2，缺省全关）：双闸——featureCatalog.enabled
+     * 且当前频道在 enabledChannels（W9：频道名是部署事实，判据不硬编）。关时这里一行不做，
+     * 工具清单与现网逐字一致（conversationTaskQueue/clarifyBubble 同款分叉纪律）。
+     */
+    const fcCfg = config.featureCatalog || {}
+    const featureCatalogOn = fcCfg.enabled === true && Array.isArray(fcCfg.enabledChannels) && fcCfg.enabledChannels.includes(channel)
+    if (featureCatalogOn) {
+        allTools.push(...buildFeatureCatalogTools())
     }
     /**
      * 本轮计划：初值从上一轮档案 seed（跨轮 recitation），之后由 update_plan 整份替换。
@@ -1173,19 +1180,24 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
              * PR-M：本轮计划落 `extInfo.plan`。`planForPersistence` 在没有计划时给 null ⇒
              * 装配清单里写 `plan: options.plan` 后，"本轮没有计划"是 null、不是 `{items:[]}` 空壳
              * （下一轮回读时两者含义不同：一个是没调 update_plan，一个是清空了计划）。
-             * 与 `cache`/`channelCacheKey` 同一取向：审计/回读字段，**刻意不进 messageView**（无界面消费方）。
+             * 2026-11-16 起**进 messageView**（原"刻意不回显（无界面消费方)"的裁定随消费方出生而失效——
+             * callin 调研时间线的"任务树"行读它；视图只透形状，分组文案归前端判据）。
              */
             plan: planForPersistence(currentPlan),
             /**
              * PR-D commit 2：本轮注入过的插话清单（含注入时刻）。与 plan 同取向——
              * "注入过哪些插话"是审计口径（前端从 steer_ack 已经实时拿到过），刻意不进 messageView。
+             * （2026-11-16 复核：plan/awaitings 因新消费方进视图，**steerings 不跟**——
+             * 插话账 callin 侧本地已有，回读消费方仍未出现；别把"那两个给了"读成"这三个都能给"。）
              * null=没有（不是空壳数组：同"没调 update_plan"与"清空了计划"的区分）。
              */
             steerings: steeringsArchive.length ? steeringsArchive : null,
             /**
              * P-19（2026-11-15 裁定）：ask 回执的档案面。answer_ack 走事件流给"当下在场"的人，
-             * awaitings 给"事后审计与重连补看"的人——同一份账的两个出口（数据源只有 router.ackSnapshot()）。
-             * null=本轮没有 ask 投递（同 steerings 的"不是空壳"裁定）。
+             * awaitings 给"事后审计与重连补看"的人——同一份账的两个出口，不是第二本账
+             * （数据只有一个来源：router.ackSnapshot()）。null=本轮没有 ask 投递（同 steerings 的"不是空壳"裁定）。
+             * 2026-11-16 起**进 messageView**（时间线"问答卡"行读回执账；账里本就不含答案正文，
+             * 外泄边界不因此松动）。
              */
             awaitings: options.answerRouter?.ackSnapshot?.()?.length ? options.answerRouter.ackSnapshot() : null,
             /**
@@ -1193,7 +1205,6 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
              * 同 steerings/awaitings 语义）。观察模式下这是它存在的全部理由——plans 读"如果 enforce 会拦什么"。
              */
             gate: gateLedger.decisions.length ? {enabled: gateOn, enforce: gateEnforce, decisions: gateLedger.decisions, approvals: gateLedger.approvals} : null,
-
             /** 异常路径的归因（`describeError` 的 kind:message）；正常路径为 null */
             error: errorMessage || null,
             /**
@@ -1831,10 +1842,9 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                         gatePassedCalls = screened.passed
                         gateBlockedResults = screened.blocked
                     }
-                    /** 记忆、溢出取回、沙箱代码执行、计划更新、产物登记、人机提问、附件读回都要单独分派：否则会被当成 MCP 工具丢给 mcpToolManager 而找不到实现 */
                     /** 记忆、溢出取回、沙箱代码执行、计划更新、产物登记、人机提问、附件读回、澄清申报都要单独分派：否则会被当成 MCP 工具丢给 mcpToolManager 而找不到实现 */
-                    const {memoryCalls, overflowCalls, codeCalls, planCalls, artifactCalls, askCalls, attachmentCalls, clarifyCalls, otherCalls} =
-                        classifyToolCalls(gatePassedCalls, {isMemoryTool, isOverflowTool, isCodeTool, isPlanTool, isArtifactTool: (n) => isSaveArtifactTool(n) || isReadArtifactTool(n), ...(askOn ? {isAskTool} : {}), ...(attachOn ? {isAttachmentTool: isReadAttachmentTool} : {}), ...(clarifyOn ? {isClarifyTool: isClarifyRequestTool} : {})})
+                    const {memoryCalls, overflowCalls, codeCalls, planCalls, artifactCalls, askCalls, attachmentCalls, clarifyCalls, featureCalls, otherCalls} =
+                        classifyToolCalls(gatePassedCalls, {isMemoryTool, isOverflowTool, isCodeTool, isPlanTool, isArtifactTool: (n) => isSaveArtifactTool(n) || isReadArtifactTool(n), ...(askOn ? {isAskTool} : {}), ...(attachOn ? {isAttachmentTool: isReadAttachmentTool} : {}), ...(clarifyOn ? {isClarifyTool: isClarifyRequestTool} : {}), ...(featureCatalogOn ? {isFeatureTool: isFeatureCatalogTool} : {})})
                     const memoryToolContext = {
                         userCode: curUserInfo?.userCode, channel, workspaceId: memoryWorkspace,
                         conversationCode, messageCode,
@@ -2015,6 +2025,20 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                     }
                     // 执行工具调用（区分 MCP 工具和 Skill 工具）
                     let otherResults = []
+                    /**
+                     * 功能目录检索执行段（刀2）：身份=userCode 单源（B0-1 同源），deps 不注入=
+                     * 默认 IO（grpcSkill 装配管道+逐码 hasPriv）；审计 sink 留空=刀4 接账面
+                     * （壳已容缺，账不阻塞检索）。executeFeatureCatalogSearch 自捕全部 IO 异常
+                     * 回分态 JSON，绝不向上抛——一次目录故障不该炸整轮。
+                     */
+                    const featureResults = await Promise.all(featureCalls.map(async (toolCall) => {
+                        let args = {}
+                        try { args = JSON.parse(toolCall?.function?.arguments || '{}') } catch { /* 按空参数，检索自会回 miss 形状 */ }
+                        const content = await executeFeatureCatalogSearch({
+                            keyword: String(args.keyword || ''), userCode: curUserInfo?.userCode || '', channel,
+                        })
+                        return { toolCallId: toolCall.id, role: 'tool', name: FEATURE_SEARCH_TOOL_NAME, content }
+                    }))
                     if (otherCalls.length) {
                         /**
                          * skill 写面幂等闸（B-4 二期前置，默认关）：开闸时逐条过 `skillWriteGate`
@@ -2041,7 +2065,7 @@ export async function execChat(curUserInfo, query, conversationCode, options = {
                                 : await mcpToolManager.executeToolCalls(channel, otherCalls)
                         }
                     }
-                    const toolResults = [...gateBlockedResults, ...memoryResults, ...overflowResults, ...codeResults, ...planResults, ...artifactResults, ...askResults, ...attachmentResults, ...clarifyResults, ...otherResults]
+                    const toolResults = [...gateBlockedResults, ...memoryResults, ...overflowResults, ...codeResults, ...planResults, ...artifactResults, ...askResults, ...attachmentResults, ...clarifyResults, ...featureResults, ...otherResults]
 
                     /*工具结果只带 tool_call_id，前端无法据此显示调用了哪个工具，这里补上名称*/
                     const nameById = buildToolNameIndex(toolCalls)
@@ -2505,13 +2529,23 @@ async function saveMessage(query, messageCode, messages, conversationCode, chann
             plan: options.plan,
             /** PR-D commit 2：注入过的插话清单（来源与去向的裁定见 persistTurn 处注释） */
             steerings: options.steerings,
+            /**
+             * P-19：ask 回执档案面。与 steerings 同族——**saveMessage 的 extInfo 字面量是落库白名单，
+             * 生产侧（persistTurn）加了键而这里没加 = 静默丢**（2026-11-15 实机第一跑就丢给我看了，
+             * 守卫用例见 test/daos…/artifactSchema 同族的锚法：这条链的每一次"加字段"都要动两处）。
+             */
             awaitings: options.awaitings,
-            /** b397822 起入白名单：此前 error/upstream 在生产侧写了、这里没枚举 ⇒ 全库恒缺（守卫 llmChatExtInfoWhitelist 钉住两截链） */
+            /**
+             * 2026-11-15 守卫上线即钓出的两条**存量同类漏点**（不是本刀引入的）：
+             * `error`（异常归因 kind:message，生产侧注释写着"正常路径为 null"——但白名单没它，
+             * 档案里从来就没有过这个键）与 `upstream`（PR-0.5 的重试/换档现场，同上）。
+             * 与 2026-11-13 cache 两键 0 行的成因一模一样；这次由两截链守卫（llmChatExtInfoWhitelist）
+             * 在它们造成第三个事故前抓出来。
+             */
             error: options.error,
             upstream: options.upstream,
             /** PR-I 门观察账落库位（两截链守卫 llmChatExtInfoWhitelist 盯这条的存在性） */
             gate: options.gate,
-
         },
         messageTokens: options.messageTokens,
         answerTokens: options.answerTokens,

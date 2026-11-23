@@ -216,3 +216,20 @@ describe('§8/B3 自省 handler：白名单回显 + 敏感键物理隔离', () =
         assert.ok(!/ucenterConfig|kafkaConfig|redisConfig\b/.test(h.replace(/redisEventConfig/g, '')), '连接配置整节引用在位——回显面失控')
     })
 })
+
+describe('功能目录刀2 装配面（llmChat/llmLoop 接线位钉桩，关=现网逐字）', () => {
+    test('注入受双闸：featureCatalog.enabled===true 且频道在 enabledChannels（W9 禁硬编频道名）', () => {
+        const src = linesOf('services/core/llmChat.js').join('\n')
+        assert.match(src, /featureCatalogOn = fcCfg\.enabled === true && Array\.isArray\(fcCfg\.enabledChannels\) && fcCfg\.enabledChannels\.includes\(channel\)/,
+            '双闸形状变了——单闸=部署事实被绕过')
+        assert.match(src, /if \(featureCatalogOn\) \{\s*allTools\.push\(\.\.\.buildFeatureCatalogTools\(\)\)/,
+            '注入不是条件行——关=现网的前提没了')
+    })
+    test('分派两面都在：classify 注入位（gate 条件展开）与 toolResults 合并线（漏合并=结果石沉大海）', () => {
+        const src = linesOf('services/core/llmChat.js').join('\n')
+        assert.match(src, /\.\.\.\s*\(featureCatalogOn\s*\?\s*\{isFeatureTool:\s*isFeatureCatalogTool\}\s*:\s*\{\}\)/, 'classify 注入位失形')
+        assert.match(src, /\.\.\.clarifyResults, \.\.\.featureResults, \.\.\.otherResults/, 'featureResults 没进 toolResults 合并线')
+        const loop = linesOf('services/core/llmLoop.js').join('\n')
+        assert.match(loop, /&& !isFeature\(tc\.function\?\.name\)/, 'otherCalls 取反串没带 feature——漏接的检索请求会被丢给 mcpToolManager')
+    })
+})
