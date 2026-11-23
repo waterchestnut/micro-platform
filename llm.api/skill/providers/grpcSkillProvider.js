@@ -27,7 +27,10 @@ export class GrpcSkillProvider {
         /** 走两级缓存：技能清单只在后台改动时变，不该每次聊天都回源一次 Mongo */
         let list = await getCachedGrpcSkillsByChannel(this.channel)
         list?.forEach((item) => {
-            if (item.skillMD) {
+            // 可调用技能必须有 grpcHost；guide 条目（effectClass=guide、无后端）不进可调用候选，
+            // 只由 platform_features 目录承载（那里有 per-user 两层权限过滤）。
+            // 用 grpcHost 有无判"可否调用"，不依赖 effectClass 标注（add 出来的可调用散件不会因默认 guide 被误剔）。
+            if (item.skillMD && item.grpcHost) {
                 this.skillsIndex.set(item.skillName, {
                     grpcSkillInfo: item,
                     name: item.skillName

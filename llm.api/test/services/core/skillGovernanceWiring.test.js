@@ -160,3 +160,31 @@ describe('5 留痕面：审计表不写正文', () => {
         assert.ok(!/throw/.test(body.split('catch')[1] || ''), '留痕写失败还往外抛 ⇒ 会把已成功的操作报成失败')
     })
 })
+
+describe('6 乙全目录：guide 条目形状与装配分流（guide 只进目录、不进可调用候选）', () => {
+    const svc = code('services/core/grpcSkill.js')
+    const prov = code('skill/providers/grpcSkillProvider.js')
+
+    test('assertContentGovernance 支持 skipHost（guide 无后端跳白名单，注入扫描仍跑）', () => {
+        const at = svc.indexOf('export function assertContentGovernance(')
+        const body = svc.slice(at, at + 1200)
+        assert.match(body, /skipHost\s*=\s*false/, '没有 skipHost 选项 ⇒ guide 条目无法免 host')
+        assert.match(body, /if \(!skipHost\)[\s\S]{0,200}?hostAllowed\(/, 'host 检查没被 skipHost 包住 ⇒ guide 仍被白名单拒')
+        assert.match(body, /skillContentAllowed\(/, '注入扫描不能被 skipHost 一起旁路（guide 正文同样要扫）')
+    })
+    test('reconcile 预检按档分流：guide 要 entry.url、read/write 要 grpcHost', () => {
+        const at = svc.indexOf('export async function reconcileManifest(')
+        const body = svc.slice(at, at + 3000)
+        assert.match(body, /ec === 'guide'[\s\S]{0,120}?entry\.url/, 'guide 条目没要求 entry.url ⇒ 会灌进无入口的死 guide')
+        assert.match(body, /skipHost:\s*ec === 'guide'/, 'guide 没走 skipHost ⇒ 无 host 的 guide 被白名单拒')
+    })
+    test('grpcSkillProvider 用 grpcHost 有无分流（guide 不进可调用候选）', () => {
+        assert.match(prov, /item\.skillMD && item\.grpcHost/,
+            'provider 没按 grpcHost 过滤 ⇒ guide 行会被当可调用技能候选（无 per-user 过滤，泄露无权限功能）')
+    })
+    test('add 落库补 effectClass（不吃 schema 的 guide 默认，可调用散件不被误标 guide）', () => {
+        const at = svc.indexOf('export async function addGrpcSkill(')
+        const body = svc.slice(at, svc.indexOf('\nexport ', at + 10) > 0 ? svc.indexOf('\nexport ', at + 10) : svc.length)
+        assert.match(body, /effectClass:\s*grpcSkillInfo\.effectClass \|\| 'read'/, 'add 不设 effectClass ⇒ 可调用散件吃 schema 默认 guide')
+    })
+})

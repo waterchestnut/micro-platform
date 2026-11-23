@@ -39,7 +39,7 @@ const grpcSkillSchema = new Schema({
     },
     skillName: {type: String, description: '技能名称', required: true},
     skillMD: {type: String, description: '技能描述（SKILL.md格式）', required: true},
-    grpcHost: {type: String, description: '远程主机地址', required: true},
+    grpcHost: {type: String, description: '远程主机地址（read/write 必填；guide 无后端可空——"是否可调用"由 grpcHost 有无判定，不靠 effectClass 标注）'},
     clientCode: {type: String, description: '所属应用标识', required: true},
     channels: {type: [String], description: '哪些聊天频道可以使用', required: true},
     note: {type: String, description: '备注'},

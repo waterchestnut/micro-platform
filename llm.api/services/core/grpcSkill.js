@@ -150,16 +150,20 @@ export async function authorizeSkillWrite(curUserInfo, action, skill, policy = n
  * @param {Object} [policy] 覆盖用策略（测试注入）
  * @returns {Object} 判定明细（供留痕 evidence）
  */
-export function assertContentGovernance(payload, policy = null) {
+export function assertContentGovernance(payload, policy = null, {skipHost = false} = {}) {
     const p = policy || governancePolicy()
-    const host = hostAllowed(payload.grpcHost, {allowedHosts: p.allowedHosts})
-    if (!host.allow) {
-        const err = new Error(host.reason === 'host-list-unconfigured'
-            ? '未配置允许的主机清单，暂不开放技能注册（grpcSkill_allowedHosts）'
-            : `远程主机地址不在允许清单内或形态非法：${host.reason}`)
-        err.statusCode = 403
-        err.hostReason = host.reason
-        throw err
+    let hostReason = 'skipped-no-backend'   // guide 档：无 grpcHost，白名单不适用（注入扫描仍跑）
+    if (!skipHost) {
+        const host = hostAllowed(payload.grpcHost, {allowedHosts: p.allowedHosts})
+        if (!host.allow) {
+            const err = new Error(host.reason === 'host-list-unconfigured'
+                ? '未配置允许的主机清单，暂不开放技能注册（grpcSkill_allowedHosts）'
+                : `远程主机地址不在允许清单内或形态非法：${host.reason}`)
+            err.statusCode = 403
+            err.hostReason = host.reason
+            throw err
+        }
+        hostReason = host.reason
     }
     if (p.scanEnabled && payload.skillMD) {
         const verdict = skillContentAllowed(payload.skillMD, {allowEscalation: p.allowEscalationPhrasing})
@@ -171,7 +175,7 @@ export function assertContentGovernance(payload, policy = null) {
             throw err
         }
     }
-    return {host: host.reason, scanned: p.scanEnabled === true}
+    return {host: hostReason, scanned: p.scanEnabled === true}
 }
 
 /**
@@ -500,6 +504,8 @@ export async function addGrpcSkill(curUserInfo, grpcSkillInfo) {
         operator: {userCode: curUserInfo.userCode, realName: curUserInfo.realName},
         status: 0,
         tags: grpcSkillInfo.tags,
+        // add 是"可调用散件注册"路径（上方已强制 grpcHost）；effectClass 缺省 read，不吃 schema 的 guide 默认
+        effectClass: grpcSkillInfo.effectClass || 'read',
         reviewStatus: gov.reviewStatus,
         skillMDHash: gov.skillMDHash,
         contentVersion: 1,
@@ -724,7 +730,14 @@ export async function reconcileManifest(curUserInfo, payload = {}) {
         if (!Array.isArray(it.channels) || !it.channels.length) throw new Error(`${tag}: 缺 channels`)
         const badCh = validateChannels(it.channels)
         if (badCh.length) throw new Error(`${tag}: 无效频道 ${badCh.join(',')}`)
-        const content = assertContentGovernance({ ...it, grpcHost })   // host 白名单+注入扫描，同注册面判据
+        // 按档分流（乙 全目录）：guide 无后端要 entry.url、跳 host；read/write 要子系统 grpcHost
+        const ec = it.effectClass || 'guide'
+        if (ec === 'guide') {
+            if (!(it.entry && String(it.entry.url || '').trim())) throw new Error(`${tag}: guide 条目需要 entry.url（前端入口）`)
+        } else if (!grpcHost) {
+            throw new Error(`${tag}: ${ec} 条目需要子系统 grpcHost`)
+        }
+        const content = assertContentGovernance({...it, grpcHost: ec === 'guide' ? '' : grpcHost}, null, {skipHost: ec === 'guide'})   // host 白名单+注入扫描（guide 跳 host）
         if (content.scanHit) throw new Error(`${tag}: 正文命中注入判据 ${JSON.stringify(content.scanSummary || {})}`)
     }
 
