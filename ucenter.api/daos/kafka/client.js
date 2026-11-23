@@ -134,6 +134,8 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
     let creating = null
     let stopping = false
     let commitFailures = 0
+    let membershipCheckTimer = null
+    let memberLostStreak = 0
 
     registerErrorHandler(consumer, {
         /**
@@ -179,12 +181,19 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
     consumer.on('error', err => {
         // 库在心跳rejoin失败时会上抛'error'，无监听会变成未处理事件（proposals/kafka-client-stream-leak）
         logger.error('Kafka consumer error:' + err)
+        // 失组看门狗·事件路（kafka-membership-watchdog）：rejoin 放弃上抛的 error 即僵尸前兆——非停机即重建入组，
+        // 不再只记日志干等 commit 看门狗（低峰无消息时永远等不到）。scheduleRecreate 幂等，退避环防 churn。
+        if (!stopping && !drain.draining) scheduleRecreate()
     })
     consumer.once('client:close', () => {
         stopping = true
         if (recreateTimer) {
             clearTimeout(recreateTimer)
             recreateTimer = null
+        }
+        if (membershipCheckTimer) {
+            clearInterval(membershipCheckTimer)
+            membershipCheckTimer = null
         }
     })
     const withTimeout = (promise, ms) => {
@@ -328,6 +337,26 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
         logger.error('Initial consumer stream failed, will keep retrying:' + err)
         scheduleRecreate()
     })
+
+    /**
+     * 失组看门狗·周期对账（kafka-membership-watchdog）：库 rejoin 放弃后可能既不 error 也不 end，
+     * 低峰无消息时 commit 看门狗也不响，组却已 EMPTY（memberId 归 null——库自身即以 memberId===null 作 joinNeeded 判据）。
+     * 每 60s 独立核对：流健在但 memberId 连续两拍为空=僵尸，强制重建入组。连续两拍(≥120s)远超正常 rebalance 秒级空窗，不误触。
+     */
+    membershipCheckTimer = setInterval(() => {
+        if (stopping || drain.draining) return
+        if (!activeStream || activeStream.destroyed) return // 无流由 error/end/join 路径负责，这里只管"有流却失组"
+        if (consumer.memberId) {
+            memberLostStreak = 0
+            return
+        }
+        if (++memberLostStreak >= 2) {
+            memberLostStreak = 0
+            logger.warn('失组看门狗：流健在但 memberId 连续两拍为空（判定掉组/僵尸），强制重建入组')
+            scheduleRecreate()
+        }
+    }, parseInt(process.env.KAFKA_MEMBERSHIP_CHECK_MS || '60000', 10))
+    membershipCheckTimer.unref?.()
 
     consumer.on('consumer:group:rebalance', () => {
         logger.warn('Kafka rebalance in progress')
