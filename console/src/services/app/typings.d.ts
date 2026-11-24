@@ -64,6 +64,8 @@ declare namespace APPAPI {
     default2Home?: boolean;
     /** 状态 */
     status?: -1 | 0 | 1;
+    /** 所属应用的访问端（默认图标派生用，由 app.api getHomeWidgets 联查注入） */
+    endpoints?: { endpointType?: string; visitPath?: string }[];
     /** 标签 */
     tags?: { key?: string; value?: string }[];
   };

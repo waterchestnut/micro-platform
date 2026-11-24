@@ -118,6 +118,7 @@ export const formatUploadFile = (files: any[] = []): any[] => {
  */
 export const getDefaultLogoUrl = (clientInfo?: {endpoints?: {endpointType?: string; visitPath?: string}[]}): string | undefined => {
   let visitPath = clientInfo?.endpoints?.find((_) => _.endpointType === 'pc')?.visitPath
+  if (!visitPath) return undefined
   try {
     return `${new URL(visitPath).origin}/logo.svg`
   } catch (e) {

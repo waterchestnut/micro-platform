@@ -1,5 +1,5 @@
 import {history, useModel} from '@umijs/max'
-import {Avatar, Button, Checkbox, ConfigProvider, Flex, Input, Modal, Segmented, Spin, theme} from 'antd'
+import {Avatar, Button, Checkbox, ConfigProvider, Flex, Input, Modal, Segmented, Space, Spin, theme} from 'antd'
 import {
   FileTextOutlined,
   BookOutlined,
@@ -13,6 +13,10 @@ import {
   PlusOutlined,
   CloseOutlined,
   SendOutlined,
+  AppstoreOutlined,
+  RightOutlined,
+  ArrowUpOutlined,
+  ArrowDownOutlined,
 } from '@ant-design/icons'
 import React, {useState, useEffect} from 'react'
 import {registerCatalog, XCard} from '@ant-design/x-card'
@@ -177,18 +181,24 @@ const Index: React.FC = () => {
     }
   }
 
-  /*弹窗确认：现存卡保序 + 新增置尾，一次批量保存（服务端全量语义含落卡 remove）*/
+  /*弹窗确认：以已选序列为准整体保存（顺序即展示序，服务端原子全量语义）*/
   const handleAddConfirm = async () => {
-    const current = cards.map((c) => c.id)
-    const picked = new Set(pickedCodes)
-    const ordered = [...current.filter((id) => picked.has(id)), ...pickedCodes.filter((id) => !current.includes(id))]
     try {
-      await saveHomeWidgets(ordered)
+      await saveHomeWidgets(pickedCodes)
       setAddOpen(false)
       await loadRemoteCards()
     } catch (e) {
       console.error('保存小组件排布失败', e)
     }
+  }
+
+  /*已选序列上下移*/
+  const movePicked = (idx: number, delta: number) => {
+    const next = [...pickedCodes]
+    const j = idx + delta
+    if (j < 0 || j >= next.length) return
+    ;[next[idx], next[j]] = [next[j], next[idx]]
+    setPickedCodes(next)
   }
 
   const handleSend = () => {
@@ -335,9 +345,22 @@ const Index: React.FC = () => {
                         <span style={{color: token.colorPrimary}}>{card.icon}</span>
                         : card.logoUrl ?
                           <Avatar src={getDocHttpUrl(card.logoUrl)} size={16} shape='circle'/>
-                          : <Avatar src={getDefaultLogoUrl({endpoints: card.endpoints})} size={16} shape='circle' icon={<AppstoreOutlined/>/>
+                          : <Avatar src={getDefaultLogoUrl({endpoints: card.endpoints})} size={16} shape='circle' icon={<AppstoreOutlined/>}/>
                     }
-                    <span style={{fontWeight: 500}}>{card.title}</span>
+                    <span
+                      style={{fontWeight: 500, cursor: card.pcRedirectUrl ? 'pointer' : undefined}}
+                      onClick={() => {
+                        if (!card.pcRedirectUrl) return
+                        if (card.pcRedirectUrl.startsWith('http')) {
+                          window.open(card.pcRedirectUrl, '_blank')
+                        } else {
+                          history.push(card.pcRedirectUrl)
+                        }
+                      }}
+                    >
+                      {card.title}
+                    </span>
+                    {!!card.pcRedirectUrl && <RightOutlined style={{fontSize: 11, color: token.colorTextTertiary}}/>}
                   </Flex>
                   <Button
                     type='text'
@@ -420,6 +443,23 @@ const Index: React.FC = () => {
               </Checkbox>
             ))}
           </Checkbox.Group>
+          {pickedCodes.length > 1 && (
+            <div style={{marginTop: 12, borderTop: `1px solid ${token.colorBorderSecondary}`, paddingTop: 8}}>
+              <div style={{fontSize: 12, color: token.colorTextTertiary, marginBottom: 6}}>展示顺序（↑↓ 调整，新增项默认置底）</div>
+              {pickedCodes.map((code, idx) => {
+                const w = allWidgets.find((x) => x.widgetCode === code)
+                return (
+                  <Flex key={code} align='center' justify='space-between' style={{padding: '2px 0'}}>
+                    <span style={{fontSize: 13}}>{idx + 1}. {w?.widgetName || code}</span>
+                    <Space size={2}>
+                      <Button size='small' type='text' disabled={idx === 0} icon={<ArrowUpOutlined style={{fontSize: 11}}/>} onClick={() => movePicked(idx, -1)}/>
+                      <Button size='small' type='text' disabled={idx === pickedCodes.length - 1} icon={<ArrowDownOutlined style={{fontSize: 11}}/>} onClick={() => movePicked(idx, 1)}/>
+                    </Space>
+                  </Flex>
+                )
+              })}
+            </div>
+          )}
         </Modal>
         <Footer/>
       </div>
