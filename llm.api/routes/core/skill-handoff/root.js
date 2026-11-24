@@ -7,7 +7,6 @@
  */
 
 import {previewHandoff, redeemHandoff} from '../../../services/core/skill/skillHandoff.js'
-import {getResSwaggerSchema} from '../../../daos/swaggerSchema/responseHandler.js'
 
 export const autoPrefix = '/core/skill-handoff'
 
@@ -17,7 +16,7 @@ const tokenOnlySchema = {
     properties: {token: {type: 'string', description: 'handoff 一次性确认 token（提案时签发）'}},
 }
 
-/** 身份守卫（同 chat/agentTask/artifact 纪律：缺身份 401，绝不裸取 userInfo 冒成 500） */
+/** 身份守卫（缺身份 401，绝不裸取 userInfo 冒成 500） */
 function requireUser(request) {
     if (!request.userInfo?.userCode) {
         const err = new Error('缺少有效的用户身份（user-info）')
@@ -29,12 +28,13 @@ function requireUser(request) {
 
 export default async function (fastify, opts) {
     fastify.post('/preview', {
+        // 不声明 response schema：泛型 data:{type:'object'} 会让 fastify 序列化器剥掉未声明字段
+        // （data 被清空成 {}，e2e 实测暴露）；让 handler 返回原样序列化。
         schema: {
             description: '校验一次性确认 token 并回显 AI 组装的写参数（不落库、不消费）',
             summary: '写面 handoff 预览回显',
             body: tokenOnlySchema,
             tags: ['skill-handoff'],
-            response: {default: {...getResSwaggerSchema()}},
         },
     }, async function (request, reply) {
         const ui = requireUser(request)
@@ -54,7 +54,6 @@ export default async function (fastify, opts) {
             summary: '写面 handoff 兑换执行',
             body: tokenOnlySchema,
             tags: ['skill-handoff'],
-            response: {default: {...getResSwaggerSchema()}},
         },
     }, async function (request, reply) {
         const ui = requireUser(request)
