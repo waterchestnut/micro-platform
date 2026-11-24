@@ -7,6 +7,7 @@
 import homeWidgetDac from '../../daos/core/dac/homeWidgetDac.js'
 import {getWidgetByCode} from './widget.js'
 import HomeTypeEnum from '../../daos/core/enum/HomeTypeEnum.js'
+import clientDac from '../dac/clientDac.js'
 import widgetDac from '../../daos/core/dac/widgetDac.js'
 
 /**
@@ -17,8 +18,8 @@ import widgetDac from '../../daos/core/dac/widgetDac.js'
  * @param {String} homeEndpoint 首页访问端
  * @returns {Object} 合并后的首页小组件
  */
-function mergeWidgetFields(widget, record, order, homeEndpoint) {
-    return {...widget, widgetCode: widget.widgetCode, homeEndpoint, order, fromUser: true}
+function mergeWidgetFields(widget, record, order, homeEndpoint, clientEndpointsMap) {
+    return {...widget, widgetCode: widget.widgetCode, homeEndpoint, order, fromUser: true, endpoints: clientEndpointsMap?.get(widget.clientCode)}
 }
 
 /**
@@ -64,6 +65,20 @@ export async function getHomeWidgets(userCode, homeEndpoint) {
                 result.push(mergeWidgetFields(w, added, added.order ?? 100, homeEndpoint))
             }
         })
+    }
+
+    // 联查所属应用 pc 端访问地址（底座消费端派生默认图标用，产品端忽略不影响）
+    let clientCodes = [...new Set(result.map(w => w.clientCode).filter(Boolean))]
+    if (clientCodes.length > 0) {
+        let clients = await clientDac.getTop(clientCodes.length, {complexFilter: [{clientCode: {$in: clientCodes}}]})
+        let endpointMap = new Map()
+        for (let cl of (clients || [])) {
+            let pc = (cl.endpoints || []).filter(e => e.endpointType === 'pc' || e.endpointType === 'pcIframe')
+            if (pc.length) endpointMap.set(cl.clientCode, pc)
+        }
+        for (let w of result) {
+            w.endpoints = endpointMap.get(w.clientCode)
+        }
     }
 
     result.sort((a, b) => a.order - b.order)

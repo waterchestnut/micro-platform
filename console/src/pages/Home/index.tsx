@@ -22,7 +22,7 @@ import {CardText, CardHighlight, CardList, CardSchedule, CardContent} from './co
 import catalog from './catalog.json'
 import {getPCWidgets, removeHomeWidget, getShowWidgets, saveHomeWidgets} from '@/services/app/widget'
 import {request} from '@umijs/max'
-import {getDocHttpUrl} from '@/utils/util'
+import {getDocHttpUrl, getDefaultLogoUrl} from '@/utils/util'
 import {useFulltextSchedule} from '@/components/Fulltext'
 
 // @ts-ignore
@@ -334,7 +334,8 @@ const Index: React.FC = () => {
                       card.icon ?
                         <span style={{color: token.colorPrimary}}>{card.icon}</span>
                         : card.logoUrl ?
-                          <Avatar src={getDocHttpUrl(card.logoUrl)} size={16} shape='circle'/> : null
+                          <Avatar src={getDocHttpUrl(card.logoUrl)} size={16} shape='circle'/>
+                          : <Avatar src={getDefaultLogoUrl({endpoints: card.endpoints})} size={16} shape='circle' icon={<AppstoreOutlined/>/>
                     }
                     <span style={{fontWeight: 500}}>{card.title}</span>
                   </Flex>

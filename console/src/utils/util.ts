@@ -110,3 +110,17 @@ export const formatUploadFile = (files: any[] = []): any[] => {
   return list
 }
 
+
+/**
+ * @description 子系统默认图标（与应用列表 AppsPop 同约定：pc 端访问地址的站点根 logo.svg）
+ * @param {Object} clientInfo 应用信息（含 endpoints）
+ * @returns {String|undefined} 默认图标地址
+ */
+export const getDefaultLogoUrl = (clientInfo?: {endpoints?: {endpointType?: string; visitPath?: string}[]}): string | undefined => {
+  let visitPath = clientInfo?.endpoints?.find((_) => _.endpointType === 'pc')?.visitPath
+  try {
+    return `${new URL(visitPath).origin}/logo.svg`
+  } catch (e) {
+    return undefined
+  }
+}
