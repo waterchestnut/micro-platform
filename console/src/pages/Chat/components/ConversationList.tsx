@@ -115,7 +115,7 @@ const ConversationList: ForwardRefRenderFunction<ConversationListAction, Convers
         },
       ])
       setTotal(1)
-      onConversationSelect(newKey)
+      onConversationSelect(newKey, {pending: true})
       return
     } else {
       setTotal(ret.total)
@@ -140,7 +140,7 @@ const ConversationList: ForwardRefRenderFunction<ConversationListAction, Convers
         }
       }),
     )
-    onConversationSelect(list[0].conversationCode)
+    onConversationSelect(list[0].conversationCode, list[0])
   }
 
   useEffect(() => {

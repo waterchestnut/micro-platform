@@ -557,12 +557,23 @@ const Index: React.FC = () => {
 
   const handleConversationSelect = async (key: string, item?: any) => {
     isRequesting && abort()
-
-    let msgList = messageHistory?.[key]
-    if (!msgList) {
-      msgList = await reloadMessageList(key)
-    }
+    /**
+     * 先置 activeConv 再取历史：pending 新会话的 conversationCode 是前端现生成、服务端尚未创建的，
+     * message/list 对它必 403（成员制判定，防枚举，正确）。setActiveConv 若挂在 await 之后，list 抛错
+     * → activeConv 停初始 '' → 发送带空 conversationCode → /stream 400。先置保证发送永远拿到合法 code。
+     * item.pending=true=本地待创建新会话（无历史）→ 置空历史不发 list，消除 403 往返；其余正常拉。
+     */
     setActiveConv(key)
+    if (messageHistory?.[key]) return
+    if (item?.pending) {
+      setMessageHistory((prev) => ({...prev, [key]: []}))
+      return
+    }
+    try {
+      await reloadMessageList(key)
+    } catch {
+      setMessageHistory((prev) => ({...prev, [key]: []}))
+    }
   }
 
   useEffect(() => {
