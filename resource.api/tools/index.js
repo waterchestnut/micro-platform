@@ -341,3 +341,14 @@ export function cloneDeep(obj) {
     }
     return JSON.parse(JSON.stringify(obj))
 }
+/**
+ * @description 生成首页小卡片条目的跨应用跳转地址（主门户 wujie 挂载约定）
+ * @param {String} clientCode 目标应用挂载标识
+ * @param {String} path 目标应用内页面路径
+ * @param {String} homeEndpoint 首页访问端（mini 端不派生）
+ * @returns {String|undefined} 跳转地址
+ */
+export function clientJumpUrl(clientCode, path, homeEndpoint) {
+    if (homeEndpoint === 'mini') return undefined
+    return `/sub/${clientCode}?${clientCode}=${encodeURIComponent(path)}`
+}

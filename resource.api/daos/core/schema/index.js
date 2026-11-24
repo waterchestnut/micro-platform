@@ -8,6 +8,7 @@ import mongoose from 'mongoose'
 import doubanBookSchema from './doubanBookSchema.js'
 import patentSchema from './patentSchema.js'
 import resInfoSchema from './resInfoSchema.js'
+import favSchema from './favSchema.js'
 import standardSchema from './standardSchema.js'
 import datasetSchema from './datasetSchema.js'
 
@@ -31,7 +32,8 @@ async function getConnection(config) {
  */
 const conn = await getConnection(mongodbConfig)
 
-export const ResInfo = conn.model('ResInfo', resInfoSchema, 'resInfo')
+export const ResInfo = conn.model('ResInfo', resInfoSchema, 'resInfo')
+export const Fav = conn.model('Fav', favSchema, 'fav')
 export const DoubanBook = conn.model('DoubanBook', doubanBookSchema, 'doubanBook')
 export const Patent = conn.model('Patent', patentSchema, 'patent')
 export const Standard = conn.model('Standard', standardSchema, 'standard')
