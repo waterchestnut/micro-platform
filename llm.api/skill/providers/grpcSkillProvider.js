@@ -7,6 +7,8 @@
 import {getCachedGrpcSkillsByChannel} from '../../services/core/grpcSkill.js'
 import skillParser from '../skillParser.js'
 import {execCommand as execGrpcCommand} from '../../grpc/clients/grpcSkillExecutor.js'
+import crypto from 'node:crypto'
+import {buildHandoffConfirmUrl} from '../../services/core/skill/skillHandoff.js'
 
 const logger = llm.logger
 
@@ -95,7 +97,7 @@ export class GrpcSkillProvider {
      * @param {Object} parameters - 参数
      * @returns {Promise<any>}
      */
-    async executeCommand(skill, command, parameters) {
+    async executeCommand(skill, command, parameters, execOptions = {}) {
         if (!this.initialized) {
             await this.initialize()
         }
@@ -106,6 +108,35 @@ export class GrpcSkillProvider {
                 command: command.name,
                 error: `技能 ${skill.name} 不存在`,
                 message: `命令 ${skill.name}.${command.name} 执行失败：技能 ${skill.name} 不存在`,
+            }
+        }
+        /**
+         * handoff 分支（feature-map §4B 复杂写）：命中 skillHandoff.handoffCommands 申报的命令，
+         * 不直调 grpc 落库，而是落 journal.proposed + 签一次性确认 token + 回深链（用户在确认页
+         * 二次确认→skill-handoff/redeem 才真正落库）。**安全**：命中名单即 handoff，未开闸时拒执行
+         * （绝不 fall-through 到 grpc 直调，防止误把写命令当读技能静默落库）。
+         */
+        const shCfg = (typeof llm !== 'undefined' && llm.config?.skillHandoff) || {}
+        const spec = (shCfg.handoffCommands || []).find((h) => h.command === `${skill.name}.${command.name}`)
+        if (spec) {
+            if (shCfg.enabled !== true) {
+                return {success: false, command: command.name, error: 'skill-handoff 未开闸', message: `命令 ${skill.name}.${command.name} 需确认流程执行，当前未开放`}
+            }
+            const userCode = this.curUserInfo?.userCode || ''
+            const {proposeHandoff} = await import('../../services/core/skill/skillHandoff.js')
+            const r = await proposeHandoff({
+                key: `handoff:${skill.name}:${command.name}:${crypto.randomUUID()}`,
+                skillName: skill.name, commandName: command.name, params: parameters || {},
+                userCode, conversationCode: execOptions.conversationCode || skillInfo.grpcSkillInfo?.conversationCode || '',
+            })
+            if (!r.ok) {
+                return {success: false, command: command.name, error: `提案失败: ${r.reason}`, message: '生成待确认草稿失败，请稍后重试或改用页面操作'}
+            }
+            const confirmUrl = buildHandoffConfirmUrl(shCfg.confirmBaseUrl, spec, r.token)
+            return {
+                success: true, skill: skill.name, command: command.name, handoff: true,
+                confirmUrl, message: `已准备好「${spec.title || command.name}」的草稿，请把下面的确认链接交给用户，由用户在确认页二次确认后才会真正创建`,
+                hint: '在未确认前不得声称已创建；本操作的复杂后续（多次回写/确认）都在用户跳转后的页面完成',
             }
         }
         return await execGrpcCommand(skillInfo.grpcSkillInfo.grpcHost, skillInfo.name, command.name, parameters, this.curUserInfo)

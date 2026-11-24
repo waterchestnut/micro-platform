@@ -654,6 +654,26 @@ export default {
         hashCheckEnabled: process.env['grpcSkill_hashCheckEnabled'] !== 'false',
     },
     /**
+     * 写面 handoff 型（feature-map §4B 复杂写=确认 token+确认时才落库）。**缺省全关**：
+     * enabled=false 时 provider 不分支、handoffCommands 视为空——工具执行面逐字现网不变。
+     * handoffCommands 申报 `[{command:'${skillName}.${commandName}', clientCode, path}]`：命中的
+     * 命令被调用时走"落 journal.proposed+签一次性确认 token+回深链"，不落库；用户在子系统
+     * ai-confirm 页确认→redeem 才真正落库。命中名单即 handoff，未开闸拒执行（绝不 fall-through 直调）。
+     */
+    skillHandoff: {
+        enabled: process.env['skillHandoff_enabled'] === 'true',
+        handoffCommands: (() => {
+            try {
+                const arr = process.env['skillHandoff_handoffCommands'] ? JSON.parse(process.env['skillHandoff_handoffCommands']) : []
+                return Array.isArray(arr) ? arr.filter((h) => h && h.command) : []
+            } catch { return [] }
+        })(),
+        confirmBaseUrl: process.env['skillHandoff_confirmBaseUrl'] || '',
+        tokenTtlMs: Number(process.env['skillHandoff_tokenTtlMs']) > 0 ? Number(process.env['skillHandoff_tokenTtlMs']) : 600000,
+        jtiTtlSeconds: Number(process.env['skillHandoff_jtiTtlSeconds']) > 0 ? Number(process.env['skillHandoff_jtiTtlSeconds']) : 660,
+        snapshotMaxChars: Number(process.env['skillHandoff_snapshotMaxChars']) > 0 ? Number(process.env['skillHandoff_snapshotMaxChars']) : 4000,
+    },
+    /**
      * 功能目录（platform-feature-map Phase 1，R3-10 定稿形状）。**缺省全关**：
      * enabled=false 时 sysPrompt 无静态钩子、platform_features 不注册、装配零触碰——
      * 关=现网逐字不变（开关分叉纪律，同 conversationTaskQueue/fanOutOrchestration 家规）。

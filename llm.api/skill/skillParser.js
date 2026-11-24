@@ -103,10 +103,15 @@ export class SkillParser {
         const params = paramStr.split(',').map(p => p.trim())
 
         for (const param of params) {
-            const [name, type = 'string'] = param.split(':').map(s => s.trim())
+            let [name, type = 'string'] = param.split(':').map(s => s.trim())
+            // 约定：参数名尾部的 `?` 表示可选（`title?:string`）。此前未剥 `?` ⇒ 属性名变成
+            // "title?"、模型照此发键、handler 按 params.title 取不到（写面 createDraft 实锤暴露）。
+            // 剥 `?` 作属性名、且不进 required；无 `?` 仍视为必填。
+            let optional = false
+            if (name.endsWith('?')) { optional = true; name = name.slice(0, -1).trim() }
             if (name) {
                 properties[name] = { type: type.toLowerCase() }
-                required.push(name)
+                if (!optional) required.push(name)
             }
         }
 

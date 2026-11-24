@@ -329,7 +329,7 @@ export class SkillManager {
 
         // 根据指令类型执行不同的逻辑
         // 这里可以扩展为调用脚本、执行代码等
-        const result = skill.skillType === 'grpc' ? (await this.grpcSkillProvider.executeCommand(skill, command, parameters)) : (await this.localSkillProvider.executeCommand(skill, command, parameters, execOptions))
+        const result = skill.skillType === 'grpc' ? (await this.grpcSkillProvider.executeCommand(skill, command, parameters, execOptions)) : (await this.localSkillProvider.executeCommand(skill, command, parameters, execOptions))
 
         return {
             success: true,
