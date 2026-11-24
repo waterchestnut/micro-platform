@@ -45,7 +45,7 @@ const RoleSelect: React.FC<RoleSelectProps> = ({ visible, onCancel, onConfirm, c
 
   return (
     <Modal
-      visible={visible}
+      open={visible}
       title="选择角色"
       onCancel={onCancel}
       onOk={handleConfirm}
