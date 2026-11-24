@@ -1,5 +1,5 @@
 import {history, useModel} from '@umijs/max'
-import {Avatar, Button, ConfigProvider, Flex, Input, Segmented, Spin, theme} from 'antd'
+import {Avatar, Button, Checkbox, ConfigProvider, Flex, Input, Modal, Segmented, Spin, theme} from 'antd'
 import {
   FileTextOutlined,
   BookOutlined,
@@ -20,7 +20,7 @@ import type {Catalog, XAgentCommand_v0_9} from '@ant-design/x-card'
 import {CARD_LIST, fetchCardA2UICommands} from './mockData'
 import {CardText, CardHighlight, CardList, CardSchedule, CardContent} from './components'
 import catalog from './catalog.json'
-import {getPCWidgets} from '@/services/app/widget'
+import {getPCWidgets, removeHomeWidget, getShowWidgets, saveHomeWidgets} from '@/services/app/widget'
 import {request} from '@umijs/max'
 import {getDocHttpUrl} from '@/utils/util'
 import {useFulltextSchedule} from '@/components/Fulltext'
@@ -84,6 +84,9 @@ const Index: React.FC = () => {
   const [inputValue, setInputValue] = useState('')
   const [selectedType, setSelectedType] = useState<string>('chat')
   const [typePlaceholder, setTypePlaceholder] = React.useState<string>(placeholderMap.chat);
+  const [addOpen, setAddOpen] = useState(false)
+  const [allWidgets, setAllWidgets] = useState<APPAPI.Widget[]>([])
+  const [pickedCodes, setPickedCodes] = useState<string[]>([])
 
   const loadMockCards = async () => {
     const cardStates: CardState[] = CARD_LIST.map((card) => ({
@@ -153,12 +156,39 @@ const Index: React.FC = () => {
     loadRemoteCards()
   }, [])
 
-  const handleRemoveCard = (id: string) => {
-    setCards(cards.filter((card) => card.id !== id))
+  /*移除卡片：写用户排布记录（默认卡记 remove），再整体重载*/
+  const handleRemoveCard = async (id: string) => {
+    try {
+      await removeHomeWidget(id)
+      await loadRemoteCards()
+    } catch (e) {
+      console.error('移除小组件失败', e)
+    }
   }
 
-  const handleAddCard = () => {
-    console.log('添加新卡片')
+  const handleAddCard = async () => {
+    try {
+      const all = await getShowWidgets()
+      setAllWidgets(all)
+      setPickedCodes(cards.map((c) => c.id))
+      setAddOpen(true)
+    } catch (e) {
+      console.error('获取小组件目录失败', e)
+    }
+  }
+
+  /*弹窗确认：现存卡保序 + 新增置尾，一次批量保存（服务端全量语义含落卡 remove）*/
+  const handleAddConfirm = async () => {
+    const current = cards.map((c) => c.id)
+    const picked = new Set(pickedCodes)
+    const ordered = [...current.filter((id) => picked.has(id)), ...pickedCodes.filter((id) => !current.includes(id))]
+    try {
+      await saveHomeWidgets(ordered)
+      setAddOpen(false)
+      await loadRemoteCards()
+    } catch (e) {
+      console.error('保存小组件排布失败', e)
+    }
   }
 
   const handleSend = () => {
@@ -308,13 +338,13 @@ const Index: React.FC = () => {
                     }
                     <span style={{fontWeight: 500}}>{card.title}</span>
                   </Flex>
-                  {/*<Button
-                  type='text'
-                  size='small'
-                  icon={<CloseOutlined style={{fontSize: 12}}/>}
-                  onClick={() => handleRemoveCard(card.id)}
-                  style={{color: token.colorTextTertiary}}
-                />*/}
+                  <Button
+                    type='text'
+                    size='small'
+                    icon={<CloseOutlined style={{fontSize: 12}}/>}
+                    onClick={() => handleRemoveCard(card.id)}
+                    style={{color: token.colorTextTertiary}}
+                  />
                 </div>
 
                 {/* Card Content */}
@@ -337,31 +367,59 @@ const Index: React.FC = () => {
           ))}
 
           {/* 添加卡片按钮 */}
-          {/*<div
-          style={{
-            border: `1px dashed ${token.colorBorder}`,
-            borderRadius: token.borderRadius,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            minHeight: 120,
-            cursor: 'pointer',
-            transition: 'all 0.3s',
-            background: token.colorBgContainer,
-          }}
-          onClick={handleAddCard}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.borderColor = token.colorPrimary
-            e.currentTarget.style.color = token.colorPrimary
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.borderColor = token.colorBorder
-            e.currentTarget.style.color = token.colorText
-          }}
-        >
-          <PlusOutlined style={{fontSize: 24, color: token.colorTextTertiary}}/>
-        </div>*/}
+          <div
+            style={{
+              border: `1px dashed ${token.colorBorder}`,
+              borderRadius: token.borderRadius,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              minHeight: 120,
+              cursor: 'pointer',
+              transition: 'all 0.3s',
+              background: token.colorBgContainer,
+            }}
+            onClick={handleAddCard}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = token.colorPrimary
+              e.currentTarget.style.color = token.colorPrimary
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = token.colorBorder
+              e.currentTarget.style.color = token.colorText
+            }}
+          >
+            <Flex vertical align='center' gap={8}>
+              <PlusOutlined style={{fontSize: 20}}/>
+              <span style={{fontSize: 13, color: token.colorTextTertiary}}>添加卡片</span>
+            </Flex>
+          </div>
         </div>
+        <Modal
+          title='添加卡片'
+          open={addOpen}
+          onOk={handleAddConfirm}
+          onCancel={() => setAddOpen(false)}
+          okText='保存'
+          cancelText='取消'
+          width={520}
+        >
+          <Checkbox.Group
+            value={pickedCodes}
+            onChange={(vals) => setPickedCodes(vals as string[])}
+            style={{display: 'flex', flexDirection: 'column', gap: 10, padding: '8px 4px'}}
+          >
+            {allWidgets.map((w) => (
+              <Checkbox key={w.widgetCode} value={w.widgetCode}>
+                <Flex align='center' gap={8}>
+                  {w.logoUrl ? <Avatar src={getDocHttpUrl(w.logoUrl)} size={20} shape='square'/> : null}
+                  <span>{w.widgetName}</span>
+                  <span style={{color: token.colorTextTertiary, fontSize: 12}}>{w.description || w.clientCode}</span>
+                </Flex>
+              </Checkbox>
+            ))}
+          </Checkbox.Group>
+        </Modal>
         <Footer/>
       </div>
     </ConfigProvider>

@@ -71,22 +71,20 @@ export async function getHomeWidgets(userCode, homeEndpoint) {
 }
 
 /**
- * @description 批量保存用户首页小组件
+ * @description 批量保存用户首页小组件（目标集合全量语义：新增/保序项记 add，落选项记 remove）
  * @param {Object} curUserInfo 当前用户
- * @param {String[]} widgetCodes 小组件标识数组
+ * @param {String[]} widgetCodes 目标小组件标识数组（顺序即排布顺序）
  * @param {String} homeEndpoint 首页访问端
  * @returns {Promise<Object[]>} 保存结果
  */
 export async function saveHomeWidgets(curUserInfo, widgetCodes, homeEndpoint = 'pc') {
-    if (!widgetCodes || !widgetCodes.length) {
-        return []
-    }
+    let targetCodes = widgetCodes || []
 
-    let widgets = await widgetDac.getTop(widgetCodes.length, {status: 0, widgetCode: widgetCodes})
+    let widgets = await widgetDac.getTop(targetCodes.length, {status: 0, widgetCode: targetCodes})
 
     let upsertInfos = []
-    for (let i = 0; i < widgetCodes.length; i++) {
-        let widgetCode = widgetCodes[i]
+    for (let i = 0; i < targetCodes.length; i++) {
+        let widgetCode = targetCodes[i]
         let widget = widgets.find(w => w.widgetCode === widgetCode)
         if (!widget) {
             continue
@@ -103,6 +101,25 @@ export async function saveHomeWidgets(curUserInfo, widgetCodes, homeEndpoint = '
         upsertInfos.push(homeWidgetInfo)
     }
 
+    // 全量语义：当前在首页但目标集合中没有的卡，落 remove 记录（含默认卡）
+    let current = await getHomeWidgets(curUserInfo.userCode, homeEndpoint)
+    let targetSet = new Set(targetCodes)
+    for (let w of current) {
+        if (!targetSet.has(w.widgetCode)) {
+            upsertInfos.push({
+                homeWidgetCode: homeWidgetDac.getHomeWidgetCode(curUserInfo.userCode, w.widgetCode, homeEndpoint),
+                widgetCode: w.widgetCode,
+                userCode: curUserInfo.userCode,
+                homeEndpoint,
+                homeType: HomeTypeEnum.remove.value,
+                order: 0,
+            })
+        }
+    }
+
+    if (!upsertInfos.length) {
+        return []
+    }
     return homeWidgetDac.bulkUpdate(upsertInfos)
 }
 
