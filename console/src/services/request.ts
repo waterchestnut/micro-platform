@@ -32,3 +32,9 @@ export async function docRequest<T>(relativeUrl: string, options?: { [key: strin
   const url = DOC_API_BASE + relativeUrl
   return request<ResponseStructure & T>(url, {...options})
 }
+
+export async function resourceRequest<T>(relativeUrl: string, options?: { [key: string]: any }) {
+  // @ts-ignore
+  const url = RESOURCE_API_BASE + relativeUrl
+  return request<ResponseStructure & T>(url, {...options})
+}

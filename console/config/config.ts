@@ -157,6 +157,8 @@ headScripts: [
     PLATFORM_BASE='${process.env.PLATFORM_BASE || 'http://localhost:11001'}';
     /*大模型服务地址*/
     LLM_API_BASE='${process.env.LLM_API_BASE || 'http://localhost:12008'}';
+    /*资源服务接口地址*/
+    RESOURCE_API_BASE='${process.env.RESOURCE_API_BASE || 'http://localhost:12007'}';
     `, type: 'text/javascript'
     },
   ],

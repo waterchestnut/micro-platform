@@ -1,0 +1,82 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "local://home_card_catalog.json",
+  "title": "Home Card Catalog",
+  "description": "Catalog for home page card content rendering",
+  "catalogId": "local://home_card_catalog.json",
+  "components": {
+    "CardText": {
+      "type": "object",
+      "properties": {
+        "content": { "type": "string" },
+        "color": { "type": "string" },
+        "url": { "type": "string" }
+      },
+      "required": ["content"]
+    },
+    "CardHighlight": {
+      "type": "object",
+      "properties": {
+        "prefix": { "type": "string" },
+        "count": { "type": "number" },
+        "suffix": { "type": "string" },
+        "count2": { "type": "number" },
+        "suffix2": { "type": "string" },
+        "url": { "type": "string" }
+      },
+      "required": ["prefix", "count", "suffix"]
+    },
+    "CardList": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              { "type": "string" },
+              {
+                "type": "object",
+                "properties": {
+                  "status": { "type": "string", "enum": ["success", "error", "default"] },
+                  "text": { "type": "string" },
+                  "url": { "type": "string" }
+                },
+                "required": ["status", "text"]
+              }
+            ]
+          }
+        }
+      },
+      "required": ["items"]
+    },
+    "CardSchedule": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "time": { "type": "string" },
+              "course": { "type": "string" },
+              "location": { "type": "string" },
+              "type": { "type": "string", "enum": ["class", "share"] },
+              "url": { "type": "string" }
+            },
+            "required": ["time", "course", "location", "type"]
+          }
+        }
+      },
+      "required": ["items"]
+    },
+    "CardContent": {
+      "type": "object",
+      "properties": {
+        "children": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}
