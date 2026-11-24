@@ -223,4 +223,26 @@ async function defaultExecGrpc(host, skillName, commandName, params, curUserInfo
     return await execCommand(host, skillName, commandName, params, curUserInfo)
 }
 
-export default {proposeHandoff, previewHandoff, redeemHandoff, buildHandoffConfirmUrl}
+/**
+ * @description 造 jump 模式深链（无后端落库、无 token）：把 AI 组装 params 编成 query 拼进子系统 create 页
+ *   `{base}/sub/{clientCode}?{clientCode}={enc(path?paramsQuery)}`。数组值逗号连接。用户在预填页复核并本人提交。
+ * @param {String} baseUrl 门户基址（空=相对）
+ * @param {Object} spec {clientCode, path}
+ * @param {Object} params AI 组装参数
+ * @returns {String}
+ */
+export function buildJumpUrl(baseUrl, spec = {}, params = {}) {
+    const q = new URLSearchParams()
+    for (const [k, v] of Object.entries(params || {})) {
+        if (v === undefined || v === null) continue
+        q.set(k, Array.isArray(v) ? v.join(',') : String(v))
+    }
+    const path = spec.path || '/'
+    const sep = path.includes('?') ? '&' : '?'
+    const inner = `${path}${sep}${q.toString()}`
+    const base = String(baseUrl || '').replace(/\/+$/, '')
+    const sub = `/sub/${spec.clientCode || ''}?${spec.clientCode || ''}=${encodeURIComponent(inner)}`
+    return base ? `${base}${sub}` : sub
+}
+
+export default {proposeHandoff, previewHandoff, redeemHandoff, buildHandoffConfirmUrl, buildJumpUrl}

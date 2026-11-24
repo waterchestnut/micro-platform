@@ -4,7 +4,7 @@
  */
 import {describe, test} from 'node:test'
 import assert from 'node:assert/strict'
-import {proposeHandoff, previewHandoff, redeemHandoff, buildHandoffConfirmUrl} from '../../../../services/core/skill/skillHandoff.js'
+import {proposeHandoff, previewHandoff, redeemHandoff, buildHandoffConfirmUrl, buildJumpUrl} from '../../../../services/core/skill/skillHandoff.js'
 
 const SECRET = 'test-handoff-secret'
 
@@ -206,5 +206,23 @@ describe('redeemHandoff（确认时才落库）', () => {
         } finally {
             if (prev === undefined) delete globalThis.llm; else globalThis.llm = prev
         }
+    })
+})
+
+describe('buildJumpUrl（jump 模式：参数编 query、无 token）', () => {
+    test('标量+数组参数都进 query 并整体编码', () => {
+        const u = buildJumpUrl('https://p.net', {clientCode: 'thesis', path: '/selection/apply'}, {editionCode: 'E1', topicCodes: ['T1', 'T2']})
+        assert.ok(u.startsWith('https://p.net/sub/thesis?thesis='))
+        const inner = decodeURIComponent(u.split('thesis=')[1])
+        assert.ok(inner.startsWith('/selection/apply?'), inner)
+        assert.ok(inner.includes('editionCode=E1'), inner)
+        assert.ok(inner.includes('topicCodes=T1%2CT2') || inner.includes('topicCodes=T1,T2'), inner)
+    })
+    test('base 空 ⇒ 相对路径', () => {
+        assert.ok(buildJumpUrl('', {clientCode: 'c', path: '/x'}, {a: '1'}).startsWith('/sub/c?c='))
+    })
+    test('空参数 ⇒ 只有 path + ?', () => {
+        const u = buildJumpUrl('', {clientCode: 'c', path: '/x'}, {})
+        assert.ok(decodeURIComponent(u).includes('/x?'), u)
     })
 })

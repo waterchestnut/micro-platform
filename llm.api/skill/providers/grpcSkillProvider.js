@@ -123,7 +123,17 @@ export class GrpcSkillProvider {
                 return {success: false, command: command.name, error: 'skill-handoff 未开闸', message: `命令 ${skill.name}.${command.name} 需确认流程执行，当前未开放`}
             }
             const userCode = this.curUserInfo?.userCode || ''
-            const {proposeHandoff} = await import('../../services/core/skill/skillHandoff.js')
+            const {proposeHandoff, buildJumpUrl} = await import('../../services/core/skill/skillHandoff.js')
+            // jump 模式：无后端落库、无 token——把 AI 组装参数编成 query 深链跳子系统 create 页，
+            // 用户在预填页复核并【本人提交】。适用无草稿态/一步强校验/直提有危险副作用的操作（thesis）。
+            if (spec.mode === 'jump') {
+                const jumpUrl = buildJumpUrl(shCfg.confirmBaseUrl, spec, parameters || {})
+                return {
+                    success: true, skill: skill.name, command: command.name, handoff: true, jump: true,
+                    confirmUrl: jumpUrl, message: `已按你的意图准备好「${spec.title || command.name}」的预填页面，请把下面的链接交给用户，由用户在页面上复核并本人提交`,
+                    hint: '本操作不代为提交；用户需在打开的页面上确认并提交。切勿声称已完成',
+                }
+            }
             const r = await proposeHandoff({
                 key: `handoff:${skill.name}:${command.name}:${crypto.randomUUID()}`,
                 skillName: skill.name, commandName: command.name, params: parameters || {},
