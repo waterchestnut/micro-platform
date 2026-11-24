@@ -135,7 +135,9 @@ export async function saveHomeWidgets(curUserInfo, widgetCodes, homeEndpoint = '
     if (!upsertInfos.length) {
         return []
     }
-    return homeWidgetDac.bulkUpdate(upsertInfos)
+    await homeWidgetDac.bulkUpdate(upsertInfos)
+    // 保存即返回最新排布（BulkWriteOpResult 直出会撞 response schema 的数组定义，500）
+    return getHomeWidgets(curUserInfo.userCode, homeEndpoint)
 }
 
 /**
