@@ -77,7 +77,7 @@ export default {
         clientId: process.env['KAFKA_CLIENTID'],
         brokers: process.env['KAFKA_BROKERS'].split(','),
         sasl: {
-            mechanism: process.env['KAFKA_SASL_MECHANISM'],
+            mechanism: (process.env['KAFKA_SASL_MECHANISM'] || 'PLAIN').toUpperCase(),
             username: process.env['KAFKA_SASL_USERNAME'],
             password: process.env['KAFKA_SASL_PASSWORD']
         },
