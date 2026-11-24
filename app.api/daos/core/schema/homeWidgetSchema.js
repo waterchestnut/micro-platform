@@ -36,7 +36,7 @@ const homeWidgetSchema = new Schema({
     order: {type: Number, description: '排序'},
     userCode: {type: String, description: '排布的用户'},
     homeEndpoint: {type: String, default: 'pc', description: '首页排布访问端', enum: HomeEndpointEnum.values},
-    homeType: {type: String, description: '首页排布类型', enum: HomeTypeEnum.values},
+    homeType: {type: Number, description: '首页排布类型', enum: HomeTypeEnum.values},
     insertTime: {
         type: Date, default: function () {
             return new Date()

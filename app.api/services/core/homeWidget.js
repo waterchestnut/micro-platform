@@ -10,6 +10,18 @@ import HomeTypeEnum from '../../daos/core/enum/HomeTypeEnum.js'
 import widgetDac from '../../daos/core/dac/widgetDac.js'
 
 /**
+ * @description 合并小组件展示字段（注册表 widget 为主，用户排布记录无 widgetName/apiUrl 等字段）
+ * @param {Object} widget 注册表小组件对象
+ * @param {Object} record 用户排布记录
+ * @param {Number} order 生效顺序（用户记录优先）
+ * @param {String} homeEndpoint 首页访问端
+ * @returns {Object} 合并后的首页小组件
+ */
+function mergeWidgetFields(widget, record, order, homeEndpoint) {
+    return {...widget, widgetCode: widget.widgetCode, homeEndpoint, order, fromUser: true}
+}
+
+/**
  * @description 获取用户首页小组件列表
  * @param {String} userCode 用户标识
  * @param {String} homeEndpoint 首页访问端（pc/mini）
@@ -18,11 +30,11 @@ import widgetDac from '../../daos/core/dac/widgetDac.js'
 export async function getHomeWidgets(userCode, homeEndpoint) {
     let records = await homeWidgetDac.getListByUserCode(userCode, homeEndpoint)
 
-    let addedWidgetCodes = new Set()
+    let addedRecords = new Map()
     let removedWidgetCodes = new Set()
     records.forEach(r => {
         if (r.homeType === HomeTypeEnum.add.value) {
-            addedWidgetCodes.add(r.widgetCode)
+            addedRecords.set(r.widgetCode, r)
         } else if (r.homeType === HomeTypeEnum.remove.value) {
             removedWidgetCodes.add(r.widgetCode)
         }
@@ -32,18 +44,27 @@ export async function getHomeWidgets(userCode, homeEndpoint) {
 
     let result = []
     defaultWidgets.forEach(w => {
-        if (addedWidgetCodes.has(w.widgetCode)) {
-            result.push({...w, widgetCode: w.widgetCode, homeEndpoint, order: w.order, fromUser: true})
+        let added = addedRecords.get(w.widgetCode)
+        if (added) {
+            // 用户显式添加过默认卡：以用户排布顺序为准
+            result.push(mergeWidgetFields(w, added, added.order ?? w.order, homeEndpoint))
+            addedRecords.delete(w.widgetCode)
         } else if (!removedWidgetCodes.has(w.widgetCode)) {
             result.push({...w, widgetCode: w.widgetCode, homeEndpoint, order: w.order, fromUser: false})
         }
     })
 
-    records.forEach(r => {
-        if (r.homeType === HomeTypeEnum.add.value && !result.find(item => item.widgetCode === r.widgetCode)) {
-            result.push({...r, fromUser: true})
-        }
-    })
+    // 用户添加的非默认卡：需从注册表补齐 widgetName/apiUrl 等展示字段
+    let extraCodes = [...addedRecords.keys()]
+    if (extraCodes.length > 0) {
+        let extraWidgets = await widgetDac.getTop(extraCodes.length, {status: 0, widgetCode: extraCodes})
+        extraWidgets.forEach(w => {
+            let added = addedRecords.get(w.widgetCode)
+            if (added) {
+                result.push(mergeWidgetFields(w, added, added.order ?? 100, homeEndpoint))
+            }
+        })
+    }
 
     result.sort((a, b) => a.order - b.order)
     return result
