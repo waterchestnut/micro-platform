@@ -7,7 +7,7 @@
 import homeWidgetDac from '../../daos/core/dac/homeWidgetDac.js'
 import {getWidgetByCode} from './widget.js'
 import HomeTypeEnum from '../../daos/core/enum/HomeTypeEnum.js'
-import clientDac from '../dac/clientDac.js'
+import clientDac from '../../daos/core/dac/clientDac.js'
 import widgetDac from '../../daos/core/dac/widgetDac.js'
 
 /**
