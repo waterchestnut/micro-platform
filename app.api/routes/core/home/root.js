@@ -175,7 +175,7 @@ export default async function (fastify, opts) {
             },
             tags: ['home'],
             response: {
-                default: {...getListResSwaggerSchema(homeWidgetSchema)}
+                default: {...getResSwaggerSchema()}
             }
         }
     }, async function (request, reply) {
