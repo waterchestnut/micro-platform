@@ -29,6 +29,12 @@ function secret() {
 function resolveSecret(deps) {
     return deps?.secret ?? secret()
 }
+
+/** 从 config.skillHandoff.handoffCommands 查某命令的申报 spec（含 redirect 模板/confirmBaseUrl 无关） */
+function handoffSpecOf(commandKey) {
+    const list = (typeof llm !== 'undefined' && llm.config?.skillHandoff?.handoffCommands) || []
+    return list.find((h) => h.command === commandKey) || null
+}
 function handoffCfg() {
     const h = (typeof llm !== 'undefined' && llm.config?.skillHandoff) || {}
     const ttlMs = Number(h.tokenTtlMs) > 0 ? Number(h.tokenTtlMs) : DEFAULT_HANDOFF_TTL_MS
@@ -185,14 +191,21 @@ export async function redeemHandoff({token = '', callerUserCode = '', curUserInf
     if (!res || res.success !== true) {
         return {ok: false, reason: 'exec-failed', detail: (res && (res.error || res.message)) || ''}
     }
-    const researchCode = res.data?.researchCode || res.data?.data?.researchCode || ''
+    // materialize 结果 id：约定 handler 返回 entityId；兼容既有 researchCode/code/id
+    const entityId = res.data?.entityId || res.data?.researchCode || res.data?.code || res.data?.id
+        || res.data?.data?.entityId || res.data?.data?.researchCode || ''
     // settle started→done（快照=结果）；settle 失败只 warn（副作用已成，行留 started 反而保守）
     try {
         await dac.settle(journalKey, clipSnapshot(JSON.stringify(res.data || {}), snapshotMaxChars))
     } catch (e) {
         logger.warn(`handoff settle 失败(行留 started): key=${journalKey} ${String(e?.message || e).slice(0, 160)}`)
     }
-    return {ok: true, researchCode, result: res.data}
+    // 回跳路径：从 config handoffCommands spec.redirect 模板用 {id} 填充（通用化，console 直接跳）
+    const spec = handoffSpecOf(`${env.skillName}.${env.commandName || 'createDraft'}`)
+    const redirectPath = spec?.redirect && entityId
+        ? spec.redirect.replace('{id}', encodeURIComponent(entityId))
+        : ''
+    return {ok: true, entityId, researchCode: entityId, redirectPath, result: res.data}
 }
 
 // ===== 真件默认实现（仅 e2e 走；单测一律 deps 注入 fake） =====

@@ -191,4 +191,20 @@ describe('redeemHandoff（确认时才落库）', () => {
         assert.equal(r.ok, false)
         assert.equal(r.reason, 'store-unavailable')
     })
+    test('通用化：materialize 后 entityId + 按 config spec.redirect 拼回跳路径（{id} 填充并 encode）', async () => {
+        const prev = globalThis.llm
+        globalThis.llm = {config: {cookieSecret: SECRET, skillHandoff: {handoffCommands: [{command: 'my-research.createDraft', redirect: '/research/detail/{id}'}]}}}
+        try {
+            const dac = makeDac(); const jti = makeJti()
+            const deps = {secret: SECRET, dac, ...jti, resolveHost: async () => 'h', execGrpc: async () => ({success: true, data: {entityId: 'AB/cd'}})}
+            const {token} = await proposeHandoff({key: 'k1', skillName: 'my-research', commandName: 'createDraft', params: {}, userCode: 'alice', deps})
+            const r = await redeemHandoff({token, callerUserCode: 'alice', curUserInfo: {userCode: 'alice'}, deps})
+            assert.equal(r.ok, true)
+            assert.equal(r.entityId, 'AB/cd')
+            assert.equal(r.researchCode, 'AB/cd')
+            assert.equal(r.redirectPath, `/research/detail/${encodeURIComponent('AB/cd')}`)
+        } finally {
+            if (prev === undefined) delete globalThis.llm; else globalThis.llm = prev
+        }
+    })
 })

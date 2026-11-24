@@ -16,7 +16,7 @@ const tokenOnlySchema = {
     properties: {token: {type: 'string', description: 'handoff 一次性确认 token（提案时签发）'}},
 }
 
-/** 身份守卫（缺身份 401，绝不裸取 userInfo 冒成 500） */
+/** 身份守卫（同 chat/agentTask/artifact 纪律：缺身份 401，绝不裸取 userInfo 冒成 500） */
 function requireUser(request) {
     if (!request.userInfo?.userCode) {
         const err = new Error('缺少有效的用户身份（user-info）')
@@ -65,6 +65,6 @@ export default async function (fastify, opts) {
         if (!ret.ok) {
             return {code: -1, msg: `确认执行失败（${ret.reason}）`, data: {reason: ret.reason, detail: (ret.detail || '').slice(0, 120)}}
         }
-        return {code: 0, msg: '', data: {researchCode: ret.researchCode, result: ret.result}}
+        return {code: 0, msg: '', data: {entityId: ret.entityId, researchCode: ret.researchCode, redirectPath: ret.redirectPath, result: ret.result}}
     })
 }
