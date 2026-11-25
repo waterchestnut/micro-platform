@@ -20,8 +20,8 @@ const llmChannelDataSet = {
         model: 'relay_common_pro',
         /** 带图档：文档截图、拍照题目等走视觉族 Pro */
         visionModel: 'relay_qwen_vl_pro',
-        /** 系统提示词 */
-        sysPrompt: `你是一个高校师生教、学助手，请根据用户提供的用户资料回答用户的问题。`,
+        /** 系统提示词（底座通用平台口径；xxzx 高校教学生态提示词在产品仓库，勿互拷） */
+        sysPrompt: `你是本平台的智能助手。请依据用户提供的资料与工具检索到的内容回答用户的问题；没有依据的内容不要臆造功能、链接或步骤，不确定的就如实说明。`,
         /** 增强检索提示词 */
         ragPrompt: `## 用户资料： \n
     {{segs}}`,

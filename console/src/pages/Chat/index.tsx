@@ -285,6 +285,8 @@ const Index: React.FC = () => {
   const listRef = useRef<any>(null)
   const senderRef = useRef<GetRef<typeof Sender>>(null)
   const conversationListRef = createRef<ConversationListAction>()
+  const autoSendPendingRef = useRef<{ code: string; content: string } | null>(null)
+  const lastMessagesRef = useRef<MessageInfo<CommonChatMessage>[] | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
   const [messageHistory, setMessageHistory] = useState<Record<string, any>>({})
@@ -554,6 +556,25 @@ const Index: React.FC = () => {
    * 否则类型不兼容，只能 `as any`，那是契约分叉的开始。
    */
   const handleSend = useCallback((content: string) => doSend(content, {}), [doSend])
+
+  /**
+   * 首页跳转自动发送（initialQuery）：两段式——先落输入框，再等 useXChat 完成会话 store 切换。
+   * handleSend 的 onRequest 在 activeConv 变更当次提交里会写旧会话 store，流式消息不渲染；
+   * messages 引用在每个 store 初始化时更换，以它精确判定"已切到新会话"，不依赖定时器。
+   */
+  const handleAutoSendMessage = (conversationCode: string, content: string) => {
+    setInputValue(content)
+    autoSendPendingRef.current = {code: conversationCode, content}
+  }
+
+  useEffect(() => {
+    const pending = autoSendPendingRef.current
+    if (pending && pending.code === activeConv && lastMessagesRef.current !== messages) {
+      autoSendPendingRef.current = null
+      handleSend(pending.content)
+    }
+    lastMessagesRef.current = messages
+  }, [activeConv, handleSend, messages])
 
   const handleConversationSelect = async (key: string, item?: any) => {
     isRequesting && abort()
@@ -1041,6 +1062,7 @@ const Index: React.FC = () => {
           activeKey={activeConv}
           onConversationSelect={handleConversationSelect}
           onNewConversation={handleNewConversation}
+          onAutoSend={handleAutoSendMessage}
         />
 
         <div className={styles.main}>

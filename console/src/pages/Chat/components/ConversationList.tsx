@@ -29,6 +29,8 @@ interface ConversationListProps {
   activeKey: string;
   onConversationSelect: (key: string, item?: any) => void;
   onNewConversation: () => any;
+  /** URL 携带 initialQuery 时由父组件回调：建会话 + 自动发送 */
+  onAutoSend?: (conversationCode: string, content: string) => void;
 }
 
 export type ConversationListAction = {
@@ -72,7 +74,7 @@ const useStyles = createStyles(({token, css}) => ({
 }))
 
 const ConversationList: ForwardRefRenderFunction<ConversationListAction, ConversationListProps> = (
-  {activeKey, onConversationSelect, onNewConversation},
+  {activeKey, onConversationSelect, onNewConversation, onAutoSend},
   ref,
 ) => {
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -82,6 +84,21 @@ const ConversationList: ForwardRefRenderFunction<ConversationListAction, Convers
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
   const [total, setTotal] = useState(0)
+  const initParamHandled = useRef(false)
+
+  /**
+   * @description 获取url中传递的初始会话信息（消费一次即摘除地址栏参数，防刷新重发）
+   */
+  const getInitialUrlParam = () => {
+    let urlInitQuery = ''
+    if (!initParamHandled.current) {
+      urlInitQuery = new URLSearchParams(window.location.search).get('initialQuery') || ''
+      if (urlInitQuery) {
+        window.history.replaceState(null, '', window.location.pathname + window.location.hash)
+      }
+    }
+    return urlInitQuery
+  }
 
   useImperativeHandle(ref, () => ({
     modifyInitLabel: (conversationCode: string, label: string) => {
@@ -105,42 +122,58 @@ const ConversationList: ForwardRefRenderFunction<ConversationListAction, Convers
       keywords,
     })
     let list = ret.rows || []
+    const urlInitialQuery = getInitialUrlParam()
+    let firstKey = ''
     if (!list.length) {
       let newKey = uuidV4()
       setConversations([
         {
           key: newKey,
-          label: '新会话',
+          label: urlInitialQuery.length ? urlInitialQuery.slice(0, 20) : '新会话',
           group: '今天',
         },
       ])
       setTotal(1)
       onConversationSelect(newKey, {pending: true})
-      return
+      firstKey = newKey
     } else {
       setTotal(ret.total)
+      setConversations(
+        list.map((_: any) => {
+          let today = new Date(dayjs().format('YYYY-MM-DD'))
+          let yesterday = dayjs(today).add(-1, 'days').toDate()
+          let group = '更早'
+          let updateTime = new Date(_.updateTime)
+          /*console.log(_, updateTime, today, yesterday)*/
+          if (updateTime >= today) {
+            group = '今天'
+          } else if (updateTime >= yesterday) {
+            group = '昨天'
+          }
+          return {
+            key: _.conversationCode,
+            label: _.title,
+            group,
+          }
+        }),
+      )
+      if (urlInitialQuery) {
+        /** 首页带话进来：不落到历史会话里发，新建会话并以其为题 */
+        const newKey = uuidV4()
+        setConversations((prev) => [{key: newKey, label: urlInitialQuery.slice(0, 20), group: '今天'}, ...prev])
+        setTotal((prev) => prev + 1)
+        onConversationSelect(newKey, {pending: true})
+        firstKey = newKey
+      } else {
+        onConversationSelect(list[0].conversationCode, list[0])
+        firstKey = list[0].conversationCode
+      }
     }
 
-    setConversations(
-      list.map((_: any) => {
-        let today = new Date(dayjs().format('YYYY-MM-DD'))
-        let yesterday = dayjs(today).add(-1, 'days').toDate()
-        let group = '更早'
-        let updateTime = new Date(_.updateTime)
-        /*console.log(_, updateTime, today, yesterday)*/
-        if (updateTime >= today) {
-          group = '今天'
-        } else if (updateTime >= yesterday) {
-          group = '昨天'
-        }
-        return {
-          key: _.conversationCode,
-          label: _.title,
-          group,
-        }
-      }),
-    )
-    onConversationSelect(list[0].conversationCode, list[0])
+    if (!initParamHandled.current && onAutoSend && urlInitialQuery) {
+      initParamHandled.current = true
+      onAutoSend(firstKey, urlInitialQuery)
+    }
   }
 
   useEffect(() => {
