@@ -579,22 +579,26 @@ const Index: React.FC = () => {
   const handleConversationSelect = async (key: string, item?: any) => {
     isRequesting && abort()
     /**
-     * 先置 activeConv 再取历史：pending 新会话的 conversationCode 是前端现生成、服务端尚未创建的，
-     * message/list 对它必 403（成员制判定，防枚举，正确）。setActiveConv 若挂在 await 之后，list 抛错
-     * → activeConv 停初始 '' → 发送带空 conversationCode → /stream 400。先置保证发送永远拿到合法 code。
-     * item.pending=true=本地待创建新会话（无历史）→ 置空历史不发 list，消除 403 往返；其余正常拉。
+     * 顺序敏感：useXChat 只在 conversationKey 切换的那次渲染消费 defaultMessages，之后
+     * setMessageHistory 不会再灌进已初始化的 provider——既有会话必须「先 reloadMessageList
+     * 落缓存、后 setActiveConv」，反过来切会空白整屏（setActiveConv 前置的那版栽在这）。
+     * 但 setActiveConv 也不能吊在 list 成功之后：pending 新会话的 conversationCode 是前端
+     * 现生成、服务端尚未创建的，message/list 对它必 403（成员制判定，防枚举，正确）——
+     * 抛错就地吞掉并兜空缓存，然后照样切 key，否则发送带空 code → /stream 400。
+     * item.pending=true=本地待创建新会话（无历史）→ 不发 list，直接兜空切过去。
      */
+    if (!messageHistory?.[key]) {
+      if (item?.pending) {
+        setMessageHistory((prev) => ({...prev, [key]: []}))
+      } else {
+        try {
+          await reloadMessageList(key)
+        } catch {
+          setMessageHistory((prev) => ({...prev, [key]: []}))
+        }
+      }
+    }
     setActiveConv(key)
-    if (messageHistory?.[key]) return
-    if (item?.pending) {
-      setMessageHistory((prev) => ({...prev, [key]: []}))
-      return
-    }
-    try {
-      await reloadMessageList(key)
-    } catch {
-      setMessageHistory((prev) => ({...prev, [key]: []}))
-    }
   }
 
   useEffect(() => {
