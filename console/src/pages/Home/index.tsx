@@ -31,8 +31,6 @@ import {useFulltextSchedule} from '@/components/Fulltext'
 
 // @ts-ignore
 const gatewayBaseUrl = (typeof API_GATEWAY_BASE !== 'undefined') ? API_GATEWAY_BASE : ''
-import {uuidV4} from '@/utils/util'
-import {errorMessage} from '@/utils/msg'
 import {Footer} from '@/components'
 
 const {useToken} = theme
@@ -41,20 +39,10 @@ registerCatalog(catalog as unknown as Catalog)
 
 const chatTypes = [
   {value: 'chat', label: '对话'},
-  {value: 'research', label: '学术调研'},
-  {value: 'resource', label: '资源检索'},
-  {value: 'subscribe', label: '文献订阅'},
 ]
 
 const placeholderMap = {
-  'chat': `您可以向我提问，例如：我今天有什么工作需要完成
-您也可以选择其他类型的对话模式，让我给您提供更精准的服务`,
-  'research': `您可以向我提出要求，我来帮您汇总资源，并总结调研报告
-例如：我想了解未来智慧图书馆的研究进展`,
-  'resource': `传统资源检索模式，请输入检索关键词，多关键词可用空格隔开
-例如：未来智慧图书馆 人工智能`,
-  'subscribe': `您可以设定一个主题，我在一定周期内持续向您推送资源，您可以随时调整需求
-例如：有关图书馆在馆舍设计、技术应用方面的研究`
+  'chat': `您可以向我提问，例如：我今天有什么工作需要完成`,
 }
 
 interface CardState extends APPAPI.Widget {
@@ -207,24 +195,6 @@ const Index: React.FC = () => {
         ? `?initialQuery=${encodeURIComponent(inputValue.trim())}`
         : ''
       history.push('/chat' + params)
-    }
-    if (selectedType === 'resource') {
-      const params = inputValue.trim() ? `/res/search/${inputValue.trim()}` : ''
-      window.location.href = `/sub/callin-search?callin-search=${encodeURIComponent(params)}`
-    }
-    if (selectedType === 'research') {
-      if (!inputValue.trim()) {
-        return errorMessage('请先提出要求')
-      }
-      const params = `/research/new/?researchCode=${uuidV4()}&topic=${inputValue.trim()}`
-      window.location.href = `/sub/callin-survey?callin-survey=${encodeURIComponent(params)}`
-    }
-    if (selectedType === 'subscribe') {
-      if (!inputValue.trim()) {
-        return errorMessage('请先提出要求')
-      }
-      const params = `/claim/ongoing/?title=${inputValue.trim()}`
-      window.location.href = `/sub/callin-subs?callin-subs=${encodeURIComponent(params)}`
     }
   }
 
