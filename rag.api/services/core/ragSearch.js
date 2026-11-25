@@ -9,10 +9,29 @@ import {search} from '../../daos/milvus/dac/chunkDac.js'
 import ragSegmentDac from '../../daos/core/dac/ragSegmentDac.js'
 import ragMaterialDac from '../../daos/core/dac/ragMaterialDac.js'
 import ragChunkDac from '../../daos/core/dac/ragChunkDac.js'
+import {l2ToSimilarity} from './memoryIndex.js'
 
 const tools = rag.tools
 const logger = rag.logger
 const config = rag.config
+
+/**
+ * @description 给 milvus 检索行按 L2 距离折算余弦相似度、按下限过滤并按相关度降序。
+ *   minSimilarity<=0（默认）＝不过滤不排序、保持原顺序与现网一致（向后兼容）。
+ *   milvus metric=L2 时把原始距离放在 score/distance（越小越近），与 memoryIndex 同一口径。
+ * @param {Array} rows milvus search 结果行
+ * @param {Number} minSimilarity 相似度下限（0~1），<=0 不过滤
+ * @returns {Array} 过滤+排序后的行（每行附 _sim）
+ */
+export function applySimilarityFloor(rows, minSimilarity) {
+    const minSim = Number(minSimilarity)
+    const list = rows || []
+    if (!(minSim > 0)) return list
+    return list
+        .map(_ => ({..._, _sim: l2ToSimilarity(Number(_.score ?? _.distance))}))
+        .filter(_ => _._sim >= minSim)
+        .sort((a, b) => b._sim - a._sim)
+}
 
 /**
  * @description 执行材料的增强检索
@@ -35,11 +54,12 @@ export async function ragSearch(subject, options = {}) {
         output_fields: ['ragChunkCode', 'ragSegmentCode', 'ragMaterialCode'],
         filter: andFilters.length ? andFilters.join(' AND ') : undefined
     })
+    vecRet = vecRet.rows || vecRet || []
+    // 相关性下限过滤（默认 minSimilarity<=0＝不过滤、保持原顺序，向后兼容；传正数才生效）
+    vecRet = applySimilarityFloor(vecRet, options.minSimilarity)
     let ragSegmentCodeList = []
     let ragMaterialCodeList = []
     let ragChunkCodeList = []
-    vecRet = vecRet.rows || vecRet || []
-    /*console.log('vecRet', vecRet)*/
     vecRet.forEach(_ => {
         ragSegmentCodeList.push(_.ragSegmentCode)
         ragMaterialCodeList.push(_.ragMaterialCode)
@@ -81,7 +101,6 @@ export async function ragSearch(subject, options = {}) {
         }
         retList.push(info)
     })
-    /*console.log(JSON.stringify(retList))*/
     return retList
 }
 

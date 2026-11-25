@@ -26,7 +26,7 @@ export async function execResRag(query, options = {}) {
         return execSimpleResRag(query, options.resCode, maxTokens)
     }
 
-    let segList = await ragSearch(query, {maxLength})
+    let segList = await ragSearch(query, {maxLength, minSimilarity: options.minSimilarity})
     return segList || []
 }
 
