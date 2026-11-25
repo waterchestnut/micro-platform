@@ -30,7 +30,7 @@ import {getDocHttpUrl, getDefaultLogoUrl} from '@/utils/util'
 import {useFulltextSchedule} from '@/components/Fulltext'
 
 // @ts-ignore
-const gatewayBaseUrl = API_GATEWAY_BASE
+const gatewayBaseUrl = (typeof API_GATEWAY_BASE !== 'undefined') ? API_GATEWAY_BASE : ''
 import {uuidV4} from '@/utils/util'
 import {errorMessage} from '@/utils/msg'
 import {Footer} from '@/components'
