@@ -114,7 +114,8 @@ export default {
         options: {
             dbName: process.env['MILVUS_DB'],
             username: process.env['MILVUS_USERNAME'],
-            password: process.env['MILVUS_PASSWORD']
+            password: process.env['MILVUS_PASSWORD'],
+            replicaNumber: process.env['MILVUS_REPLICA_NUMBER']
         }
     },
     /** 向量模型相关的配置 */

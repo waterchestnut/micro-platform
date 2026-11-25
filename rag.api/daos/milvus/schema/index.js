@@ -41,6 +41,9 @@ for (let key in schemas) {
     }
     await milvusClient.loadCollectionSync({
         collection_name: schema.collection_name,
+        // milvus 2.6 服务端缺省 3 副本，standalone 仅 1 streaming node 会拒绝；
+        // 显式 env 驱动（MILVUS_REPLICA_NUMBER），缺省 1 兼容 standalone/cluster
+        replica_number: parseInt(config.milvusConfig.options.replicaNumber || '1'),
     })
 }
 
