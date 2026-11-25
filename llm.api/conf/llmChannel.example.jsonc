@@ -1,0 +1,53 @@
+{
+  // ============================================================================
+  //  llm.api 频道扩展样例（多平台复用底座）
+  //  用法：把本文件去掉 // 注释后作为 platform-channels.json 挂载到容器，
+  //        设 env  LLM_CHANNEL_EXT_PATH=/etc/llm/platform-channels.json
+  //     或小改动直接内联：LLM_CHANNEL_EXT_JSON='<同结构的紧凑 JSON>'
+  //  详细语义/回退见 docs/window-handover.md §7。
+  // ============================================================================
+
+  // ── ① 覆盖【已有】频道：只写要改的字段，其余继承底座内置默认 ──
+  "xxzx_common": {
+    // 换成本平台自己的助手系统提示词（不写则沿用底座默认）
+    "sysPrompt": "你是 ACME 平台的智能助手，请依据用户资料作答；涉及平台功能入口时用 platform_features 检索，不要臆造链接。",
+
+    // 嵌套对象深合并：这里只关召回，enabled/capture 仍继承底座默认值
+    "memory": { "recall": false },
+
+    // 数组/标量整值替换：把技能白名单换成平台自己的
+    "skills": { "skillNames": ["acme-invoice", "document-extractor"] },
+
+    // maxIterations 覆盖为平台值（频道级）
+    "maxIterations": 12
+
+    // 删除某个内置子项用 null，例如删掉内置 mcp server：
+    // "mcpServers": { "searxng_http": null }
+  },
+
+  // ── ② 注入【新】频道：底座源码里没有这个 channelCode，启动时整体新增 ──
+  "acme_bot": {
+    // 长提示词建议放挂载文件，用 sysPromptFile 指向相对本 JSON 文件目录的路径
+    // （运行时会读该文件内容填进 sysPrompt，并从配置里移除 sysPromptFile 辅助键）
+    "sysPromptFile": "prompts/acme_bot.txt",
+
+    // 关掉联网搜索 MCP
+    "enableMcp": false,
+
+    // 长期记忆全关（新平台先关，稳了再按频道开灰度）
+    "memory": { "enabled": false, "capture": false, "recall": false },
+
+    // 频道选档（可选）：文本档 / 视觉档，取 conf/llmModel.js 里的 relay_<族>_<档>
+    // "model": "relay_qwen_low",
+    // "visionModel": "relay_qwen_vl_medium",
+
+    // 技能配置（可选，同上深合并）
+    "skills": {
+      "enabled": true,
+      "skillNames": ["acme-invoice"],
+      "maxSkills": 3,
+      "threshold": 0.3,
+      "enableSkillExecution": true
+    }
+  }
+}

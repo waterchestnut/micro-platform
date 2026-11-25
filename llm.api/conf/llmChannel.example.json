@@ -1,0 +1,20 @@
+{
+  "xxzx_common": {
+    "sysPrompt": "你是 ACME 平台的智能助手，请依据用户资料作答；涉及平台功能入口时用 platform_features 检索，不要臆造链接。",
+    "memory": { "recall": false },
+    "skills": { "skillNames": ["acme-invoice", "document-extractor"] },
+    "maxIterations": 12
+  },
+  "acme_bot": {
+    "sysPrompt": "你是 ACME 平台的流程助手，依据用户材料与内置流程知识作答，不确定就说不确定。",
+    "enableMcp": false,
+    "memory": { "enabled": false, "capture": false, "recall": false },
+    "skills": {
+      "enabled": true,
+      "skillNames": ["acme-invoice"],
+      "maxSkills": 3,
+      "threshold": 0.3,
+      "enableSkillExecution": true
+    }
+  }
+}
