@@ -12,6 +12,8 @@
  * 换后端或改真实模型名仍然只动中转站与 .env。
  */
 import {relayModels} from './llmModel.js'
+import fs from 'node:fs'
+import path from 'node:path'
 
 const llmChannelDataSet = {
     /** 通用聊天助手 */
@@ -124,6 +126,84 @@ const llmChannelDataSet = {
         },
     },
 }
+
+/**
+ * ===================== 启动频道扩展层（多平台复用底座）=====================
+ * 底座按本文件内置频道为默认；平台部署时可用外部配置**覆盖已有频道 / 注入新频道**，无需改源码。
+ * env：
+ *   LLM_CHANNEL_EXT_PATH  JSON 文件：{ "<channelCode>": { <频道配置> }, ... }；频道内可用
+ *                         sysPromptFile（相对该 JSON 目录解析）承载长提示词。
+ *   LLM_CHANNEL_EXT_JSON  内联 JSON（小覆盖；优先级 base < 文件 < 内联）。
+ * 语义：逐频道深合并（只改写了的字段、其余继承默认）；数组/标量整替换；值 null 删键；
+ *   频道不存在则注入。两 env 都不配 ⇒ 与无扩展层逐字一致（关=现网不变，回退=不设 env）。
+ */
+function isPlainObject(v) {
+    return v !== null && typeof v === 'object' && !Array.isArray(v)
+}
+
+export function deepMergeChannel(base, ext) {
+    const out = isPlainObject(base) ? {...base} : {}
+    for (const [k, v] of Object.entries(ext || {})) {
+        if (v === null) {
+            delete out[k]
+            continue
+        }
+        if (isPlainObject(v) && isPlainObject(out[k])) out[k] = deepMergeChannel(out[k], v)
+        else out[k] = v
+    }
+    return out
+}
+
+function resolvePromptFiles(extChannels, baseDir) {
+    for (const cfg of Object.values(extChannels || {})) {
+        if (cfg && typeof cfg === 'object' && cfg.sysPromptFile) {
+            try {
+                cfg.sysPrompt = fs.readFileSync(path.resolve(baseDir, cfg.sysPromptFile), 'utf-8').trim()
+            } catch (e) {
+                console.error(`[llmChannel] sysPromptFile 读取失败 ${cfg.sysPromptFile}: ${e.message}`)
+            }
+            delete cfg.sysPromptFile
+        }
+    }
+}
+
+export function loadChannelExtensions(env = process.env) {
+    const merged = {}
+    const filePath = env.LLM_CHANNEL_EXT_PATH
+    if (filePath) {
+        try {
+            const abs = path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath)
+            const obj = JSON.parse(fs.readFileSync(abs, 'utf-8'))
+            resolvePromptFiles(obj, path.dirname(abs))
+            for (const [k, v] of Object.entries(obj)) merged[k] = v
+        } catch (e) {
+            console.error(`[llmChannel] LLM_CHANNEL_EXT_PATH 解析失败(${filePath}): ${e.message}`)
+        }
+    }
+    const inline = env.LLM_CHANNEL_EXT_JSON
+    if (inline) {
+        try {
+            const obj = JSON.parse(inline)
+            resolvePromptFiles(obj, process.cwd())
+            for (const [k, v] of Object.entries(obj)) {
+                merged[k] = isPlainObject(merged[k]) && isPlainObject(v) ? deepMergeChannel(merged[k], v) : v
+            }
+        } catch (e) {
+            console.error(`[llmChannel] LLM_CHANNEL_EXT_JSON 解析失败: ${e.message}`)
+        }
+    }
+    return merged
+}
+
+export function applyChannelExtensions(base = llmChannelDataSet, env = process.env) {
+    const ext = loadChannelExtensions(env)
+    for (const [channel, cfg] of Object.entries(ext)) {
+        base[channel] = deepMergeChannel(base[channel], cfg)
+    }
+    return base
+}
+
+applyChannelExtensions()
 
 export default llmChannelDataSet
 
