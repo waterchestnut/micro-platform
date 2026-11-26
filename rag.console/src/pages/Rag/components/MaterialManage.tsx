@@ -4,8 +4,10 @@ import ProTableWrapper from '@/components/ProTableWrapper'
 import {deleteRagMaterial, getRagMaterialList} from '@/services/rag/ragMaterial'
 import {history} from '@@/core/history'
 import MaterialEdit, {MaterialEditAction} from '@/pages/Rag/components/MaterialEdit'
-import {Button, Popconfirm} from 'antd'
+import {Button, Popconfirm, Space, Tag, Tooltip, Typography} from 'antd'
+import {LinkOutlined} from '@ant-design/icons'
 import {errorMessage, successMessage} from '@/utils/msg'
+import {formatTime, HandleStatusTag} from '../ragMeta'
 
 export type MaterialManageProps = {
   pRagInfo?: any;
@@ -22,19 +24,77 @@ const MaterialManage: React.FC<MaterialManageProps> = (props) => {
   const localEditFinish = async () => {
     actionRef.current?.reloadAndRest?.()
   }
+
+  const toDetailOf = (record: any) => {
+    if (toDetail) {
+      toDetail(record.ragCode, record.ragMaterialCode)
+    } else {
+      history.push(`${location.pathname.startsWith('/lite/') ? '/lite' : ''}/rag/detail/${record.ragCode}/${record.ragMaterialCode}`)
+    }
+  }
+
   const columns: ProColumns[] = [
-    {
-      title: '材料标识',
-      dataIndex: 'ragMaterialCode',
-    },
     {
       title: '材料标题',
       dataIndex: 'resTitle',
+      render: (_, record) => (
+        <Space size={4}>
+          <a onClick={() => toDetailOf(record)}>{record.resTitle || record.ragMaterialCode}</a>
+          {record.resOriginalUrl ? (
+            <Tooltip title='查看原文'>
+              <a href={record.resOriginalUrl} target='_blank' rel='noreferrer' onClick={e => e.stopPropagation()}>
+                <LinkOutlined style={{fontSize: 12, color: 'rgba(0,0,0,0.35)'}}/>
+              </a>
+            </Tooltip>
+          ) : null}
+        </Space>
+      ),
+    },
+    {
+      title: '材料标识',
+      dataIndex: 'ragMaterialCode',
+      ellipsis: true,
+      width: 200,
+      render: (_, record) => (
+        <Typography.Text copyable={{text: record.ragMaterialCode}} style={{fontSize: 12, color: 'rgba(0,0,0,0.45)'}} ellipsis>
+          {record.ragMaterialCode}
+        </Typography.Text>
+      ),
+    },
+    {
+      title: '格式',
+      dataIndex: 'format',
+      search: false,
+      width: 80,
+      render: (_, record) => record.format ? <Tag bordered={false} style={{fontFamily: 'monospace'}}>{String(record.format).toLowerCase()}</Tag> : '-',
+    },
+    {
+      title: '处理状态',
+      dataIndex: 'handleStatus',
+      search: false,
+      width: 100,
+      render: (_, record) => <HandleStatusTag handleStatus={record.handleStatus} handleError={record.handleError}/>,
     },
     {
       title: '备注',
       dataIndex: 'description',
-      search: false
+      search: false,
+      ellipsis: true,
+      render: (_, record) => <span style={{color: 'rgba(0,0,0,0.45)', fontSize: 12}}>{record.description || '-'}</span>,
+    },
+    {
+      title: '创建者',
+      dataIndex: ['operator', 'realName'],
+      search: false,
+      width: 100,
+      render: (_, record) => record.operator?.realName || record.operator?.userCode || '-',
+    },
+    {
+      title: '更新时间',
+      dataIndex: 'updateTime',
+      search: false,
+      width: 140,
+      render: (_, record) => <span style={{color: 'rgba(0,0,0,0.45)', fontSize: 12}}>{formatTime(record.updateTime)}</span>,
     },
     {
       title: '操作',
@@ -45,18 +105,7 @@ const MaterialManage: React.FC<MaterialManageProps> = (props) => {
       className: 'option-wrap',
       render: (_, record) => {
         let actions: React.ReactNode[] = [
-          <a
-            key='detail'
-            onClick={() => {
-              if (toDetail) {
-                toDetail(record.ragCode, record.ragMaterialCode)
-              } else {
-                history.push(`${location.pathname.startsWith('/lite/') ? '/lite' : ''}/rag/detail/${record.ragCode}/${record.ragMaterialCode}`)
-              }
-            }}
-          >
-            材料片段
-          </a>,
+          <a key='detail' onClick={() => toDetailOf(record)}>材料片段</a>,
         ]
         if (canEdit) {
           actions.push(
@@ -83,7 +132,7 @@ const MaterialManage: React.FC<MaterialManageProps> = (props) => {
               cancelText='取消'
               key='delete'
             >
-              <a href='#'>删除</a>
+              <a href='#' style={{color: '#ff4d4f'}}>删除</a>
             </Popconfirm>,
           )
         }
@@ -102,7 +151,7 @@ const MaterialManage: React.FC<MaterialManageProps> = (props) => {
           let filter = {...paramsIn, ragCode: pRagInfo.ragCode}
           delete filter.current
           delete filter.pageSize
-          let data = await getRagMaterialList(paramsIn.current, paramsIn.pageSize, filter, {}, apiRelativeUrls?.getRagMaterialList, pRagInfo.ragCode)
+          let data = await getRagMaterialList(paramsIn.current, paramsIn.pageSize, filter, {sort: {updateTime: -1}}, apiRelativeUrls?.getRagMaterialList, pRagInfo.ragCode)
           return {
             data: data.rows,
             total: data.total,

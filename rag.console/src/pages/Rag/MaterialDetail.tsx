@@ -3,19 +3,18 @@ import {type ActionType, PageContainer, ProCard, ProList} from '@ant-design/pro-
 import {useParams, history} from '@umijs/max'
 import {getRagInfo} from '@/services/rag/ragInfo'
 import {getRagMaterial} from '@/services/rag/ragMaterial'
-import {Button, Descriptions, Popconfirm, Space, Switch, Typography} from 'antd'
+import {Button, Descriptions, Popconfirm, Space, Switch, Tag, Tooltip, Typography} from 'antd'
 import {
-  deleteRagSegment,
-  disableRagSegment,
-  enableRagSegment,
-  getRagSegmentList,
-  updateRagSegment
-} from '@/services/rag/ragSegment'
-import {DeleteOutlined, EditOutlined} from '@ant-design/icons'
+  DeleteOutlined,
+  EditOutlined,
+  LinkOutlined,
+} from '@ant-design/icons'
 import SegmentEdit, {SegmentEditAction} from '@/pages/Rag/components/SegmentEdit'
 import ChunkEdit, {ChunkEditAction} from '@/pages/Rag/components/ChunkEdit'
 import {errorMessage, successMessage} from '@/utils/msg'
 import {deleteRagChunk, disableRagChunk, enableRagChunk} from '@/services/rag/ragChunk'
+import {deleteRagSegment, disableRagSegment, enableRagSegment, getRagSegmentList, updateRagSegment} from '@/services/rag/ragSegment'
+import {formatTime, HandleStatusTag} from './ragMeta'
 
 export type RagMaterialDetailProps = {
   apiRelativeUrls?: any;
@@ -110,7 +109,7 @@ const RagMaterialDetail: React.FC<RagMaterialDetailProps> = (props) => {
       loading={loading}
       header={{
         breadcrumb: {},
-        title: `《${ragInfo?.title}》的材料片段`,
+        title: ragMaterialInfo?.resTitle || '材料片段',
         onBack: () => {
           if (toBack) {
             toBack(params.ragCode + '')
@@ -119,18 +118,33 @@ const RagMaterialDetail: React.FC<RagMaterialDetailProps> = (props) => {
           }
         }
       }}
-      content={
-        <Descriptions column={2}>
-          <Descriptions.Item label='材料标识'>{ragMaterialInfo?.ragMaterialCode}</Descriptions.Item>
-          <Descriptions.Item label='材料标题'>
-            {ragMaterialInfo?.resTitle}
+      content={ragMaterialInfo ? (
+        <Descriptions size='small' column={{xs: 1, sm: 2, md: 3}} style={{marginBottom: 0}}>
+          <Descriptions.Item label='所属知识库'>{ragInfo?.title}</Descriptions.Item>
+          <Descriptions.Item label='材料标识'>
+            <Typography.Text copyable={{text: ragMaterialInfo.ragMaterialCode}} style={{fontSize: 12, color: 'rgba(0,0,0,0.45)'}} ellipsis>
+              {ragMaterialInfo.ragMaterialCode}
+            </Typography.Text>
           </Descriptions.Item>
+          <Descriptions.Item label='格式'>
+            {ragMaterialInfo.format ? <Tag bordered={false} style={{fontFamily: 'monospace'}}>{String(ragMaterialInfo.format).toLowerCase()}</Tag> : '-'}
+          </Descriptions.Item>
+          <Descriptions.Item label='处理状态'>
+            <HandleStatusTag handleStatus={ragMaterialInfo.handleStatus} handleError={ragMaterialInfo.handleError}/>
+          </Descriptions.Item>
+          <Descriptions.Item label='原文链接'>
+            {ragMaterialInfo.resOriginalUrl
+              ? <a href={ragMaterialInfo.resOriginalUrl} target='_blank' rel='noreferrer'>查看原文 <LinkOutlined style={{fontSize: 11}}/></a>
+              : '-'}
+          </Descriptions.Item>
+          <Descriptions.Item label='更新时间'>{formatTime(ragMaterialInfo.updateTime)}</Descriptions.Item>
+          {ragMaterialInfo.description ? <Descriptions.Item label='备注' span={3}>{ragMaterialInfo.description}</Descriptions.Item> : null}
         </Descriptions>
-      }
+      ) : null}
     >
       <ProList<any>
         actionRef={actionRef}
-        headerTitle={`${totalSegCount}个分段`}
+        headerTitle={<Space>共 <Typography.Text strong>{totalSegCount}</Typography.Text> 个分段</Space>}
         itemLayout='vertical'
         rowKey='ragSegmentCode'
         request={async (paramsIn, sorter, filterIn) => {
@@ -147,7 +161,7 @@ const RagMaterialDetail: React.FC<RagMaterialDetailProps> = (props) => {
             success: true
           }
         }}
-        pagination={{pageSize: 10}}
+        pagination={{pageSize: 10, showTotal: t => `共 ${t} 条`}}
         toolBarRender={() => {
           return [
             <Button
@@ -166,38 +180,51 @@ const RagMaterialDetail: React.FC<RagMaterialDetailProps> = (props) => {
             title: '片段关键词',
             key: 'keyword',
             render: (dom, record) => (
-              <Space><span>S-{record.position}</span><span>{record.wordCount}字符</span><span>{record.tokens}tokens</span><span>语言：{record.language}</span>
-                <Button
-                  type='text'
-                  onClick={(e) => {
-                    segmentEditRef?.current?.show(record)
-                  }}
-                ><EditOutlined/></Button>
-                <Popconfirm
-                  title='确定要删除该分段吗？'
-                  onConfirm={async () => {
-                    await onDeleteSegment(record)
-                  }}
-                  okText='确定'
-                  cancelText='取消'
-                >
-                  <Button
-                    type='text'
-                  ><DeleteOutlined/></Button>
-                </Popconfirm>
-                <Switch
-                  checkedChildren='已启用' unCheckedChildren='已禁用'
-                  checked={!record.status}
-                  onChange={(checked) => {
-                    onToggleSegment(record, checked)
-                  }}
-                />
-              </Space>
+              <div style={{display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap'}}>
+                <Tag bordered={false} color={record.status === 0 ? 'geekblue' : 'default'} style={{fontFamily: 'monospace'}}>S-{record.position}</Tag>
+                {record.status !== 0 ? <Tag color='orange' bordered={false}>已禁用</Tag> : null}
+                <span style={{fontSize: 12, color: 'rgba(0,0,0,0.45)'}}>
+                  {record.wordCount ?? 0}字符 · {record.tokens ?? 0}tokens
+                  {record.chunks?.length ? ` · ${record.chunks.length}个分句` : ''}
+                  {record.language && record.language !== 'zh' ? ` · 语言：${record.language}` : ''}
+                </span>
+                <Space size={0} style={{marginInlineStart: 'auto'}}>
+                  <Tooltip title='编辑分段'>
+                    <Button
+                      type='text' size='small' icon={<EditOutlined/>}
+                      onClick={(e) => {
+                        segmentEditRef?.current?.show(record)
+                      }}
+                    />
+                  </Tooltip>
+                  <Popconfirm
+                    title='确定要删除该分段吗？'
+                    onConfirm={async () => {
+                      await onDeleteSegment(record)
+                    }}
+                    okText='确定'
+                    cancelText='取消'
+                  >
+                    <Tooltip title='删除分段'>
+                      <Button type='text' size='small' danger icon={<DeleteOutlined/>}/>
+                    </Tooltip>
+                  </Popconfirm>
+                  <Switch
+                    size='small'
+                    checkedChildren='启' unCheckedChildren='禁'
+                    checked={record.status === 0}
+                    onChange={(checked) => {
+                      onToggleSegment(record, checked)
+                    }}
+                  />
+                </Space>
+              </div>
             ),
           },
           description: {
             render: (dom, record) => (
               <Typography.Paragraph
+                style={{fontSize: 13, lineHeight: 1.7, marginBottom: 4}}
                 ellipsis={{
                   rows: 3,
                   expandable: 'collapsible',
@@ -216,7 +243,7 @@ const RagMaterialDetail: React.FC<RagMaterialDetailProps> = (props) => {
               <ProCard
                 ghost
                 collapsible
-                title={<Space>分句（子片段）<Button type='link' onClick={(e) => {
+                title={<Space size={6}>分句（子片段）<Button type='link' size='small' onClick={(e) => {
                   chunkEditRef?.current?.show(null, record)
                   e.stopPropagation()
                 }}>添加</Button></Space>}
@@ -232,36 +259,43 @@ const RagMaterialDetail: React.FC<RagMaterialDetailProps> = (props) => {
                   metas={{
                     title: {
                       render: (dom, chunkRecord) => (
-                        <Space><span>C-{chunkRecord.position}</span><span>{chunkRecord.wordCount}字符</span><span>语言：{chunkRecord.language}</span>
-                          <Button
-                            type='text'
-                            onClick={(e) => {
-                              chunkEditRef?.current?.show(chunkRecord, record)
-                            }}
-                          ><EditOutlined/></Button>
-                          <Popconfirm
-                            title='确定要删除该分句吗？'
-                            onConfirm={async () => {
-                              await onDeleteChunk(chunkRecord)
-                            }}
-                            okText='确定'
-                            cancelText='取消'
-                          >
-                            <Button type='text'><DeleteOutlined/></Button>
-                          </Popconfirm>
-                          <Switch
-                            checkedChildren='已启用' unCheckedChildren='已禁用'
-                            checked={!chunkRecord.status}
-                            onChange={(checked) => {
-                              onToggleChunk(chunkRecord, checked)
-                            }}
-                          />
-                        </Space>
+                        <div style={{display: 'flex', alignItems: 'center', gap: 8}}>
+                          <span style={{fontFamily: 'monospace', fontSize: 12, color: 'rgba(0,0,0,0.45)'}}>C-{chunkRecord.position}</span>
+                          {chunkRecord.status !== 0 ? <Tag color='orange' bordered={false} style={{fontSize: 11}}>已禁用</Tag> : null}
+                          <span style={{fontSize: 12, color: 'rgba(0,0,0,0.45)'}}>{chunkRecord.wordCount ?? 0}字符</span>
+                          <Space size={0} style={{marginInlineStart: 'auto'}}>
+                            <Button
+                              type='text' size='small' icon={<EditOutlined/>}
+                              onClick={(e) => {
+                                chunkEditRef?.current?.show(chunkRecord, record)
+                              }}
+                            />
+                            <Popconfirm
+                              title='确定要删除该分句吗？'
+                              onConfirm={async () => {
+                                await onDeleteChunk(chunkRecord)
+                              }}
+                              okText='确定'
+                              cancelText='取消'
+                            >
+                              <Button type='text' size='small' danger icon={<DeleteOutlined/>}/>
+                            </Popconfirm>
+                            <Switch
+                              size='small'
+                              checkedChildren='启' unCheckedChildren='禁'
+                              checked={chunkRecord.status === 0}
+                              onChange={(checked) => {
+                                onToggleChunk(chunkRecord, checked)
+                              }}
+                            />
+                          </Space>
+                        </div>
                       ),
                     },
                     description: {
                       render: (dom, chunkRecord) => (
                         <Typography.Paragraph
+                          style={{fontSize: 12, marginBottom: 0}}
                           ellipsis={{
                             rows: 1,
                             expandable: 'collapsible',
@@ -292,4 +326,3 @@ const RagMaterialDetail: React.FC<RagMaterialDetailProps> = (props) => {
 }
 
 export default RagMaterialDetail
-

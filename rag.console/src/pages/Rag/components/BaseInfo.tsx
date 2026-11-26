@@ -29,8 +29,8 @@ export type BaseInfoAction = {
 
 const formItemLayout =
   {
-    labelCol: {span: 4},
-    wrapperCol: {span: 20},
+    labelCol: {flex: 'none'},
+    wrapperCol: {span: 24},
   }
 
 const inlineItemLayout = {
@@ -125,7 +125,7 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
 
   return (
     <ProForm
-      layout={'horizontal'}
+      layout={'vertical'}
       onFinish={async () => {
         await handleOk()
       }}
@@ -138,7 +138,7 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
         render: (props, doms) => {
           return (
             <Row>
-              <Col span={formItemLayout.wrapperCol.span} offset={formItemLayout.labelCol.span}>
+              <Col>
                 {
                   editing ? <Space>
                     <Button type='default' onClick={() => {
@@ -162,6 +162,7 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
           <ProFormText
             name='ragCode'
             label='知识库标识'
+            colProps={{span: 12}}
             rules={[
               {
                 required: true,
@@ -174,6 +175,7 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
       <ProFormText
         name='title'
         label='知识库标题'
+        colProps={{span: 12}}
         rules={[
           {
             required: true,
@@ -187,16 +189,19 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
             name='status'
             label='状态'
             readonly
+            colProps={{span: 12}}
             options={StatusEnum.toOptions()}
           /> : null
       }
       <ProFormTextArea
         name='description'
         label='知识库描述'
+        colProps={{span: 24}}
       />
       <ProFormSelect
         name='permission'
         label='召回权限'
+        colProps={{span: 12}}
         rules={[{required: true, message: '请选择召回权限'}]}
         initialValue='member'
         options={[
@@ -215,6 +220,7 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
             label='指定部门'
             rules={[{required: true, message: '请选择指定部门'}]}
             mode='multiple'
+            colProps={{span: 12}}
             options={departmentOptions}
             fieldProps={{
               showSearch: true,
@@ -227,6 +233,7 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
         name='needApproval'
         label='加入需审批'
         initialValue={true}
+        colProps={{span: 12}}
         fieldProps={{checkedChildren: '是', unCheckedChildren: '否'}}
         transform={(value) => ({needApproval: value ? 1 : 0})}
         convertValue={(value) => value === 1 || value === true || value === undefined}
@@ -234,6 +241,7 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
       <ProFormList
         name='recommendedQuestions'
         label='推荐问题'
+        colProps={{span: 24}}
         creatorButtonProps={{
           creatorButtonText: '添加推荐问题',
         }}
@@ -248,6 +256,7 @@ const BaseInfo: ForwardRefRenderFunction<BaseInfoAction, BaseInfoProps> = (props
       <ProFormList
         name='tags'
         label='标签'
+        colProps={{span: 24}}
         creatorButtonProps={{
           creatorButtonText: '添加标签',
         }}
