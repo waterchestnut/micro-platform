@@ -10,6 +10,7 @@ import {checkCodeField} from '../../tools/check.js'
 import ragSegmentDac from '../../daos/core/dac/ragSegmentDac.js'
 import {getContentVector} from '../openai/embedding.js'
 import {deleteByQuery, upsertItems} from '../../daos/milvus/dac/chunkDac.js'
+import {upsertItems as upsertItemsV2} from '../../daos/milvus/dac/chunkV2Dac.js'
 
 const tools = rag.tools
 const logger = rag.logger
@@ -246,6 +247,7 @@ export async function updateText(ragChunkCode, text) {
 export async function updateChunkRagIndex(chunkList, notUpdateVector = false) {
     let vectors = notUpdateVector ? [] : (await getContentVector(chunkList.map(_ => _.content)))
     let items = []
+    let itemsV2 = []
     chunkList.forEach((chunkInfo, i) => {
         let item = {
             ragChunkCode: chunkInfo.ragChunkCode,
@@ -257,8 +259,19 @@ export async function updateChunkRagIndex(chunkList, notUpdateVector = false) {
         }
         if (vectors[i]) {
             item.content = vectors[i]
+            // chunk_v2 混合索引项：同 dense + text 原文（sparse 由 BM25 function 服务端生成，不传）
+            itemsV2.push({...item, text: chunkInfo.content || ''})
         }
         items.push(item)
     })
-    return await upsertItems(items)
+    let ret = await upsertItems(items)
+    // 混合检索双写（hybrid.dualWrite 开启时同步 chunk_v2；缺 dense 的行不写，避免 function 生成空 sparse 覆盖）
+    if (config.hybrid?.dualWrite && itemsV2.length) {
+        try {
+            await upsertItemsV2(itemsV2)
+        } catch (e) {
+            logger.error('chunk_v2 双写失败（不影响主 chunk 写入）:', e.message)
+        }
+    }
+    return ret
 }

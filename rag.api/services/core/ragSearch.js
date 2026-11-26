@@ -6,6 +6,7 @@
 
 import {getContentVector} from '../openai/embedding.js'
 import {search} from '../../daos/milvus/dac/chunkDac.js'
+import {hybridSearch} from '../../daos/milvus/dac/chunkV2Dac.js'
 import ragSegmentDac from '../../daos/core/dac/ragSegmentDac.js'
 import ragMaterialDac from '../../daos/core/dac/ragMaterialDac.js'
 import ragChunkDac from '../../daos/core/dac/ragChunkDac.js'
@@ -18,6 +19,21 @@ const config = rag.config
 
 /** 知识库全库检索的默认相关性下限（用户定值 2026-11-25；bge-m3 归一向量 L2→cos 口径） */
 const DEFAULT_RAG_MIN_SIMILARITY = 0.56
+
+/**
+ * @description dense 路径的有效相似度下限：精排启用且未显式传时放宽到 recallFloor（交 rerank 终判），
+ *   显式传 0/负=禁用（返回 0，向后兼容旧行为），未开精排=默认 0.56。
+ * @param {Object} options 检索参数
+ * @param {Boolean} rerankOn 是否启用精排
+ * @returns {Number} 相似度下限（0=不过滤）
+ */
+function effFloorOf(options, rerankOn) {
+    if (options.minSimilarity !== undefined && options.minSimilarity !== null) {
+        return Number(options.minSimilarity) > 0 ? Number(options.minSimilarity) : 0
+    }
+    if (rerankOn) return config.rerank.recallFloor ?? 0.3
+    return DEFAULT_RAG_MIN_SIMILARITY
+}
 
 /**
  * @description 给 milvus 检索行按 L2 距离折算余弦相似度、按下限过滤并按相关度降序。
@@ -101,31 +117,52 @@ export async function ragSearch(subject, options = {}) {
     } else if (options.ragCode) {
         andFilters.push(`ragCode == "${options.ragCode}"`)
     }
-    // 启用精排时放大召回窗（宽进严出：rerank 只能救排序，救不了漏召回）
     const baseLimit = options.maxLength || 15
-    const recallLimit = config.rerank?.enabled ? Math.ceil(baseLimit * (config.rerank.recallMultiplier || 3)) : baseLimit
-    let vecRet = await search({
-        vector,
-        limit: recallLimit,
-        output_fields: ['ragChunkCode', 'ragSegmentCode', 'ragMaterialCode'],
-        filter: andFilters.length ? andFilters.join(' AND ') : undefined
-    })
-    vecRet = vecRet.rows || vecRet || []
-    // 相关性下限过滤（默认 minSimilarity<=0＝不过滤、保持原顺序，向后兼容；传正数才生效）
     const rerankOn = !!(config.rerank && config.rerank.enabled)
-    const effFloor = (options.minSimilarity === undefined || options.minSimilarity === null) && rerankOn
-        ? (config.rerank.recallFloor ?? 0.3)
-        : options.minSimilarity
-    vecRet = applySimilarityFloor(vecRet, effFloor)
-    // 精排（cross-encoder；未启用或失败保持向量序，chunk 命中序即最终序）
+    const hybridOn = !!(config.hybrid && config.hybrid.enabled)
+    const outputFields = ['ragChunkCode', 'ragSegmentCode', 'ragMaterialCode']
+    const filterExpr = andFilters.length ? andFilters.join(' AND ') : undefined
+    let vecRet
+    if (hybridOn) {
+        // 混合检索：dense 语义 + BM25 词面 → RRF 融合（治纯 dense 词面盲区）
+        // 融合前每路 perPathLimit，合并候选池交精排终判；RRF 分非相似度，不走向量下限过滤
+        const poolLimit = Math.max((config.hybrid.perPathLimit || 30) * 2, baseLimit)
+        vecRet = await hybridSearch({
+            vector,
+            queryText: subject,
+            limit: poolLimit,
+            output_fields: outputFields,
+            filter: filterExpr,
+        })
+    } else {
+        // 纯 dense：启用精排时放大召回窗（宽进严出：rerank 只能救排序，救不了漏召回）
+        const recallLimit = rerankOn ? Math.ceil(baseLimit * (config.rerank.recallMultiplier || 3)) : baseLimit
+        let raw = await search({vector, limit: recallLimit, output_fields: outputFields, filter: filterExpr})
+        vecRet = raw.rows || raw || []
+        // 相关性下限过滤（默认 0.56 规范化；显式传 0=禁用；精排启用时放宽到 recallFloor 交 rerank 终判）
+        const effFloor = (options.minSimilarity === undefined || options.minSimilarity === null) && rerankOn
+            ? (config.rerank.recallFloor ?? 0.3)
+            : options.minSimilarity
+        vecRet = applySimilarityFloor(vecRet, effFloor)
+    }
+    // 精排（cross-encoder；未启用或失败保持原序——hybrid 为 RRF 序，dense 为向量序）
     vecRet = await rerankChunks(subject, vecRet)
     if (rerankOn) {
-        // rerank 分是最终相关性判据（实测区分度 0.03~0.07 无关 vs 0.97~1.0 相关）；无分行回落向量下限
+        // rerank 分是最终相关性判据（实测区分度 0.03~0.07 无关 vs 0.97~1.0 相关）
         // options.rerankMinScore 请求级覆盖（0/负数=禁用阈值仅排序），供调参取证与消费方自适应
         const minScore = (options.rerankMinScore === undefined || options.rerankMinScore === null)
             ? (config.rerank.minScore ?? 0.2)
             : Number(options.rerankMinScore)
-        vecRet = vecRet.filter(_ => typeof _._rerank === 'number' ? _._rerank >= minScore : (_._sim ?? 0) >= (effFloor > 0 ? effFloor : DEFAULT_RAG_MIN_SIMILARITY))
+        const denseFloor = effFloorOf(options, rerankOn)
+        vecRet = vecRet.filter(_ => {
+            if (typeof _._rerank === 'number') return _._rerank >= minScore
+            // 无精排分（精排失败或超出候选窗）：hybrid 行无相似度可依，信任 RRF 融合序保留；dense 行回落向量下限
+            if (hybridOn) return true
+            return (_._sim ?? 0) >= denseFloor
+        })
+        vecRet = vecRet.slice(0, baseLimit)
+    } else if (hybridOn) {
+        // hybrid 未开精排：RRF 序直接截断（无相似度下限可依，依赖融合质量；建议 hybrid 与精排同开）
         vecRet = vecRet.slice(0, baseLimit)
     }
     let ragSegmentCodeList = []

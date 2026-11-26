@@ -31,7 +31,8 @@ for (let key in schemas) {
     if (!(await milvusClient.hasCollection({collection_name: schema.collection_name}))?.value) {
         await milvusClient.createCollection({
             collection_name: schema.collection_name,
-            fields: schema.schema
+            fields: schema.schema,
+            ...(schema.functions?.length ? {functions: schema.functions} : {}),
         })
     }
     if (schema.index?.length > 0) {

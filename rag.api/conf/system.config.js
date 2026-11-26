@@ -150,6 +150,16 @@ export default {
         /** 精排分保留阈值（行无精排分时回落向量下限判定） */
         minScore: Number(process.env['RERANK_MIN_SCORE'] || 0.2),
     },
+    /** 混合检索配置（dense 语义 + BM25 词面 → RRF 融合；enabled=false 时走原 chunk 纯 dense，行为零变化） */
+    hybrid: {
+        enabled: (process.env['HYBRID_ENABLED'] || 'false') === 'true',
+        /** 新数据双写 chunk_v2（迁移期开启） */
+        dualWrite: (process.env['HYBRID_DUAL_WRITE'] || 'false') === 'true',
+        /** RRF 融合常数 k（越大越看重尾部排名，业界默认 60） */
+        rrfK: parseInt(process.env['HYBRID_RRF_K'] || 60),
+        /** 每路子检索召回条数（融合前） */
+        perPathLimit: parseInt(process.env['HYBRID_PER_PATH_LIMIT'] || 30),
+    },
     docConfig: {
         /** 基地址 */
         baseUrl: process.env['DOC_URI'],
