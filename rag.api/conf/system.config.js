@@ -145,6 +145,10 @@ export default {
         /** 启用精排时召回窗放大倍数（先宽召回再精排截断） */
         recallMultiplier: parseInt(process.env['RERANK_RECALL_MULTIPLIER'] || 3),
         timeoutMs: parseInt(process.env['RERANK_TIMEOUT_MS'] || 8000),
+        /** 启用精排时的向量召回下限（放宽，相关性终判交给 rerank 分；显式传 options.minSimilarity 时不覆盖） */
+        recallFloor: Number(process.env['RERANK_RECALL_FLOOR'] || 0.3),
+        /** 精排分保留阈值（行无精排分时回落向量下限判定） */
+        minScore: Number(process.env['RERANK_MIN_SCORE'] || 0.2),
     },
     docConfig: {
         /** 基地址 */

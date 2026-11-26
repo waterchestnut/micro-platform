@@ -112,10 +112,19 @@ export async function ragSearch(subject, options = {}) {
     })
     vecRet = vecRet.rows || vecRet || []
     // 相关性下限过滤（默认 minSimilarity<=0＝不过滤、保持原顺序，向后兼容；传正数才生效）
-    vecRet = applySimilarityFloor(vecRet, options.minSimilarity)
+    const rerankOn = !!(config.rerank && config.rerank.enabled)
+    const effFloor = (options.minSimilarity === undefined || options.minSimilarity === null) && rerankOn
+        ? (config.rerank.recallFloor ?? 0.3)
+        : options.minSimilarity
+    vecRet = applySimilarityFloor(vecRet, effFloor)
     // 精排（cross-encoder；未启用或失败保持向量序，chunk 命中序即最终序）
     vecRet = await rerankChunks(subject, vecRet)
-    if (config.rerank?.enabled) vecRet = vecRet.slice(0, baseLimit)
+    if (rerankOn) {
+        // rerank 分是最终相关性判据（实测区分度 0.03~0.07 无关 vs 0.97~1.0 相关）；无分行回落向量下限
+        const minScore = config.rerank.minScore ?? 0.2
+        vecRet = vecRet.filter(_ => typeof _._rerank === 'number' ? _._rerank >= minScore : (_._sim ?? 0) >= (effFloor > 0 ? effFloor : DEFAULT_RAG_MIN_SIMILARITY))
+        vecRet = vecRet.slice(0, baseLimit)
+    }
     let ragSegmentCodeList = []
     let ragMaterialCodeList = []
     let ragChunkCodeList = []
