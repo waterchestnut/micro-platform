@@ -45,7 +45,7 @@ for (const q of questions) {
     try {
         const segs = await search(q.query, q.ragCode)
         const rank = hitRank(segs, q.expectKeywords || [])
-        const topSim = segs.length ? Math.max(...segs.map(_ => _.similarity || 0)) : 0
+        const topSim = segs.length ? Math.max(...segs.map(_ => _.rerankScore || _.similarity || 0)) : 0
         results.push({ id: q.id, query: q.query, returned: segs.length, rank, hit5: rank > 0 && rank <= 5, hit15: rank > 0, topSim: Number(topSim.toFixed(4)), topRerank: Math.max(0, ...segs.map(_ => _.rerankScore || 0)) })
         if (verbose) console.log(`  [${q.id}] rank=${rank || '-'} sim=${topSim.toFixed(3)} n=${segs.length}`)
     } catch (e) {
