@@ -10,6 +10,7 @@ import ragSegmentDac from '../../daos/core/dac/ragSegmentDac.js'
 import ragMaterialDac from '../../daos/core/dac/ragMaterialDac.js'
 import ragChunkDac from '../../daos/core/dac/ragChunkDac.js'
 import {l2ToSimilarity} from './memoryIndex.js'
+import {rerankDocuments} from '../openai/rerank.js'
 
 const tools = rag.tools
 const logger = rag.logger
@@ -45,6 +46,43 @@ export function applySimilarityFloor(rows, minSimilarity) {
 }
 
 /**
+ * @description 对 milvus 召回行做 chunk 粒度精排重排（按 chunk 去重后送 rerank；
+ *   失败/未启用原样返回）。重排后 segment 组装沿用首见命中序，即最相关 chunk 的段落靠前。
+ * @param {String} subject 查询文本
+ * @param {Array} vecRet 已过滤排序的 milvus 行
+ * @returns {Promise<Array>} 精排序（或原序）
+ */
+async function rerankChunks(subject, vecRet) {
+    const cfg = config.rerank
+    if (!cfg?.enabled || !vecRet.length) return vecRet
+    const seen = new Set()
+    const uniq = []
+    for (const row of vecRet) {
+        const code = row.ragChunkCode
+        if (!code || seen.has(code)) continue
+        seen.add(code)
+        uniq.push(row)
+    }
+    if (uniq.length < 2) return vecRet
+    const candidates = uniq.slice(0, cfg.maxCandidates || uniq.length)
+    const chunkRows = await ragChunkDac.getTop(candidates.map(_ => _.ragChunkCode).length, {ragChunkCode: candidates.map(_ => _.ragChunkCode)})
+    const contentMap = new Map(chunkRows.map(_ => [_.ragChunkCode, _.content || '']))
+    const docs = candidates.map(_ => contentMap.get(_.ragChunkCode) || '')
+    if (!docs.some(d => d)) return vecRet
+    const ranked = await rerankDocuments(subject, docs)
+    if (!ranked) return vecRet
+    const scoreByPos = new Array(candidates.length).fill(null)
+    ranked.forEach(r => {
+        if (Number.isInteger(r.index) && r.index >= 0 && r.index < scoreByPos.length) scoreByPos[r.index] = r.relevance_score
+    })
+    const paired = candidates.map((row, i) => ({row, score: scoreByPos[i]}))
+    const reordered = paired
+        .sort((a, b) => (b.score ?? a.row._sim ?? -1) - (a.score ?? a.row._sim ?? -1))
+        .map(x => ({...x.row, _rerank: x.score}))
+    return [...reordered, ...uniq.slice(candidates.length)]
+}
+
+/**
  * @description 执行材料的增强检索
  * @author xianyang
  * @param {String} subject 检索主题文本
@@ -68,6 +106,8 @@ export async function ragSearch(subject, options = {}) {
     vecRet = vecRet.rows || vecRet || []
     // 相关性下限过滤（默认 minSimilarity<=0＝不过滤、保持原顺序，向后兼容；传正数才生效）
     vecRet = applySimilarityFloor(vecRet, options.minSimilarity)
+    // 精排（cross-encoder；未启用或失败保持向量序，chunk 命中序即最终序）
+    vecRet = await rerankChunks(subject, vecRet)
     let ragSegmentCodeList = []
     let ragMaterialCodeList = []
     let ragChunkCodeList = []
