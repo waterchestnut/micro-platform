@@ -9,7 +9,8 @@ import fs from 'node:fs'
 
 const GW = process.env.RAG_EVAL_GATEWAY || 'https://api.xxzx.paretop.net'
 const CHAT = process.env.RAG_EVAL_CHAT || 'http://192.168.31.127:3009/v1'
-const CHAT_MODEL = process.env.RAG_EVAL_CHAT_MODEL || 'qwen3'
+const CHAT_MODEL = process.env.RAG_EVAL_CHAT_MODEL || 'qwen-flash'
+const CHAT_KEY = process.env.RAG_EVAL_CHAT_KEY || ''
 const tok = process.argv[2]
 if (!tok) { console.error('用法: node gen-questions.mjs <accessToken>'); process.exit(1) }
 const perArg = process.argv.indexOf('--per-material')
@@ -31,7 +32,7 @@ async function api(pathname, body = {}) {
 async function askLLM(prompt) {
     const r = await fetch(`${CHAT}/chat/completions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${CHAT_KEY}` },
         body: JSON.stringify({ model: CHAT_MODEL, messages: [{ role: 'user', content: prompt }], temperature: 0.3, max_tokens: 400 }),
     })
     if (!r.ok) throw new Error(`LLM HTTP ${r.status}`)
