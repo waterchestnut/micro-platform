@@ -133,6 +133,19 @@ export default {
         },
     ],
     /** 文件服务的配置 */
+    /** 精排模型配置（xinference POST {baseURL}/rerank；enabled=false 时检索保持原向量序，行为零变化） */
+    rerank: {
+        enabled: (process.env['RERANK_ENABLED'] || 'false') === 'true',
+        /* 默认沿用 embedding 同域平台 */
+        baseURL: process.env['RERANK_BASE_URL'] || process.env['EMBEDDING_DEFAULT_URI'],
+        apiKey: process.env['RERANK_API_KEY'] || process.env['EMBEDDING_DEFAULT_APIKEY'] || '',
+        model: process.env['RERANK_MODEL'] || 'bge-reranker-v2-m3',
+        /** 参与精排的最大候选数（超出部分保持向量序垫后） */
+        maxCandidates: parseInt(process.env['RERANK_MAX_CANDIDATES'] || 45),
+        /** 启用精排时召回窗放大倍数（先宽召回再精排截断） */
+        recallMultiplier: parseInt(process.env['RERANK_RECALL_MULTIPLIER'] || 3),
+        timeoutMs: parseInt(process.env['RERANK_TIMEOUT_MS'] || 8000),
+    },
     docConfig: {
         /** 基地址 */
         baseUrl: process.env['DOC_URI'],

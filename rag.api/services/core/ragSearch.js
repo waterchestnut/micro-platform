@@ -101,9 +101,12 @@ export async function ragSearch(subject, options = {}) {
     } else if (options.ragCode) {
         andFilters.push(`ragCode == "${options.ragCode}"`)
     }
+    // 启用精排时放大召回窗（宽进严出：rerank 只能救排序，救不了漏召回）
+    const baseLimit = options.maxLength || 15
+    const recallLimit = config.rerank?.enabled ? Math.ceil(baseLimit * (config.rerank.recallMultiplier || 3)) : baseLimit
     let vecRet = await search({
         vector,
-        limit: options.maxLength || 15,
+        limit: recallLimit,
         output_fields: ['ragChunkCode', 'ragSegmentCode', 'ragMaterialCode'],
         filter: andFilters.length ? andFilters.join(' AND ') : undefined
     })
@@ -112,6 +115,7 @@ export async function ragSearch(subject, options = {}) {
     vecRet = applySimilarityFloor(vecRet, options.minSimilarity)
     // 精排（cross-encoder；未启用或失败保持向量序，chunk 命中序即最终序）
     vecRet = await rerankChunks(subject, vecRet)
+    if (config.rerank?.enabled) vecRet = vecRet.slice(0, baseLimit)
     let ragSegmentCodeList = []
     let ragMaterialCodeList = []
     let ragChunkCodeList = []
