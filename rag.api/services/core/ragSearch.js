@@ -34,12 +34,16 @@ export function applySimilarityFloor(rows, minSimilarity) {
     const minSim = (minSimilarity === undefined || minSimilarity === null)
         ? DEFAULT_RAG_MIN_SIMILARITY
         : Number(minSimilarity)
-    if (!(minSim > 0)) return list
-    return list
+    const withSim = list
         .map(_ => {
             const s = l2ToSimilarity(Number(_.score ?? _.distance))
             return {..._, _sim: Number.isFinite(s) ? s : null}
         })
+    if (!(minSim > 0)) {
+        // 禁用下限：不杀行，但仍折算相似度并排序（与启用分支同口径，透传信号不缺）
+        return withSim.sort((a, b) => (b._sim ?? -1) - (a._sim ?? -1))
+    }
+    return withSim
         // 无 score/distance（无法判相关度）→ 保留不误杀；有值才按下限过滤。未知相似度排最后
         .filter(_ => _._sim === null || _._sim >= minSim)
         .sort((a, b) => (b._sim ?? -1) - (a._sim ?? -1))
