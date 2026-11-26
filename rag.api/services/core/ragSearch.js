@@ -121,7 +121,10 @@ export async function ragSearch(subject, options = {}) {
     vecRet = await rerankChunks(subject, vecRet)
     if (rerankOn) {
         // rerank 分是最终相关性判据（实测区分度 0.03~0.07 无关 vs 0.97~1.0 相关）；无分行回落向量下限
-        const minScore = config.rerank.minScore ?? 0.2
+        // options.rerankMinScore 请求级覆盖（0/负数=禁用阈值仅排序），供调参取证与消费方自适应
+        const minScore = (options.rerankMinScore === undefined || options.rerankMinScore === null)
+            ? (config.rerank.minScore ?? 0.2)
+            : Number(options.rerankMinScore)
         vecRet = vecRet.filter(_ => typeof _._rerank === 'number' ? _._rerank >= minScore : (_._sim ?? 0) >= (effFloor > 0 ? effFloor : DEFAULT_RAG_MIN_SIMILARITY))
         vecRet = vecRet.slice(0, baseLimit)
     }

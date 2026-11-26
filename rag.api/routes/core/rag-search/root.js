@@ -24,6 +24,8 @@ export default async function (fastify, opts) {
                         type: 'object',
                         properties: {
                             maxLength: {type: 'number', description: '最大召回片段数目'},
+                            minSimilarity: {type: 'number', description: '向量相似度下限；未传=启用精排时 recallFloor、否则 0.56；传 0=禁用'},
+                            rerankMinScore: {type: 'number', description: '精排分保留阈值覆盖（0=仅排序不过滤）；仅精排启用时生效'},
                             ragCode: {type: 'string', description: '知识库标识'},
                             withChunks: {type: 'number', description: '是否返回命中的片段'},
                         }
