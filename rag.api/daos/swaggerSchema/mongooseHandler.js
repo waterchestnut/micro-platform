@@ -55,13 +55,17 @@ export const getAllParamModels = (options = {}) => {
             resCode: {type: 'string', nullable: true, description: '材料原文标识'},
             resTitle: {type: 'string', nullable: true, description: '材料原文标题'},
             resOriginalUrl: {type: 'string', nullable: true, description: '材料原文访问地址'},
+            similarity: {type: 'number', nullable: true, description: '命中分段的最高向量相似度（0~1）'},
+            rerankScore: {type: 'number', nullable: true, description: '命中分段的最高精排分（未启用精排时不返回）'},
             chunks: {
                 type: 'array',
                 items: {
                     ...ret.RagChunk,
                     properties: {
                         ...ret.RagChunk.properties,
-                        score: {type: 'number', nullable: true, description: '命中时的分数'}
+score: {type: 'number', nullable: true, description: '命中时的分数'},
+                        similarity: {type: 'number', nullable: true, description: '该分句的向量相似度（0~1）'},
+                        rerankScore: {type: 'number', nullable: true, description: '该分句的精排分'}
                     }
                 },
                 nullable: true,

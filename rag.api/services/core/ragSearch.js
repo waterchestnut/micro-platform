@@ -147,7 +147,9 @@ export async function ragSearch(subject, options = {}) {
         if (options.withChunks) {
             info.chunks = vecRet.filter(_ => _.ragSegmentCode === segInfo.ragSegmentCode).map(_ => ({
                 ..._,
-                ...chunkInfoList.find(chunkRecord => chunkRecord.ragChunkCode === _.ragChunkCode)
+                ...chunkInfoList.find(chunkRecord => chunkRecord.ragChunkCode === _.ragChunkCode),
+                similarity: _._sim,
+                rerankScore: _._rerank
             }))
         }
         // 透传向量侧信号：该 segment 命中 chunks 的最高相似度/精排分（evals 与引用置信度用）
