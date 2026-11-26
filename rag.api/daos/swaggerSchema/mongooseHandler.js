@@ -17,7 +17,7 @@ export function convertToSwaggerSchema(mongooseSchema, options = {}) {
         type: 'object',
         ...m2s(mongooseSchema, {
             props: ['title'],
-            omitFields: ['_id', 'insertTime', 'updateTime', 'pwd', '__v', '__options'],
+            omitFields: ['_id', 'pwd', '__v', '__options'],
             omitMongooseInternals: true,
             ...options
         })
