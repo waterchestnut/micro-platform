@@ -19,17 +19,35 @@ const argv = Object.fromEntries(process.argv.slice(2).map(a => {
 const BATCH = parseInt(argv.batch || 200)
 const DRY = !!argv.dry
 
+const mc = rag.config.mongodbConfig
 const conn = await mongoose.createConnection(
-    argv.mongoUri || 'mongodb://mongo7-124:27017/xxzx-rag-api',
+    argv.mongoUri || mc.uri,
     {
-        autoIndex: false, user: 'localuser', pass: 'yopit123', authSource: 'admin',
+        autoIndex: false, dbName: mc.options.dbName,
+        user: mc.options.user, pass: mc.options.pass, authSource: mc.options.authSource || 'admin',
     },
 ).asPromise()
 
+await milvusClient.loadCollectionSync({collection_name: 'chunk'}).catch(() => {})
+// 迁移范围：milvus chunk 里 count>0 的库（mongo 有行但未 embed 的 connector 库直接跳过，避免空扫千万幽灵）
+async function embeddedRagCodes() {
+    const rags = (await conn.db.collection('ragInfo').find({}, {projection: {ragCode: 1}}).toArray()).map(r => r.ragCode)
+    const out = []
+    for (const rc of rags) {
+        const r = await milvusClient.query({collection_name: 'chunk', filter: `ragCode == ${JSON.stringify(rc)}`, output_fields: ['count(*)']}).catch(() => ({data: []}))
+        if (Number(r.data?.[0]?.['count(*)'] ?? 0) > 0) out.push(rc)
+    }
+    return out
+}
+const libs = argv.ragCode ? [argv.ragCode] : await embeddedRagCodes()
+console.log('迁移库:', libs.join(','))
+
 const mongoFilter = {status: {$gte: 0}}
 if (argv.ragCode) mongoFilter.ragCode = argv.ragCode
-const total = await conn.db.collection('ragChunk').countDocuments(mongoFilter)
-console.log(`迁移目标: ragChunk ${total} 条${argv.ragCode ? ' (ragCode=' + argv.ragCode + ')' : ''}${DRY ? ' [DRY-RUN]' : ''}`)
+const total = argv.ragCode
+    ? await conn.db.collection('ragChunk').countDocuments(mongoFilter)
+    : (await Promise.all(libs.map(rc => conn.db.collection('ragChunk').countDocuments({ragCode: rc, status: {$gte: 0}})))).reduce((a, b) => a + b, 0)
+console.log(`迁移目标: ragChunk ${total} 条${argv.ragCode ? ' (ragCode=' + argv.ragCode + ')' : ' (仅已 embed 库)'}${DRY ? ' [DRY-RUN]' : ''}`)
 
 // 已迁移集合（--resume 时用于跳过）
 let migrated = new Set()
@@ -49,10 +67,7 @@ if (argv.resume) {
     console.log('resume: chunk_v2 已存在', migrated.size, '条，将跳过')
 }
 
-let cursor = conn.db.collection('ragChunk').find(mongoFilter, {
-    projection: {ragChunkCode: 1, ragCode: 1, ragMaterialCode: 1, ragSegmentCode: 1, language: 1, status: 1, content: 1},
-}).batchSize(2000)
-
+const projection = {ragChunkCode: 1, ragCode: 1, ragMaterialCode: 1, ragSegmentCode: 1, language: 1, status: 1, content: 1}
 let buf = [], done = 0, ghost = 0, wrote = 0, skipped = 0
 const t0 = Date.now()
 
@@ -82,18 +97,24 @@ async function flush(rows) {
     wrote += items.length
 }
 
-for await (const chunk of cursor) {
-    if (migrated.has(chunk.ragChunkCode)) { skipped++; continue }
-    buf.push(chunk)
-    if (buf.length >= BATCH) {
-        await flush(buf)
-        done += buf.length
-        buf = []
-        const el = (Date.now() - t0) / 1000
-        console.log(`进度 ${done}/${total} | 写入 ${wrote} 幽灵 ${ghost} 跳过 ${skipped} | ${el.toFixed(0)}s (${(done / el).toFixed(0)}/s)`)
+// 按库迭代（mongoFilter 每库带 ragCode，避免全表扫未 embed 库）
+for (const rc of libs) {
+    const libFilter = {ragCode: rc, status: {$gte: 0}}
+    const cursor = conn.db.collection('ragChunk').find(libFilter, {projection}).batchSize(2000)
+    for await (const chunk of cursor) {
+        if (migrated.has(chunk.ragChunkCode)) { skipped++; continue }
+        buf.push(chunk)
+        if (buf.length >= BATCH) {
+            await flush(buf)
+            done += buf.length
+            buf = []
+            const el = (Date.now() - t0) / 1000
+            console.log(`进度 ${done}/${total} | 写入 ${wrote} 幽灵 ${ghost} 跳过 ${skipped} | ${el.toFixed(0)}s (${(done / el).toFixed(0)}/s) | 库 ${rc}`)
+        }
     }
+    if (buf.length) { await flush(buf); done += buf.length; buf = [] }
+    console.log(`  库 ${rc} 完成，累计写入 ${wrote} 幽灵 ${ghost}`)
 }
-if (buf.length) { await flush(buf); done += buf.length }
 
 console.log(`\n完成: 处理 ${done} | 写入 chunk_v2 ${wrote} | 幽灵(无 dense) ${ghost} | resume 跳过 ${skipped} | 用时 ${((Date.now() - t0) / 1000).toFixed(0)}s`)
 if (!DRY) {
