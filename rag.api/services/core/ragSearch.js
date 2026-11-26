@@ -150,6 +150,13 @@ export async function ragSearch(subject, options = {}) {
                 ...chunkInfoList.find(chunkRecord => chunkRecord.ragChunkCode === _.ragChunkCode)
             }))
         }
+        // 透传向量侧信号：该 segment 命中 chunks 的最高相似度/精排分（evals 与引用置信度用）
+        const hitRows = vecRet.filter(_ => _.ragSegmentCode === segInfo.ragSegmentCode)
+        if (hitRows.length) {
+            info.similarity = Number(Math.max(...hitRows.map(_ => _._sim ?? 0)).toFixed(4))
+            const rs = hitRows.map(_ => _._rerank).filter(v => typeof v === 'number')
+            if (rs.length) info.rerankScore = Number(Math.max(...rs).toFixed(4))
+        }
         retList.push(info)
     })
     return retList
