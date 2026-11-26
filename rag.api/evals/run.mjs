@@ -21,11 +21,11 @@ const verbose = process.argv.includes('--verbose')
 
 const questions = JSON.parse(fs.readFileSync(qFile, 'utf8')).filter(q => q.query)
 
-async function search(query) {
+async function search(query, ragCode) {
     const r = await fetch(`${GW}/rag/core/rag-search/search`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Cookie: `param-accessToken=${tok}` },
-        body: JSON.stringify({ subject: query, options: { maxLength: 15, withChunks: 0 } }),
+        body: JSON.stringify({ subject: query, options: { maxLength: 15, withChunks: 0, ...(ragCode ? { ragCode } : {}) } }),
     })
     if (!r.ok) throw new Error(`HTTP ${r.status} ${query.slice(0, 20)}`)
     const d = await r.json()
@@ -43,7 +43,7 @@ const hitRank = (segs, expectKeywords) => {
 const results = []
 for (const q of questions) {
     try {
-        const segs = await search(q.query)
+        const segs = await search(q.query, q.ragCode)
         const rank = hitRank(segs, q.expectKeywords || [])
         const topSim = segs.length ? Math.max(...segs.map(_ => _.similarity || 0)) : 0
         results.push({ id: q.id, query: q.query, returned: segs.length, rank, hit5: rank > 0 && rank <= 5, hit15: rank > 0, topSim: Number(topSim.toFixed(4)), topRerank: Math.max(0, ...segs.map(_ => _.rerankScore || 0)) })
