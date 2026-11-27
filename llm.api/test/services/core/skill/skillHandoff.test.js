@@ -225,4 +225,21 @@ describe('buildJumpUrl（jump 模式：参数编 query、无 token）', () => {
         const u = buildJumpUrl('', {clientCode: 'c', path: '/x'}, {})
         assert.ok(decodeURIComponent(u).includes('/x?'), u)
     })
+    test('路径模板：{param} 编进路径段且不再进 query（详情页类 jump）', () => {
+        const u = buildJumpUrl('', {clientCode: 'union-callin-crowdfunding', path: '/crowdfunding/detail/{crowdfundingCode}'}, {crowdfundingCode: 'C1', from: 'ai'})
+        const inner = decodeURIComponent(u.split('union-callin-crowdfunding=')[1])
+        assert.ok(inner.startsWith('/crowdfunding/detail/C1?'), inner)
+        assert.ok(inner.includes('from=ai'), inner)
+        assert.ok(!inner.includes('crowdfundingCode='), '模板消费掉的参数不应再进 query')
+    })
+    test('路径模板值含特殊字符 ⇒ 路径段编码', () => {
+        const u = buildJumpUrl('', {clientCode: 'c', path: '/d/{code}'}, {code: 'a/b c'})
+        const inner = decodeURIComponent(u.split('c=')[1])
+        assert.ok(inner.startsWith('/d/a%2Fb%20c?'), inner)
+    })
+    test('无模板路径 ⇒ 旧行为逐字（全参数进 query）', () => {
+        const u = buildJumpUrl('', {clientCode: 'c', path: '/x'}, {code: 'C1'})
+        const inner = decodeURIComponent(u.split('c=')[1])
+        assert.equal(inner, '/x?code=C1')
+    })
 })

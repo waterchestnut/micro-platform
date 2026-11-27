@@ -233,11 +233,19 @@ async function defaultExecGrpc(host, skillName, commandName, params, curUserInfo
  */
 export function buildJumpUrl(baseUrl, spec = {}, params = {}) {
     const q = new URLSearchParams()
+    // 路径模板（mirror mother 93d928d）：spec.path 含 {param} 时把该参数值编进路径段
+    // （详情页类 /crowdfunding/detail/{code}），消费掉的参数不再进 query；无模板则全走 query（旧行为逐字）
+    let path = spec.path || '/'
     for (const [k, v] of Object.entries(params || {})) {
         if (v === undefined || v === null) continue
-        q.set(k, Array.isArray(v) ? v.join(',') : String(v))
+        const val = Array.isArray(v) ? v.join(',') : String(v)
+        const token = `{${k}}`
+        if (path.includes(token)) {
+            path = path.split(token).join(encodeURIComponent(val))
+        } else {
+            q.set(k, val)
+        }
     }
-    const path = spec.path || '/'
     const sep = path.includes('?') ? '&' : '?'
     const inner = `${path}${sep}${q.toString()}`
     const base = String(baseUrl || '').replace(/\/+$/, '')
