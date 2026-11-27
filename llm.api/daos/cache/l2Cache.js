@@ -45,10 +45,12 @@ async function redisOrNull() {
  * @author xianyang
  * @param {String} key redis 键（同时用作 LRU 键）
  * @param {String} [space] LRU 命名空间
+ * @param {Object} [lruOptions] LRU 创建选项（仅首次创建生效）；ttlMs>0 给进程层有界寿命——
+ *        多 pod 部署时 cacheDel 只能清本进程 LRU+redis，他 pod 的永不过期 LRU 会一直服务旧值
  * @returns {Promise<{hit:Boolean, source:String, value:*}>} 命中情况
  */
-export async function cacheGet(key, space = 'default') {
-    const lru = getLRU(space)
+export async function cacheGet(key, space = 'default', lruOptions = {}) {
+    const lru = getLRU(space, lruOptions)
     const local = lru.get(key)
     if (local !== undefined) {
         return {hit: true, source: 'lru', value: local}
@@ -130,7 +132,7 @@ export async function cacheDel(key, space) {
  * @param {Object} params 入参
  * @param {String} params.key 缓存键
  * @param {Function} params.loader 回源函数
- * @param {Object} [params.options] ttlSeconds / space
+ * @param {Object} [params.options] ttlSeconds / space / lruTtlMs（进程层 LRU 有界寿命，跨 pod 收敛用）
  * @returns {Promise<{value:*, source:String}>} 结果与来源
  */
 export async function remember(params = {}) {
@@ -139,7 +141,8 @@ export async function remember(params = {}) {
         const value = loader ? await loader() : null
         return {value, source: 'uncached'}
     }
-    const found = await cacheGet(key, options.space || 'default')
+    const lruOptions = Number(options.lruTtlMs) > 0 ? {ttlMs: Number(options.lruTtlMs)} : {}
+    const found = await cacheGet(key, options.space || 'default', lruOptions)
     if (found.hit) {
         return {value: found.value, source: found.source}
     }

@@ -73,3 +73,29 @@ test('getLRU 同命名空间复用同一实例', () => {
   assert.equal(b.get('k'), 1, '同一命名空间必须是同一份缓存，否则选项会被后写覆盖')
   assert.equal(b.stats().max, 2, '首次创建的参数生效')
 })
+
+test('remember lruTtlMs：进程层 LRU 有界寿命，过期回源（跨 pod 审核态收敛的根基）', async () => {
+  const s = space()
+  let calls = 0
+  const loader = async () => { calls++; return {v: calls} }
+  const first = await remember({key: 'ttl:1', loader, options: {space: s, lruTtlMs: 30}})
+  assert.equal(first.source, 'origin')
+  const second = await remember({key: 'ttl:1', loader, options: {space: s, lruTtlMs: 30}})
+  assert.equal(second.source, 'lru', 'TTL 内应命中进程层')
+  await new Promise(r => setTimeout(r, 50))
+  const third = await remember({key: 'ttl:1', loader, options: {space: s, lruTtlMs: 30}})
+  assert.equal(third.source, 'origin', 'TTL 过期必须回源——他 pod 清 redis 后本 pod 不能永远服务旧值')
+  assert.equal(calls, 2)
+  assert.deepEqual(third.value, {v: 2})
+})
+
+test('remember 不传 lruTtlMs 时进程层永不过期（旧行为零回归）', async () => {
+  const s = space()
+  let calls = 0
+  const loader = async () => { calls++; return calls }
+  await remember({key: 'ttl:2', loader, options: {space: s}})
+  await new Promise(r => setTimeout(r, 30))
+  const second = await remember({key: 'ttl:2', loader, options: {space: s}})
+  assert.equal(second.source, 'lru')
+  assert.equal(calls, 1)
+})

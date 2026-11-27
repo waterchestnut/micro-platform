@@ -386,7 +386,7 @@ export async function getCachedGrpcSkillsByChannel(channel) {
         const {value, source} = await remember({
             key: grpcSkillCacheKey(channel),
             loader: () => getGrpcSkillsByChannel(channel),
-            options: {ttlSeconds: cfg.skillTtlSeconds, space: GRPC_SKILL_SPACE},
+            options: {ttlSeconds: cfg.skillTtlSeconds, space: GRPC_SKILL_SPACE, lruTtlMs: 60 * 1000},
         })
         if (source !== 'origin') {
             llm.logger.info(`频道 ${channel} 技能清单命中 ${source}，共 ${value?.length ?? 0} 条`)
