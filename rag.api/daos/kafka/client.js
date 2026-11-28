@@ -185,6 +185,12 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
         // 不再只记日志干等 commit 看门狗（低峰无消息时永远等不到）。scheduleRecreate 幂等，退避环防 churn。
         if (!stopping && !drain.draining) scheduleRecreate()
     })
+    // 失组看门狗·心跳错误路（补 231ab3f 未接的 consumer:heartbeat:error，kafka-membership-watchdog §方案1）：
+    // broker 剔成员后心跳失败多以本事件反馈而非通用 error；非停机即重建入组。scheduleRecreate 幂等+退避环，rebalance 抖动去重不致 churn。
+    consumer.on('consumer:heartbeat:error', () => {
+        logger.warn('Kafka consumer heartbeat error（疑似掉组），触发重建入组')
+        if (!stopping && !drain.draining) scheduleRecreate()
+    })
     consumer.once('client:close', () => {
         stopping = true
         if (recreateTimer) {
@@ -346,13 +352,18 @@ export const subscribe = async (topics, groupId, callback, client = defaultClien
     membershipCheckTimer = setInterval(() => {
         if (stopping || drain.draining) return
         if (!activeStream || activeStream.destroyed) return // 无流由 error/end/join 路径负责，这里只管"有流却失组"
-        if (consumer.memberId) {
+        // 存活双信号：① memberId 为空（库以 leave/UNKNOWN_MEMBER 归 null）；② 连接被静默冻结时库既不抛事件、memberId 也可能滞留旧值，
+        // 但 lastHeartbeat 仅在心跳收到 ACK 时刷新（库 #lastHeartbeat=new Date 在成功分支），故 ACK 过旧即为掉组/僵尸。
+        const hb = consumer.lastHeartbeat
+        const hbStaleMs = hb ? Date.now() - hb.getTime() : Infinity
+        const hbStaleThreshold = parseInt(process.env.KAFKA_MEMBERSHIP_HEARTBEAT_STALE_MS || '90000', 10)
+        if (consumer.memberId && hbStaleMs <= hbStaleThreshold) {
             memberLostStreak = 0
             return
         }
         if (++memberLostStreak >= 2) {
             memberLostStreak = 0
-            logger.warn('失组看门狗：流健在但 memberId 连续两拍为空（判定掉组/僵尸），强制重建入组')
+            logger.warn('失组看门狗：流健在但 ' + (!consumer.memberId ? 'memberId 为空' : '心跳已 ' + Math.round(hbStaleMs / 1000) + 's 未确认') + '（判定掉组/僵尸），强制重建入组')
             scheduleRecreate()
         }
     }, parseInt(process.env.KAFKA_MEMBERSHIP_CHECK_MS || '60000', 10))
